@@ -1624,6 +1624,71 @@ body {
 
 /* ─── Scrollbars ───────────────────────────────────────────────────────────── */
 
+/* ─── Batch Template Manager ───────────────────────────────────────────────── */
+
+.batch-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.batch-item-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.batch-item-row input {
+  flex: 1;
+  padding: 6px 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #e6edf3;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+
+.batch-item-row input:focus {
+  border-color: #58a6ff;
+}
+
+.batch-item-remove {
+  background: none;
+  border: none;
+  color: #6e7681;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.batch-item-remove:hover { color: #f85149; }
+
+.batch-add-btn {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.batch-run-config {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 20px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.batch-run-config .form-actions {
+  margin-top: auto;
+}
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }

@@ -3,6 +3,7 @@ import React from 'react';
 interface HeaderProps {
   onNewJob: () => void;
   onTemplates: () => void;
+  onBatchTemplates: () => void;
   onUsage: () => void;
   onSearch: () => void;
   onTimeline: () => void;
@@ -38,7 +39,7 @@ function HurlwindLogo() {
   );
 }
 
-export function Header({ onNewJob, onTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, currentProjectName, onClearProject, todayCost }: HeaderProps) {
+export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, currentProjectName, onClearProject, todayCost }: HeaderProps) {
   return (
     <header className="header">
       <div className="header-left">
@@ -74,6 +75,9 @@ export function Header({ onNewJob, onTemplates, onUsage, onSearch, onTimeline, o
         </button>
         <button className="btn btn-secondary" onClick={onTemplates}>
           Templates
+        </button>
+        <button className="btn btn-secondary" onClick={onBatchTemplates}>
+          Batches
         </button>
         <button className="btn btn-primary" onClick={onNewJob}>
           + New Job

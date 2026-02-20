@@ -10,7 +10,7 @@ interface AgentGridProps {
   selectedAgentId?: string | null;
 }
 
-const ALL_STATUSES: AgentStatus[] = ['starting', 'running', 'waiting_user', 'done', 'failed'];
+const ALL_STATUSES: AgentStatus[] = ['starting', 'running', 'waiting_user', 'done', 'failed', 'cancelled'];
 
 const STATUS_LABELS: Record<AgentStatus, string> = {
   starting: 'Starting',
@@ -18,6 +18,7 @@ const STATUS_LABELS: Record<AgentStatus, string> = {
   waiting_user: 'Waiting',
   done: 'Done',
   failed: 'Failed',
+  cancelled: 'Cancelled',
 };
 
 function tilePriority(agent: AgentWithJob): number {

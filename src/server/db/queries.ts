@@ -1,5 +1,5 @@
 import { getDb } from './database.js';
-import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, JobStatus, AgentStatus, SearchResult } from '../../shared/types.js';
+import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, JobStatus, AgentStatus, SearchResult } from '../../shared/types.js';
 
 // node:sqlite returns null-prototype objects; cast them via JSON round-trip helper
 function cast<T>(val: unknown): T {
@@ -574,6 +574,63 @@ export function deleteProject(id: string): void {
   // Unlink jobs from this project before deleting
   db.prepare('UPDATE jobs SET project_id = NULL WHERE project_id = ?').run(id);
   db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+}
+
+// ─── Batch Templates ──────────────────────────────────────────────────────────
+
+interface BatchTemplateRow {
+  id: string;
+  name: string;
+  items: string; // JSON string
+  created_at: number;
+  updated_at: number;
+}
+
+function rowToBatchTemplate(row: BatchTemplateRow): BatchTemplate {
+  return { ...row, items: JSON.parse(row.items) };
+}
+
+export function insertBatchTemplate(bt: { id: string; name: string; items: string[]; created_at: number; updated_at: number }): BatchTemplate {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO batch_templates (id, name, items, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(bt.id, bt.name, JSON.stringify(bt.items), bt.created_at, bt.updated_at);
+  return getBatchTemplateById(bt.id)!;
+}
+
+export function getBatchTemplateById(id: string): BatchTemplate | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM batch_templates WHERE id = ?').get(id);
+  return row ? rowToBatchTemplate(cast<BatchTemplateRow>(row)) : null;
+}
+
+export function listBatchTemplates(): BatchTemplate[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM batch_templates ORDER BY name ASC').all();
+  return rows.map(r => rowToBatchTemplate(cast<BatchTemplateRow>(r)));
+}
+
+export function updateBatchTemplate(id: string, fields: Partial<Pick<BatchTemplate, 'name' | 'items'>>): BatchTemplate | null {
+  const db = getDb();
+  const sets: string[] = ['updated_at = ?'];
+  const values: unknown[] = [Date.now()];
+  if (fields.name !== undefined) {
+    sets.push('name = ?');
+    values.push(fields.name);
+  }
+  if (fields.items !== undefined) {
+    sets.push('items = ?');
+    values.push(JSON.stringify(fields.items));
+  }
+  values.push(id);
+  db.prepare(`UPDATE batch_templates SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+  return getBatchTemplateById(id);
+}
+
+export function deleteBatchTemplate(id: string): void {
+  const db = getDb();
+  db.prepare('DELETE FROM batch_templates WHERE id = ?').run(id);
 }
 
 // ─── Agent result text ────────────────────────────────────────────────────────

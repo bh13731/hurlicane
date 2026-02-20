@@ -56,6 +56,7 @@ async function main() {
       locks: queries.getAllActiveLocks(),
       templates: queries.listTemplates(),
       projects: queries.listProjects(),
+      batchTemplates: queries.listBatchTemplates(),
     });
 
     socket.emit('queue:snapshot', buildSnapshot());

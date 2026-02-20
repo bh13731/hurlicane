@@ -6,6 +6,7 @@ import { WorkQueueSidebar } from './components/WorkQueueSidebar';
 import { FileLockMap } from './components/FileLockMap';
 import { JobForm } from './components/JobForm';
 import { TemplateManager } from './components/TemplateManager';
+import { BatchTemplateManager } from './components/BatchTemplateManager';
 import { UsageModal } from './components/UsageModal';
 import { SearchModal } from './components/SearchModal';
 import { GanttModal } from './components/GanttModal';
@@ -19,7 +20,7 @@ import { useLocks } from './hooks/useLocks';
 import { useProjects } from './hooks/useProjects';
 import { useToasts } from './hooks/useToasts';
 import { ToastFeed } from './components/ToastFeed';
-import type { AgentWithJob, AgentOutput, CreateJobRequest, Job, Template } from '@shared/types';
+import type { AgentWithJob, AgentOutput, CreateJobRequest, Job, Template, BatchTemplate } from '@shared/types';
 
 export default function App() {
   const { agents, setInitial: setInitialAgents, addAgent, updateAgent } = useAgents();
@@ -37,6 +38,7 @@ export default function App() {
   const [showGantt, setShowGantt] = useState(false);
   const [showDag, setShowDag] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
+  const [showBatchTemplates, setShowBatchTemplates] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
   const [todayCost, setTodayCost] = useState<number | null>(null);
@@ -169,7 +171,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayCost={todayCost} />
+      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayCost={todayCost ?? undefined} />
 
       <div className="main-layout">
         {selectedAgent ? (
@@ -207,6 +209,17 @@ export default function App() {
 
       {showTemplates && (
         <TemplateManager onClose={() => setShowTemplates(false)} />
+      )}
+
+      {showBatchTemplates && (
+        <BatchTemplateManager
+          onClose={() => setShowBatchTemplates(false)}
+          onRun={(project) => {
+            setShowBatchTemplates(false);
+            addProject(project);
+            setActiveProjectId(project.id);
+          }}
+        />
       )}
 
       {showUsage && (

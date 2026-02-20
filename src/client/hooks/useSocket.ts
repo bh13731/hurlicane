@@ -26,7 +26,7 @@ export function useSocket(handlers: SocketHandlers): void {
     const handleQuestionNew = ({ question }: { question: Question }) => onQuestionNew(question);
     const handleQuestionAnswered = ({ question }: { question: Question }) => onQuestionAnswered(question);
     const handleLockAcquired = ({ lock }: { lock: FileLock }) => onLockAcquired(lock);
-    const handleLockReleased = ({ lock_id }: { lock_id: string; file_path: string }) => onLockReleased(lock_id);
+    const handleLockReleased = ({ lock_id, file_path }: { lock_id: string; file_path: string }) => onLockReleased(lock_id, file_path);
     const handleJobNew = ({ job }: { job: Job }) => onJobNew(job);
     const handleJobUpdate = ({ job }: { job: Job }) => onJobUpdate(job);
 

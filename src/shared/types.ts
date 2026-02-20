@@ -103,6 +103,7 @@ export interface QueueSnapshot {
   locks: FileLock[];
   templates: Template[];
   projects: Project[];
+  batchTemplates: BatchTemplate[];
 }
 
 export interface ServerToClientEvents {
@@ -234,4 +235,39 @@ export interface Project {
 export interface CreateProjectRequest {
   name: string;
   description?: string;
+}
+
+// ─── Batch Templates ──────────────────────────────────────────────────────────
+
+export interface BatchTemplate {
+  id: string;
+  name: string;
+  items: string[];
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CreateBatchTemplateRequest {
+  name: string;
+  items: string[];
+}
+
+export interface UpdateBatchTemplateRequest {
+  name?: string;
+  items?: string[];
+}
+
+export interface RunBatchTemplateRequest {
+  templateId?: string;
+  model?: string;
+  interactive?: boolean;
+  useWorktree?: boolean;
+  workDir?: string;
+  maxTurns?: number;
+  projectName?: string;
+}
+
+export interface RunBatchTemplateResponse {
+  project: Project;
+  jobs: Job[];
 }

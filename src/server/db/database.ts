@@ -100,6 +100,17 @@ export function initDb(dbPath: string): DatabaseSync {
     db.exec('ALTER TABLE templates ADD COLUMN model TEXT');
   }
 
+  // Batch templates
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS batch_templates (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      items      TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
   // Notes (shared scratchpad across all agents)
   const notesCols: string[] = (db.prepare('PRAGMA table_info(notes)').all() as any[]).map((r: any) => r.name);
   if (notesCols.length === 0) {

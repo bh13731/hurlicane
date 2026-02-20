@@ -7,6 +7,7 @@ import templatesRouter from './templates.js';
 import projectsRouter from './projects.js';
 import usageRouter from './usage.js';
 import searchRouter from './search.js';
+import batchTemplatesRouter from './batchTemplates.js';
 
 const router = Router();
 
@@ -18,5 +19,6 @@ router.use('/templates', templatesRouter);
 router.use('/projects', projectsRouter);
 router.use('/usage', usageRouter);
 router.use('/search', searchRouter);
+router.use('/batch-templates', batchTemplatesRouter);
 
 export default router;
