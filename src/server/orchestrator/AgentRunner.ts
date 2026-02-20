@@ -1,0 +1,402 @@
+import { spawn, execSync, type ChildProcess } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as queries from '../db/queries.js';
+import * as socket from '../socket/SocketManager.js';
+import { getFileLockRegistry } from './FileLockRegistry.js';
+import type { Job, ClaudeStreamEvent } from '../../shared/types.js';
+
+const CLAUDE = process.env.CLAUDE_BIN ?? 'claude';
+const MCP_PORT = process.env.MCP_PORT ?? '3001';
+const LOGS_DIR = path.join(process.cwd(), 'data', 'agent-logs');
+
+const SYSTEM_PROMPT = `You are a Claude Code agent in a multi-agent orchestration system.
+Use these MCP tools from the 'orchestrator' server:
+
+FILE LOCKING (required before any edits):
+  - lock_files(files, reason): Acquire exclusive locks BEFORE editing or creating files. BLOCKS until
+    the locks are available — you will resume automatically once they are free. If it times out
+    (success=false, timed_out=true), release any locks you currently hold then retry, or ask_user.
+  - release_files(files): Release locks when you are done with those files.
+  - check_file_locks(): See what files other agents currently have locked.
+
+COORDINATION:
+  - report_status(message): Update your status message in the orchestrator dashboard.
+  - ask_user(question): Ask the human a question and WAIT for their answer before continuing.
+
+ORCHESTRATION (spawn and coordinate sub-agents):
+  - create_job(description, title?, priority?, work_dir?, max_turns?, model?, depends_on?):
+      Create a new job that will be run by another agent. Returns { job_id, title, status }.
+      work_dir defaults to your own working directory.
+  - wait_for_jobs(job_ids, timeout_ms?):
+      Block until all specified jobs finish. Returns each job's status, result_text, and diff.
+      Use this after create_job to collect results from sub-agents.
+
+SHARED SCRATCHPAD (coordinate data between agents):
+  - write_note(key, value): Write a note visible to all agents. Use namespaced keys like "results/step1".
+  - read_note(key): Read a note. Returns { found, key, value, updated_at }.
+  - list_notes(prefix?): List note keys, optionally filtered by prefix.
+
+IMPORTANT RULES:
+- Always call lock_files BEFORE modifying any file. It will wait for you automatically.
+- Always call release_files as soon as you finish with each file — don't hold locks longer than needed.
+- Use report_status regularly to let the human know what you are doing.
+
+ORCHESTRATION PATTERN (for decomposing large tasks):
+  1. Call report_status to describe your plan.
+  2. Use create_job for each parallel sub-task. Collect the returned job_ids.
+  3. Use depends_on to express ordering if some sub-tasks depend on others.
+  4. Call wait_for_jobs(job_ids) to block until all sub-tasks complete.
+  5. Read result_text and diff from the results to synthesize a final answer.
+  6. Optionally use write_note/read_note to pass structured data between agents.`;
+
+export interface RunOptions {
+  agentId: string;
+  job: Job;
+  mcpPort?: number;
+  resumeSessionId?: string;
+}
+
+// Map of agentId → active tailer cleanup handles
+const _tailers = new Map<string, { watcher?: fs.FSWatcher; interval: NodeJS.Timeout }>();
+
+// Agents that were explicitly cancelled — handleAgentExit checks this to avoid overwriting 'cancelled' status
+export const cancelledAgents = new Set<string>();
+
+export function getLogPath(agentId: string): string {
+  return path.join(LOGS_DIR, `${agentId}.ndjson`);
+}
+
+export function getStderrPath(agentId: string): string {
+  return path.join(LOGS_DIR, `${agentId}.stderr`);
+}
+
+export function runAgent(options: RunOptions): void {
+  const { agentId, job } = options;
+  const mcpPort = options.mcpPort ?? Number(MCP_PORT);
+
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+
+  const logPath = getLogPath(agentId);
+  const errPath = getStderrPath(agentId);
+
+  // Open file descriptors for the child to write into directly
+  const logFd = fs.openSync(logPath, 'w');
+  const errFd = fs.openSync(errPath, 'w');
+
+  const mcpConfig = JSON.stringify({
+    mcpServers: {
+      orchestrator: {
+        url: `http://localhost:${mcpPort}/mcp/${agentId}`,
+        type: 'sse',
+      },
+    },
+  });
+
+  const workDir = (job as any).work_dir ?? process.cwd();
+  const maxTurns = (job as any).max_turns ?? 50;
+  const model: string | null = (job as any).model ?? null;
+
+  const claudeArgs = [
+    '--print',
+    '--output-format', 'stream-json',
+    '--verbose',
+    '--dangerously-skip-permissions',
+    '--mcp-config', mcpConfig,
+    '--append-system-prompt', SYSTEM_PROMPT,
+    '--max-turns', String(maxTurns),
+    ...(model ? ['--model', model] : []),
+    ...(options.resumeSessionId ? ['--resume', options.resumeSessionId] : []),
+  ];
+
+  console.log(`[agent ${agentId}] spawning for job "${job.title}"${model ? ` (model: ${model})` : ''}`);
+
+  const child = spawn(CLAUDE, claudeArgs, {
+    cwd: workDir,
+    detached: true,            // becomes process group leader — survives server restart
+    stdio: ['pipe', logFd, errFd],  // stdout/stderr go to files, not pipes
+    env: (() => {
+      const env = { ...process.env };
+      delete env['CLAUDECODE'];
+      env['ORCHESTRATOR_AGENT_ID'] = agentId;
+      env['ORCHESTRATOR_API_URL'] = `http://localhost:${process.env.PORT ?? 3000}`;
+      return env;
+    })(),
+  });
+
+  // Parent releases its copies of the file descriptors — child keeps its own
+  fs.closeSync(logFd);
+  fs.closeSync(errFd);
+
+  // Write prompt to stdin then close (child reads it all before doing anything else)
+  child.stdin.write(buildPrompt(job));
+  child.stdin.end();
+
+  // Capture the current git HEAD SHA so we can diff after the agent finishes
+  try {
+    const sha = execSync('git rev-parse HEAD', { cwd: workDir, timeout: 5000 }).toString().trim();
+    queries.updateAgent(agentId, { base_sha: sha });
+  } catch { /* not a git repo or git not available */ }
+
+  queries.updateAgent(agentId, { pid: child.pid ?? null, status: 'running' });
+  const agentWithJob = queries.getAgentWithJob(agentId);
+  if (agentWithJob) socket.emitAgentUpdate(agentWithJob);
+
+  // Start tailing the log file; pass the child so we know when it exits
+  startTailing(agentId, job, logPath, 0, child);
+}
+
+/**
+ * Called from recovery.ts when the agent's PID is still alive after a server restart.
+ * Re-tails the log file from where we left off.
+ */
+export function reattachAgent(options: RunOptions): void {
+  const { agentId, job } = options;
+  const logPath = getLogPath(agentId);
+  const agent = queries.getAgentById(agentId);
+  // Skip lines we already stored before the restart
+  const skipLines = agent ? queries.getAgentLastSeq(agentId) + 1 : 0;
+
+  console.log(`[agent ${agentId}] reattaching (PID ${agent?.pid}, skipping ${skipLines} already-stored lines)`);
+  startTailing(agentId, job, logPath, skipLines, null, agent?.pid);
+}
+
+function startTailing(
+  agentId: string,
+  job: Job,
+  logPath: string,
+  skipLines: number,
+  child: ChildProcess | null,
+  pid?: number,
+): void {
+  // Stop any previous tailer for this agent (shouldn't happen, but be safe)
+  stopTailing(agentId);
+
+  let seq = skipLines;     // next seq number to assign
+  let skipped = 0;         // lines consumed but not stored
+  let filePos = 0;         // byte offset read so far
+  let lineBuf = '';        // incomplete last line
+
+  function readNewContent(): void {
+    let size: number;
+    try {
+      size = fs.statSync(logPath).size;
+    } catch {
+      return; // file not created yet
+    }
+    if (size <= filePos) return;
+
+    const buf = Buffer.alloc(size - filePos);
+    const fd = fs.openSync(logPath, 'r');
+    const bytesRead = fs.readSync(fd, buf, 0, buf.length, filePos);
+    fs.closeSync(fd);
+    filePos += bytesRead;
+
+    lineBuf += buf.toString('utf8');
+    const parts = lineBuf.split('\n');
+    lineBuf = parts.pop() ?? ''; // keep partial last line for next read
+
+    for (const line of parts) {
+      if (!line.trim()) continue;
+      if (skipped < skipLines) {
+        skipped++;
+        continue; // already stored in a previous session
+      }
+      try {
+        const event: ClaudeStreamEvent = JSON.parse(line);
+        handleStreamEvent(agentId, event, line, seq++);
+      } catch {
+        storeOutput(agentId, seq++, 'raw', line);
+      }
+    }
+  }
+
+  // Initial read (catches output written before we set up the watcher)
+  readNewContent();
+
+  // Watch for new data; fall back to polling every 2s in case fs.watch misses events
+  let watcher: fs.FSWatcher | undefined;
+  try {
+    let debounce: NodeJS.Timeout | null = null;
+    watcher = fs.watch(logPath, { persistent: false }, () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(readNewContent, 50);
+    });
+  } catch { /* log file may not exist yet; the interval will catch up */ }
+
+  const interval = setInterval(readNewContent, 2000);
+  _tailers.set(agentId, { watcher, interval });
+
+  if (child) {
+    // Normal spawn: wait for the process to exit via child event
+    child.on('close', (code) => {
+      setTimeout(() => {
+        readNewContent(); // flush any remaining output
+        stopTailing(agentId);
+        handleAgentExit(agentId, job, code);
+      }, 500);
+    });
+
+    child.on('error', (err) => {
+      console.error(`[agent ${agentId}] spawn error:`, err);
+      stopTailing(agentId);
+      queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
+      queries.updateJobStatus(job.id, 'failed');
+      const updated = queries.getAgentWithJob(agentId);
+      if (updated) socket.emitAgentUpdate(updated);
+    });
+  } else {
+    // Reattach mode: poll the PID to detect when the process exits
+    const agentPid = pid ?? queries.getAgentById(agentId)?.pid;
+    if (!agentPid) return;
+
+    const pidPoll = setInterval(() => {
+      try {
+        process.kill(agentPid, 0); // no-op signal; throws ESRCH if process is gone
+      } catch {
+        clearInterval(pidPoll);
+        setTimeout(() => {
+          readNewContent();
+          stopTailing(agentId);
+          // Read exit code from stderr file if available; use 0 if result event was 'success'
+          handleAgentExit(agentId, job, null);
+        }, 500);
+      }
+    }, 3000);
+  }
+}
+
+function stopTailing(agentId: string): void {
+  const t = _tailers.get(agentId);
+  if (t) {
+    t.watcher?.close();
+    clearInterval(t.interval);
+    _tailers.delete(agentId);
+  }
+}
+
+function handleAgentExit(agentId: string, job: Job, exitCode: number | null): void {
+  console.log(`[agent ${agentId}] exited (code ${exitCode ?? 'unknown'})`);
+
+  // If the agent was cancelled, the cancel endpoint already updated DB + emitted socket events
+  if (cancelledAgents.has(agentId)) {
+    cancelledAgents.delete(agentId);
+    return;
+  }
+
+  // Try to determine success/failure from the last result event in the log
+  let statusFromLog: 'done' | 'failed' | null = null;
+  let costUsd: number | null = null;
+  let durationMs: number | null = null;
+  let numTurns: number | null = null;
+  try {
+    const content = fs.readFileSync(getLogPath(agentId), 'utf8');
+    const lines = content.split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const ev = JSON.parse(lines[i]) as ClaudeStreamEvent;
+        if (ev.type === 'result') {
+          statusFromLog = ev.is_error ? 'failed' : 'done';
+          costUsd = ev.total_cost_usd ?? null;
+          durationMs = ev.duration_ms ?? null;
+          numTurns = ev.num_turns ?? null;
+          break;
+        }
+      } catch { /* skip */ }
+    }
+  } catch { /* log file may be gone */ }
+
+  const status = statusFromLog ?? (exitCode === 0 ? 'done' : 'failed');
+
+  // Read stderr for error details
+  let stderrMsg: string | null = null;
+  if (status === 'failed') {
+    try {
+      const lines = fs.readFileSync(getStderrPath(agentId), 'utf8').split('\n').filter(Boolean);
+      stderrMsg = lines.slice(-10).join('\n') || null;
+    } catch { /* no stderr file */ }
+  }
+
+  queries.updateAgent(agentId, {
+    status,
+    exit_code: exitCode ?? -1,
+    error_message: stderrMsg,
+    cost_usd: costUsd,
+    duration_ms: durationMs,
+    num_turns: numTurns,
+    finished_at: Date.now(),
+  });
+
+  // Capture git diff between base_sha and current HEAD (committed + staged changes)
+  const agentRec = queries.getAgentById(agentId);
+  const workDir2 = (job as any).work_dir ?? process.cwd();
+  if (agentRec?.base_sha) {
+    try {
+      const committed = execSync(
+        `git log --patch --no-color ${agentRec.base_sha}..HEAD`,
+        { cwd: workDir2, timeout: 10000 }
+      ).toString();
+      const uncommitted = execSync(
+        'git diff HEAD --no-color',
+        { cwd: workDir2, timeout: 10000 }
+      ).toString();
+      const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
+      if (fullDiff.trim()) {
+        queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
+      }
+    } catch { /* not a git repo, no changes, or git not available */ }
+  }
+  queries.updateJobStatus(job.id, status);
+  getFileLockRegistry().releaseAll(agentId);
+
+  const updated = queries.getAgentWithJob(agentId);
+  if (updated) socket.emitAgentUpdate(updated);
+  const updatedJob = queries.getJobById(job.id);
+  if (updatedJob) socket.emitJobUpdate(updatedJob);
+}
+
+function handleStreamEvent(agentId: string, event: ClaudeStreamEvent, raw: string, seq: number): void {
+  storeOutput(agentId, seq, event.type, raw);
+
+  if (event.type === 'system' && event.session_id) {
+    queries.updateAgent(agentId, { session_id: event.session_id });
+  }
+
+  const latestRow = queries.getLatestAgentOutput(agentId);
+  if (latestRow) socket.emitAgentOutput(agentId, latestRow);
+}
+
+function storeOutput(agentId: string, seq: number, eventType: string, content: string): void {
+  queries.insertAgentOutput({
+    agent_id: agentId,
+    seq,
+    event_type: eventType,
+    content,
+    created_at: Date.now(),
+  });
+}
+
+function buildPrompt(job: Job): string {
+  let prompt = `# Task: ${job.title}\n\n`;
+
+  const templateId = (job as any).template_id as string | null;
+  if (templateId) {
+    const template = queries.getTemplateById(templateId);
+    if (template) {
+      prompt += `## Guidelines\n\n${template.content}\n\n## Task Description\n\n`;
+    }
+  }
+
+  prompt += job.description;
+
+  if (job.context) {
+    try {
+      const ctx = JSON.parse(job.context);
+      prompt += '\n\n## Additional Context\n';
+      for (const [k, v] of Object.entries(ctx)) {
+        prompt += `- **${k}**: ${v}\n`;
+      }
+    } catch { /* ignore */ }
+  }
+  return prompt;
+}

@@ -1,0 +1,214 @@
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Header } from './components/Header';
+import { AgentGrid } from './components/AgentGrid';
+import { AgentTerminal } from './components/AgentTerminal';
+import { WorkQueueSidebar } from './components/WorkQueueSidebar';
+import { FileLockMap } from './components/FileLockMap';
+import { JobForm } from './components/JobForm';
+import { TemplateManager } from './components/TemplateManager';
+import { UsageModal } from './components/UsageModal';
+import { SearchModal } from './components/SearchModal';
+import { GanttModal } from './components/GanttModal';
+import { DAGModal } from './components/DAGModal';
+import { JobLineagePanel } from './components/JobLineagePanel';
+import { useSocket } from './hooks/useSocket';
+import { useAgents } from './hooks/useAgents';
+import { useJobs } from './hooks/useJobs';
+import { useLocks } from './hooks/useLocks';
+import { useToasts } from './hooks/useToasts';
+import { ToastFeed } from './components/ToastFeed';
+import type { AgentWithJob, AgentOutput, CreateJobRequest, Job, Template } from '@shared/types';
+
+export default function App() {
+  const { agents, setInitial: setInitialAgents, addAgent, updateAgent } = useAgents();
+  const { jobs, setInitial: setInitialJobs, addJob, updateJob } = useJobs();
+  const { locks, setInitial: setInitialLocks, addLock, removeLock } = useLocks();
+  const { toasts, dismiss: dismissToast } = useToasts();
+  const [templates, setTemplates] = useState<Template[]>([]);
+
+  const [selectedAgent, setSelectedAgent] = useState<AgentWithJob | null>(null);
+  const [showJobForm, setShowJobForm] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showUsage, setShowUsage] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [showGantt, setShowGantt] = useState(false);
+  const [showDag, setShowDag] = useState(false);
+
+  const [todayCost, setTodayCost] = useState<number | null>(null);
+  const fetchingCost = useRef(false);
+
+  const fetchTodayCost = useCallback(async () => {
+    if (fetchingCost.current) return;
+    fetchingCost.current = true;
+    try {
+      const d = new Date();
+      const since = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      const res = await fetch(`/api/usage?since=${since}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const cost = data.totals?.totalCost ?? data.daily?.[0]?.totalCost ?? null;
+      setTodayCost(cost);
+    } catch {
+      // ignore — don't show broken state
+    } finally {
+      fetchingCost.current = false;
+    }
+  }, []);
+
+  // When an agent updates, sync the selected agent if it's open; refresh cost when one finishes
+  const handleAgentUpdate = useCallback((agent: AgentWithJob) => {
+    updateAgent(agent);
+    setSelectedAgent(prev => prev?.id === agent.id ? agent : prev);
+    if (agent.status === 'done' || agent.status === 'failed') {
+      fetchTodayCost();
+    }
+  }, [updateAgent, fetchTodayCost]);
+
+  useSocket({
+    onSnapshot: (snapshot) => {
+      setInitialJobs(snapshot.jobs);
+      setInitialAgents(snapshot.agents);
+      setInitialLocks(snapshot.locks);
+      setTemplates(snapshot.templates ?? []);
+    },
+    onAgentNew: addAgent,
+    onAgentUpdate: handleAgentUpdate,
+    onAgentOutput: (_agentId: string, _line: AgentOutput) => {
+      // Output is rendered live in AgentTerminal via socket listener
+    },
+    onQuestionNew: (question) => {
+      // Question state is on the agent; update will come via agent:update
+    },
+    onQuestionAnswered: (question) => {
+      // Same — agent update will follow
+    },
+    onLockAcquired: addLock,
+    onLockReleased: (lockId) => removeLock(lockId),
+    onJobNew: addJob,
+    onJobUpdate: updateJob,
+  });
+
+  // Fetch on mount, then every 60s
+  useEffect(() => {
+    fetchTodayCost();
+    const id = setInterval(fetchTodayCost, 60_000);
+    return () => clearInterval(id);
+  }, [fetchTodayCost]);
+
+  const handleSubmitJob = useCallback(async (req: CreateJobRequest) => {
+    const res = await fetch('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error ?? 'Failed to create job');
+    }
+  }, []);
+
+  const handleSelectAgent = useCallback((agent: AgentWithJob) => {
+    setSelectedAgent(agent);
+  }, []);
+
+  const handleSelectJob = useCallback((job: Job) => {
+    const agent = agents.find(a => a.job_id === job.id);
+    if (agent) setSelectedAgent(agent);
+  }, [agents]);
+
+  const handleCloseTerminal = useCallback(() => {
+    setSelectedAgent(null);
+  }, []);
+
+  return (
+    <div className="app">
+      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} todayCost={todayCost} />
+
+      <div className="main-layout">
+        {selectedAgent ? (
+          <JobLineagePanel
+            selectedAgent={selectedAgent}
+            allAgents={agents}
+            onSelectAgent={handleSelectAgent}
+          />
+        ) : (
+          <WorkQueueSidebar jobs={jobs} onSelectJob={handleSelectJob} />
+        )}
+
+        <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
+          <AgentGrid agents={agents} queuedJobs={jobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} templates={templates} selectedAgentId={selectedAgent?.id ?? null} />
+        </main>
+
+        {selectedAgent ? (
+          <AgentTerminal
+            agent={selectedAgent}
+            onClose={handleCloseTerminal}
+            onContinued={handleSelectAgent}
+          />
+        ) : (
+          <FileLockMap locks={locks} />
+        )}
+      </div>
+
+      {showJobForm && (
+        <JobForm
+          onSubmit={handleSubmitJob}
+          onClose={() => setShowJobForm(false)}
+          availableJobs={jobs}
+        />
+      )}
+
+      {showTemplates && (
+        <TemplateManager onClose={() => setShowTemplates(false)} />
+      )}
+
+      {showUsage && (
+        <UsageModal onClose={() => setShowUsage(false)} />
+      )}
+
+      {showSearch && (
+        <SearchModal
+          onClose={() => setShowSearch(false)}
+          onSelectAgent={(agentId) => {
+            const agent = agents.find(a => a.id === agentId);
+            if (agent) { handleSelectAgent(agent); }
+            setShowSearch(false);
+          }}
+        />
+      )}
+
+      {showGantt && (
+        <GanttModal
+          jobs={jobs}
+          agents={agents}
+          onClose={() => setShowGantt(false)}
+          onSelectAgent={(agent) => {
+            handleSelectAgent(agent);
+            setShowGantt(false);
+          }}
+        />
+      )}
+
+      {showDag && (
+        <DAGModal
+          jobs={jobs}
+          agents={agents}
+          onClose={() => setShowDag(false)}
+          onSelectAgent={(agent) => {
+            handleSelectAgent(agent);
+            setShowDag(false);
+          }}
+        />
+      )}
+
+      <ToastFeed
+        toasts={toasts}
+        dismiss={dismissToast}
+        onSelectAgent={(agentId) => {
+          const agent = agents.find(a => a.id === agentId);
+          if (agent) handleSelectAgent(agent);
+        }}
+      />
+    </div>
+  );
+}
