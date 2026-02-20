@@ -17,13 +17,21 @@ export const createJobSchema = z.object({
 export async function createJobHandler(agentId: string, input: z.infer<typeof createJobSchema>): Promise<string> {
   const { description, title, priority, work_dir, max_turns, model, depends_on, use_worktree } = input;
 
-  // Inherit work_dir from calling agent's job if not specified
+  // Inherit work_dir and project_id from calling agent's job if not specified
   let resolvedWorkDir = work_dir ?? null;
+  let inheritedProjectId: string | null = null;
   if (!resolvedWorkDir) {
     const agent = queries.getAgentById(agentId);
     if (agent) {
       const parentJob = queries.getJobById(agent.job_id);
       resolvedWorkDir = (parentJob as any)?.work_dir ?? null;
+      inheritedProjectId = parentJob?.project_id ?? null;
+    }
+  } else {
+    const agent = queries.getAgentById(agentId);
+    if (agent) {
+      const parentJob = queries.getJobById(agent.job_id);
+      inheritedProjectId = parentJob?.project_id ?? null;
     }
   }
 
@@ -39,6 +47,7 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     template_id: null,
     depends_on: depends_on?.length ? JSON.stringify(depends_on) : null,
     use_worktree: use_worktree ? 1 : 0,
+    project_id: inheritedProjectId,
   });
 
   socket.emitJobNew(job);

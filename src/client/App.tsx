@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Header } from './components/Header';
 import { AgentGrid } from './components/AgentGrid';
 import { AgentTerminal } from './components/AgentTerminal';
@@ -11,10 +11,12 @@ import { SearchModal } from './components/SearchModal';
 import { GanttModal } from './components/GanttModal';
 import { DAGModal } from './components/DAGModal';
 import { JobLineagePanel } from './components/JobLineagePanel';
+import { ProjectSelector } from './components/ProjectSelector';
 import { useSocket } from './hooks/useSocket';
 import { useAgents } from './hooks/useAgents';
 import { useJobs } from './hooks/useJobs';
 import { useLocks } from './hooks/useLocks';
+import { useProjects } from './hooks/useProjects';
 import { useToasts } from './hooks/useToasts';
 import { ToastFeed } from './components/ToastFeed';
 import type { AgentWithJob, AgentOutput, CreateJobRequest, Job, Template } from '@shared/types';
@@ -23,6 +25,7 @@ export default function App() {
   const { agents, setInitial: setInitialAgents, addAgent, updateAgent } = useAgents();
   const { jobs, setInitial: setInitialJobs, addJob, updateJob } = useJobs();
   const { locks, setInitial: setInitialLocks, addLock, removeLock } = useLocks();
+  const { projects, setInitial: setInitialProjects, addProject, removeProject } = useProjects();
   const { toasts, dismiss: dismissToast } = useToasts();
   const [templates, setTemplates] = useState<Template[]>([]);
 
@@ -33,6 +36,8 @@ export default function App() {
   const [showSearch, setShowSearch] = useState(false);
   const [showGantt, setShowGantt] = useState(false);
   const [showDag, setShowDag] = useState(false);
+  const [showProjects, setShowProjects] = useState(false);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
   const [todayCost, setTodayCost] = useState<number | null>(null);
   const fetchingCost = useRef(false);
@@ -70,6 +75,7 @@ export default function App() {
       setInitialAgents(snapshot.agents);
       setInitialLocks(snapshot.locks);
       setTemplates(snapshot.templates ?? []);
+      setInitialProjects(snapshot.projects ?? []);
     },
     onAgentNew: addAgent,
     onAgentUpdate: handleAgentUpdate,
@@ -95,17 +101,58 @@ export default function App() {
     return () => clearInterval(id);
   }, [fetchTodayCost]);
 
+  // ─── Project-scoped filtering ──────────────────────────────────────────────
+  const filteredJobs = useMemo(() => {
+    if (activeProjectId) return jobs.filter(j => j.project_id === activeProjectId);
+    return jobs.filter(j => !j.project_id);
+  }, [jobs, activeProjectId]);
+
+  const filteredJobIds = useMemo(() => new Set(filteredJobs.map(j => j.id)), [filteredJobs]);
+
+  const filteredAgents = useMemo(() => {
+    return agents.filter(a => filteredJobIds.has(a.job_id));
+  }, [agents, filteredJobIds]);
+
+  const activeProjectName = useMemo(() => {
+    if (!activeProjectId) return null;
+    return projects.find(p => p.id === activeProjectId)?.name ?? null;
+  }, [projects, activeProjectId]);
+
+  const handleCreateProject = useCallback(async (name: string, description: string) => {
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: description || undefined }),
+      });
+      if (!res.ok) return;
+      const project = await res.json();
+      addProject(project);
+      setActiveProjectId(project.id);
+    } catch { /* ignore */ }
+  }, [addProject]);
+
+  const handleDeleteProject = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+      if (!res.ok) return;
+      removeProject(id);
+      if (activeProjectId === id) setActiveProjectId(null);
+    } catch { /* ignore */ }
+  }, [removeProject, activeProjectId]);
+
   const handleSubmitJob = useCallback(async (req: CreateJobRequest) => {
+    const payload = activeProjectId ? { ...req, projectId: activeProjectId } : req;
     const res = await fetch('/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error ?? 'Failed to create job');
     }
-  }, []);
+  }, [activeProjectId]);
 
   const handleSelectAgent = useCallback((agent: AgentWithJob) => {
     setSelectedAgent(agent);
@@ -122,7 +169,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} todayCost={todayCost} />
+      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayCost={todayCost} />
 
       <div className="main-layout">
         {selectedAgent ? (
@@ -132,11 +179,11 @@ export default function App() {
             onSelectAgent={handleSelectAgent}
           />
         ) : (
-          <WorkQueueSidebar jobs={jobs} onSelectJob={handleSelectJob} />
+          <WorkQueueSidebar jobs={filteredJobs} onSelectJob={handleSelectJob} />
         )}
 
         <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
-          <AgentGrid agents={agents} queuedJobs={jobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} templates={templates} selectedAgentId={selectedAgent?.id ?? null} />
+          <AgentGrid agents={filteredAgents} queuedJobs={filteredJobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} templates={templates} selectedAgentId={selectedAgent?.id ?? null} />
         </main>
 
         {selectedAgent ? (
@@ -179,8 +226,8 @@ export default function App() {
 
       {showGantt && (
         <GanttModal
-          jobs={jobs}
-          agents={agents}
+          jobs={filteredJobs}
+          agents={filteredAgents}
           onClose={() => setShowGantt(false)}
           onSelectAgent={(agent) => {
             handleSelectAgent(agent);
@@ -191,13 +238,24 @@ export default function App() {
 
       {showDag && (
         <DAGModal
-          jobs={jobs}
-          agents={agents}
+          jobs={filteredJobs}
+          agents={filteredAgents}
           onClose={() => setShowDag(false)}
           onSelectAgent={(agent) => {
             handleSelectAgent(agent);
             setShowDag(false);
           }}
+        />
+      )}
+
+      {showProjects && (
+        <ProjectSelector
+          projects={projects}
+          activeProjectId={activeProjectId}
+          onSelect={setActiveProjectId}
+          onCreate={handleCreateProject}
+          onDelete={handleDeleteProject}
+          onClose={() => setShowProjects(false)}
         />
       )}
 

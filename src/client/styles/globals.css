@@ -1552,6 +1552,78 @@ body {
 
 /* ─── Scrollbars ───────────────────────────────────────────────────────────── */
 
+/* ─── Project Badge & Selector ─────────────────────────────────────────────── */
+
+.header-project-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #58a6ff;
+  background: #0d1117;
+  border: 1px solid #1f6feb;
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+
+.header-project-clear {
+  background: none;
+  border: none;
+  color: #58a6ff;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.7;
+  transition: opacity 0.1s;
+}
+
+.header-project-clear:hover {
+  opacity: 1;
+}
+
+.project-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #e6edf3;
+  transition: background 0.1s;
+}
+
+.project-item:hover { background: #21262d; }
+.project-item-active { background: #1f6feb33; }
+
+.project-create-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #30363d;
+}
+
+.project-create-form input {
+  flex: 1;
+  padding: 6px 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #e6edf3;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+
+.project-create-form input:focus {
+  border-color: #58a6ff;
+}
+
+/* ─── Scrollbars ───────────────────────────────────────────────────────────── */
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }

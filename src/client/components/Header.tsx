@@ -7,6 +7,9 @@ interface HeaderProps {
   onSearch: () => void;
   onTimeline: () => void;
   onDag: () => void;
+  onProjects: () => void;
+  currentProjectName?: string | null;
+  onClearProject?: () => void;
   todayCost?: number;
 }
 
@@ -35,12 +38,18 @@ function HurlwindLogo() {
   );
 }
 
-export function Header({ onNewJob, onTemplates, onUsage, onSearch, onTimeline, onDag, todayCost }: HeaderProps) {
+export function Header({ onNewJob, onTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, currentProjectName, onClearProject, todayCost }: HeaderProps) {
   return (
     <header className="header">
       <div className="header-left">
         <HurlwindLogo />
         <h1 className="header-title">Hurlwind</h1>
+        {currentProjectName && (
+          <div className="header-project-badge" title={`Active project: ${currentProjectName}`}>
+            {currentProjectName}
+            <button className="header-project-clear" onClick={onClearProject}>&times;</button>
+          </div>
+        )}
         {todayCost != null && todayCost > 0 && (
           <div className="header-cost" title="Total cost of agents started today">
             ${todayCost.toFixed(4)} today
@@ -59,6 +68,9 @@ export function Header({ onNewJob, onTemplates, onUsage, onSearch, onTimeline, o
         </button>
         <button className="btn btn-secondary" onClick={onUsage}>
           Usage
+        </button>
+        <button className="btn btn-secondary" onClick={onProjects}>
+          Projects
         </button>
         <button className="btn btn-secondary" onClick={onTemplates}>
           Templates

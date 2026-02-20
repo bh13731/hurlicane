@@ -48,6 +48,22 @@ export function initDb(dbPath: string): DatabaseSync {
     db.exec('ALTER TABLE jobs ADD COLUMN use_worktree INTEGER NOT NULL DEFAULT 0');
   }
 
+  // Projects table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      description TEXT,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    )
+  `);
+
+  if (!jobCols.includes('project_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN project_id TEXT REFERENCES projects(id)');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id)');
+
   const agentCols: string[] = (db.prepare('PRAGMA table_info(agents)').all() as any[]).map((r: any) => r.name);
   if (!agentCols.includes('parent_agent_id')) {
     db.exec('ALTER TABLE agents ADD COLUMN parent_agent_id TEXT');

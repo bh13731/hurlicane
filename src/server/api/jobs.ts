@@ -56,6 +56,7 @@ router.post('/', (req, res) => {
     depends_on: body.dependsOn?.length ? JSON.stringify(body.dependsOn) : null,
     is_interactive: body.interactive ? 1 : 0,
     use_worktree: body.useWorktree ? 1 : 0,
+    project_id: body.projectId ?? null,
   });
 
   socket.emitJobNew(job);

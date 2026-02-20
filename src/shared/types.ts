@@ -17,6 +17,7 @@ export interface Job {
   flagged: number;            // 0=not flagged, 1=flagged for review
   is_interactive: number;     // 0=batch, 1=interactive tmux session
   use_worktree: number;       // 0=normal, 1=create git worktree
+  project_id: string | null;  // FK → projects.id
   created_at: number;
   updated_at: number;
 }
@@ -101,6 +102,7 @@ export interface QueueSnapshot {
   agents: AgentWithJob[];
   locks: FileLock[];
   templates: Template[];
+  projects: Project[];
 }
 
 export interface ServerToClientEvents {
@@ -167,6 +169,7 @@ export interface CreateJobRequest {
   dependsOn?: string[]; // job IDs this job must wait for before running
   interactive?: boolean;
   useWorktree?: boolean;
+  projectId?: string;
 }
 
 export interface SearchResult {
@@ -216,4 +219,19 @@ export interface UpdateTemplateRequest {
   content?: string;
   workDir?: string | null;
   model?: string | null;
+}
+
+// ─── Projects ──────────────────────────────────────────────────────────────────
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CreateProjectRequest {
+  name: string;
+  description?: string;
 }

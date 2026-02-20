@@ -1,5 +1,5 @@
 import { getDb } from './database.js';
-import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, JobStatus, AgentStatus, SearchResult } from '../../shared/types.js';
+import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, JobStatus, AgentStatus, SearchResult } from '../../shared/types.js';
 
 // node:sqlite returns null-prototype objects; cast them via JSON round-trip helper
 function cast<T>(val: unknown): T {
@@ -22,12 +22,13 @@ export function insertJob(job: {
   depends_on?: string | null;
   is_interactive?: number;
   use_worktree?: number;
+  project_id?: string | null;
 }): Job {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     job.id, job.title, job.description, job.context,
     job.status ?? 'queued', job.priority,
@@ -37,6 +38,7 @@ export function insertJob(job: {
     job.depends_on ?? null,
     job.is_interactive ?? 0,
     job.use_worktree ?? 0,
+    job.project_id ?? null,
     now, now
   );
   return getJobById(job.id)!;
@@ -529,6 +531,49 @@ export function listNotes(prefix?: string): Note[] {
     rows = db.prepare('SELECT * FROM notes ORDER BY key ASC').all();
   }
   return rows.map(r => cast<Note>(r));
+}
+
+// ─── Projects ─────────────────────────────────────────────────────────────────
+
+export function insertProject(project: Project): Project {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO projects (id, name, description, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(project.id, project.name, project.description, project.created_at, project.updated_at);
+  return getProjectById(project.id)!;
+}
+
+export function getProjectById(id: string): Project | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+  return row ? cast<Project>(row) : null;
+}
+
+export function listProjects(): Project[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM projects ORDER BY name ASC').all();
+  return rows.map(r => cast<Project>(r));
+}
+
+export function updateProject(id: string, fields: Partial<Pick<Project, 'name' | 'description'>>): Project | null {
+  const db = getDb();
+  const sets: string[] = ['updated_at = ?'];
+  const values: unknown[] = [Date.now()];
+  for (const [k, v] of Object.entries(fields)) {
+    sets.push(`${k} = ?`);
+    values.push(v);
+  }
+  values.push(id);
+  db.prepare(`UPDATE projects SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+  return getProjectById(id);
+}
+
+export function deleteProject(id: string): void {
+  const db = getDb();
+  // Unlink jobs from this project before deleting
+  db.prepare('UPDATE jobs SET project_id = NULL WHERE project_id = ?').run(id);
+  db.prepare('DELETE FROM projects WHERE id = ?').run(id);
 }
 
 // ─── Agent result text ────────────────────────────────────────────────────────

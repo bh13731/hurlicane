@@ -55,6 +55,7 @@ async function main() {
       agents: queries.getAgentsWithJob(),
       locks: queries.getAllActiveLocks(),
       templates: queries.listTemplates(),
+      projects: queries.listProjects(),
     });
 
     socket.emit('queue:snapshot', buildSnapshot());

@@ -4,6 +4,7 @@ import agentsRouter from './agents.js';
 import repliesRouter from './replies.js';
 import locksRouter from './locks.js';
 import templatesRouter from './templates.js';
+import projectsRouter from './projects.js';
 import usageRouter from './usage.js';
 import searchRouter from './search.js';
 
@@ -14,6 +15,7 @@ router.use('/agents', agentsRouter);
 router.use('/replies', repliesRouter);
 router.use('/locks', locksRouter);
 router.use('/templates', templatesRouter);
+router.use('/projects', projectsRouter);
 router.use('/usage', usageRouter);
 router.use('/search', searchRouter);
 
