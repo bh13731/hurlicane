@@ -215,8 +215,9 @@ export function attachPty(agentId: string, job: Job, cols = 220, rows = 50): voi
   console.log(`[pty ${agentId}] attached to tmux session`);
 
   ptyInstance.onData((data) => {
+    const buf = _ptyBuffers.get(agentId);
+    if (!buf) return; // already disconnected
     socket.emitPtyData(agentId, data);
-    const buf = _ptyBuffers.get(agentId)!;
     buf.push(data);
     if (buf.length > PTY_BUFFER_MAX) buf.splice(0, buf.length - PTY_BUFFER_MAX);
     // Persist to disk so history survives server restarts and buffer eviction
@@ -252,21 +253,23 @@ export function resizePty(agentId: string, cols: number, rows: number): void {
 }
 
 export function disconnectAgent(agentId: string): void {
+  // Delete buffer first so the onData guard prevents writes during teardown
+  _ptyBuffers.delete(agentId);
+
   try {
     execFileSync('tmux', ['kill-session', '-t', sessionName(agentId)], { stdio: 'pipe' });
   } catch { /* session may already be gone */ }
 
   const ptyInstance = _ptys.get(agentId);
   if (ptyInstance) {
-    try { ptyInstance.kill(); } catch { /* ignore */ }
     _ptys.delete(agentId);
+    try { ptyInstance.kill(); } catch { /* ignore */ }
   }
 
   // Clean up the launcher script and prompt file
   try { fs.unlinkSync(scriptPath(agentId)); } catch { /* ignore */ }
   try { fs.unlinkSync(promptPath(agentId)); } catch { /* ignore */ }
 
-  _ptyBuffers.delete(agentId);
   socket.emitPtyClosed(agentId);
 }
 

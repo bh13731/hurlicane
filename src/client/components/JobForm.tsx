@@ -169,8 +169,8 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               onChange={e => setModel(e.target.value)}
             >
               <option value="">Auto-select (Haiku classifies the task)</option>
-              <option value="claude-opus-4-6">claude-opus-4-6 — most capable, slowest</option>
-              <option value="claude-sonnet-4-6">claude-sonnet-4-6 — balanced</option>
+              <option value="claude-opus-4-6[1m]">claude-opus-4-6[1m] — most capable, 1M context</option>
+              <option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m] — balanced, 1M context</option>
               <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 — fastest, cheapest</option>
             </select>
           </div>

@@ -257,17 +257,18 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
         .then(r => r.json())
         .then(({ chunks }: { chunks: string[] }) => {
           if (chunks.length > 0) {
-            // For completed sessions, strip alternate-screen entry/exit sequences
-            // (\e[?1049h / \e[?1049l and older variants).  Claude's TUI runs in
-            // the alternate screen, which has no scrollback.  By removing those
-            // control sequences during replay we keep all content in the main
-            // screen's scrollback buffer so the user can scroll up to see the
-            // full session history.  We leave them intact for live (running)
-            // sessions so interactive use works normally.
+            // For completed sessions, strip escape sequences that prevent scrolling:
+            // - Alternate-screen entry/exit (\e[?1049h etc.) — TUI runs in alt screen
+            //   which has no scrollback; stripping keeps content in main screen buffer
+            // - Mouse reporting modes (\e[?1000h etc.) — TUI enables mouse mode for its
+            //   own scrollable areas; if left active, scroll-wheel events are captured as
+            //   mouse reports instead of scrolling xterm's buffer
+            // - Clear-scrollback (\e[3J) — would destroy accumulated scrollback
+            // We leave them intact for live (running) sessions so interactive use works.
             const isCompleted = TERMINAL_STATUSES.includes(agent.status);
-            const ALT_SCREEN_RE = /\x1b\[\?(?:1049|47|1047)[hl]/g;
+            const STRIP_FOR_REPLAY_RE = /\x1b\[\?(?:1049|47|1047|1000|1002|1003|1006|1005|1004)[hl]|\x1b\[3J/g;
             for (const chunk of chunks) {
-              term.write(isCompleted ? chunk.replace(ALT_SCREEN_RE, '') : chunk);
+              term.write(isCompleted ? chunk.replace(STRIP_FOR_REPLAY_RE, '') : chunk);
             }
           }
           // Flush any live data that arrived during the fetch
@@ -276,6 +277,11 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
           historyLoaded = true;
           inputEnabled = true;
           if (TERMINAL_STATUSES.includes(agent.status)) {
+            // Reset terminal state: disable any residual mouse reporting, reset
+            // scroll region, and scroll to top so user sees the full history.
+            term.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1005l');
+            term.write('\x1b[r'); // reset scroll region to full screen
+            term.scrollToTop();
             term.write('\r\n\x1b[2m[session ended]\x1b[0m\r\n');
           } else {
             term.focus();

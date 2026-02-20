@@ -7,8 +7,8 @@ const CLASSIFIER_MODEL = 'claude-haiku-4-5-20251001';
 
 const COMPLEXITY_TO_MODEL: Record<string, string> = {
   simple:  'claude-haiku-4-5-20251001',
-  medium:  'claude-sonnet-4-6',
-  complex: 'claude-opus-4-6',
+  medium:  'claude-sonnet-4-6[1m]',
+  complex: 'claude-opus-4-6[1m]',
 };
 
 /**
@@ -27,7 +27,7 @@ export async function resolveModel(job: Job): Promise<string> {
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    const fallback = 'claude-sonnet-4-6';
+    const fallback = 'claude-sonnet-4-6[1m]';
     console.warn('[classifier] ANTHROPIC_API_KEY not set — defaulting to sonnet');
     queries.updateJobModel(job.id, fallback);
     socket.emitJobUpdate(queries.getJobById(job.id)!);
@@ -67,7 +67,7 @@ export async function resolveModel(job: Job): Promise<string> {
 
     return model;
   } catch (err) {
-    const fallback = 'claude-sonnet-4-6';
+    const fallback = 'claude-sonnet-4-6[1m]';
     console.error(`[classifier] failed, falling back to ${fallback}:`, err);
     queries.updateJobModel(job.id, fallback);
     socket.emitJobUpdate(queries.getJobById(job.id)!);
