@@ -1469,6 +1469,102 @@ body {
   overflow: auto;
   /* allow horizontal scroll when siblings make SVG wider than sidebar */
 }
+
+/* ─── Left Sidebar Stack (lineage + running jobs) ───────────────────────────── */
+
+.left-sidebar-stack {
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-right: 1px solid #30363d;
+}
+
+.left-sidebar-stack .lineage-panel {
+  flex: 1;
+  border-right: none;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ─── Running Jobs Panel ────────────────────────────────────────────────────── */
+
+.running-jobs-panel {
+  flex-shrink: 0;
+  background: #161b22;
+  border-top: 1px solid #30363d;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.running-jobs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.running-jobs-count {
+  font-size: 11px;
+  font-weight: 600;
+  background: #2d2a00;
+  color: #f59e0b;
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+
+.running-jobs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.running-job-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #c9d1d9;
+  transition: background 0.1s;
+  min-width: 0;
+}
+
+.running-job-item:hover {
+  background: #21262d;
+}
+
+.running-job-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.running-job-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.running-job-project {
+  font-size: 10px;
+  color: #58a6ff;
+  background: #0d1f3a;
+  border: 1px solid #1f4a7a;
+  border-radius: 3px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* ─── Scrollbars ───────────────────────────────────────────────────────────── */
 
 /* ─── Toast Feed ───────────────────────────────────────────────────────────── */

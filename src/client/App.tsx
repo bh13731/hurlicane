@@ -12,6 +12,7 @@ import { SearchModal } from './components/SearchModal';
 import { GanttModal } from './components/GanttModal';
 import { DAGModal } from './components/DAGModal';
 import { JobLineagePanel } from './components/JobLineagePanel';
+import { RunningJobsPanel } from './components/RunningJobsPanel';
 import { ProjectSelector } from './components/ProjectSelector';
 import { useSocket } from './hooks/useSocket';
 import { useAgents } from './hooks/useAgents';
@@ -175,11 +176,18 @@ export default function App() {
 
       <div className="main-layout">
         {selectedAgent ? (
-          <JobLineagePanel
-            selectedAgent={selectedAgent}
-            allAgents={agents}
-            onSelectAgent={handleSelectAgent}
-          />
+          <div className="left-sidebar-stack">
+            <JobLineagePanel
+              selectedAgent={selectedAgent}
+              allAgents={agents}
+              onSelectAgent={handleSelectAgent}
+            />
+            <RunningJobsPanel
+              agents={agents}
+              projects={projects}
+              onSelectAgent={handleSelectAgent}
+            />
+          </div>
         ) : (
           <WorkQueueSidebar jobs={filteredJobs} onSelectJob={handleSelectJob} />
         )}
