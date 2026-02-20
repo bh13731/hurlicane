@@ -133,6 +133,11 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
       script,
     ], { cwd: workDir, stdio: 'pipe' });
 
+    // Enable mouse mode so scroll wheel enters tmux copy mode for history scrolling
+    try {
+      execFileSync('tmux', ['set-option', '-t', sessionName(agentId), 'mouse', 'on'], { stdio: 'pipe' });
+    } catch { /* ignore — older tmux may not support per-session mouse */ }
+
   } catch (err: any) {
     console.error(`[pty ${agentId}] failed to create tmux session:`, err.message);
     queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
