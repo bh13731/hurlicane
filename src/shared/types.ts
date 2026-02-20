@@ -16,6 +16,7 @@ export interface Job {
   depends_on: string | null;  // JSON array of job IDs this job must wait for
   flagged: number;            // 0=not flagged, 1=flagged for review
   is_interactive: number;     // 0=batch, 1=interactive tmux session
+  use_worktree: number;       // 0=normal, 1=create git worktree
   created_at: number;
   updated_at: number;
 }
@@ -165,6 +166,7 @@ export interface CreateJobRequest {
   templateId?: string;
   dependsOn?: string[]; // job IDs this job must wait for before running
   interactive?: boolean;
+  useWorktree?: boolean;
 }
 
 export interface SearchResult {

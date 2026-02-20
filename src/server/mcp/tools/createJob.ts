@@ -11,10 +11,11 @@ export const createJobSchema = z.object({
   max_turns: z.number().optional().describe('Max agent turns (default: 50)'),
   model: z.string().optional().describe('Model override, e.g. "claude-opus-4-6" (default: auto-classify)'),
   depends_on: z.array(z.string()).optional().describe('Job IDs that must complete before this job runs'),
+  use_worktree: z.boolean().optional().describe('Create a git worktree so the agent works in an isolated checkout'),
 });
 
 export async function createJobHandler(agentId: string, input: z.infer<typeof createJobSchema>): Promise<string> {
-  const { description, title, priority, work_dir, max_turns, model, depends_on } = input;
+  const { description, title, priority, work_dir, max_turns, model, depends_on, use_worktree } = input;
 
   // Inherit work_dir from calling agent's job if not specified
   let resolvedWorkDir = work_dir ?? null;
@@ -37,6 +38,7 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     model: model ?? null,
     template_id: null,
     depends_on: depends_on?.length ? JSON.stringify(depends_on) : null,
+    use_worktree: use_worktree ? 1 : 0,
   });
 
   socket.emitJobNew(job);

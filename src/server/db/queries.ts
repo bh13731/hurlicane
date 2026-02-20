@@ -21,12 +21,13 @@ export function insertJob(job: {
   template_id?: string | null;
   depends_on?: string | null;
   is_interactive?: number;
+  use_worktree?: number;
 }): Job {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     job.id, job.title, job.description, job.context,
     job.status ?? 'queued', job.priority,
@@ -35,6 +36,7 @@ export function insertJob(job: {
     job.template_id ?? null,
     job.depends_on ?? null,
     job.is_interactive ?? 0,
+    job.use_worktree ?? 0,
     now, now
   );
   return getJobById(job.id)!;

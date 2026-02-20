@@ -18,6 +18,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [templates, setTemplates] = useState<Template[]>([]);
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   const [interactive, setInteractive] = useState(false);
+  const [useWorktree, setUseWorktree] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const pendingJobs = availableJobs.filter(
@@ -60,6 +61,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         templateId: templateId || undefined,
         dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
         interactive: interactive || undefined,
+        useWorktree: useWorktree || undefined,
       });
       onClose();
     } finally {
@@ -205,6 +207,18 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               />
               Interactive session
               <span className="tooltip-icon" data-tip="Keeps terminal open for direct conversation">?</span>
+            </label>
+          </div>
+
+          <div className="form-group">
+            <label className="form-checkbox-label">
+              <input
+                type="checkbox"
+                checked={useWorktree}
+                onChange={e => setUseWorktree(e.target.checked)}
+              />
+              Use worktree
+              <span className="tooltip-icon" data-tip="Creates a git worktree so the agent works in an isolated checkout on a new branch">?</span>
             </label>
           </div>
 

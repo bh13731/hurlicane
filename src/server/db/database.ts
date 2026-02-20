@@ -44,6 +44,9 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!jobCols.includes('is_interactive')) {
     db.exec('ALTER TABLE jobs ADD COLUMN is_interactive INTEGER NOT NULL DEFAULT 0');
   }
+  if (!jobCols.includes('use_worktree')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN use_worktree INTEGER NOT NULL DEFAULT 0');
+  }
 
   const agentCols: string[] = (db.prepare('PRAGMA table_info(agents)').all() as any[]).map((r: any) => r.name);
   if (!agentCols.includes('parent_agent_id')) {

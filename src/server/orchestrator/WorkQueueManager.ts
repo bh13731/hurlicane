@@ -1,9 +1,12 @@
 import { randomUUID } from 'crypto';
+import { execSync } from 'child_process';
+import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { runAgent } from './AgentRunner.js';
 import { startInteractiveAgent } from './PtyManager.js';
 import { resolveModel } from './ModelClassifier.js';
+import type { Job } from '../../shared/types.js';
 
 const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT_AGENTS ?? 20);
 const POLL_INTERVAL_MS = 2000;
@@ -58,11 +61,16 @@ async function tick(): Promise<void> {
     queries.insertAgent({ id: agentId, job_id: job.id, status: 'starting' });
     socket.emitAgentNew(queries.getAgentWithJob(agentId)!);
 
-    console.log(`[queue] dispatching "${job.title}" → agent ${agentId} (model: ${model}, interactive: ${!!readyJob.is_interactive})`);
-    if (readyJob.is_interactive) {
-      startInteractiveAgent({ agentId, job: readyJob });
+    // If worktree requested, create one and override the working directory
+    const dispatchJob = readyJob.use_worktree
+      ? createWorktree(readyJob, agentId)
+      : readyJob;
+
+    console.log(`[queue] dispatching "${job.title}" → agent ${agentId} (model: ${model}, interactive: ${!!readyJob.is_interactive}${readyJob.use_worktree ? ', worktree' : ''})`);
+    if (dispatchJob.is_interactive) {
+      startInteractiveAgent({ agentId, job: dispatchJob });
     } else {
-      runAgent({ agentId, job: readyJob });
+      runAgent({ agentId, job: dispatchJob });
     }
   } catch (err: any) {
     console.error(`[queue] dispatch failed for job ${job.id}:`, err);
@@ -71,4 +79,33 @@ async function tick(): Promise<void> {
   } finally {
     _classifying.delete(job.id);
   }
+}
+
+/**
+ * Create a git worktree for a job and return a shallow copy of the job
+ * with work_dir pointing to the new worktree.
+ */
+function createWorktree(job: Job, agentId: string): Job {
+  const repoDir = (job as any).work_dir ?? process.cwd();
+  const shortId = agentId.slice(0, 8);
+
+  // Slugify job title for the branch name
+  const slug = job.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40);
+  const branchName = `orchestrator/${slug}-${shortId}`;
+
+  // Place worktrees in a sibling directory to keep the source repo clean
+  const worktreeDir = path.resolve(repoDir, '..', '.orchestrator-worktrees', shortId);
+
+  console.log(`[queue] creating worktree: ${worktreeDir} (branch: ${branchName})`);
+  execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branchName)}`, {
+    cwd: repoDir,
+    timeout: 30000,
+  });
+
+  // Return a copy of the job with the overridden work_dir
+  return { ...job, work_dir: worktreeDir } as any;
 }
