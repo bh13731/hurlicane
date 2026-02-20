@@ -10,6 +10,17 @@ const CLAUDE = process.env.CLAUDE_BIN ?? 'claude';
 const MCP_PORT = process.env.MCP_PORT ?? '3001';
 const LOGS_DIR = path.join(process.cwd(), 'data', 'agent-logs');
 
+const HOOK_SCRIPT = path.resolve(process.cwd(), 'scripts/check-lock-hook.mjs');
+
+export const HOOK_SETTINGS = JSON.stringify({
+  hooks: {
+    PreToolUse: [{
+      matcher: "Edit|Write|MultiEdit|NotebookEdit",
+      hooks: [{ type: "command", command: `node ${HOOK_SCRIPT}` }]
+    }]
+  }
+});
+
 export const SYSTEM_PROMPT = `You are a Claude Code agent in a multi-agent orchestration system.
 Use these MCP tools from the 'orchestrator' server:
 
@@ -102,6 +113,7 @@ export function runAgent(options: RunOptions): void {
     '--output-format', 'stream-json',
     '--verbose',
     '--dangerously-skip-permissions',
+    '--settings', HOOK_SETTINGS,
     '--mcp-config', mcpConfig,
     '--append-system-prompt', SYSTEM_PROMPT,
     '--max-turns', String(maxTurns),

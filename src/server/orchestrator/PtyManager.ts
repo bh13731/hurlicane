@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import { SYSTEM_PROMPT } from './AgentRunner.js';
+import { SYSTEM_PROMPT, HOOK_SETTINGS } from './AgentRunner.js';
 import type { Job } from '../../shared/types.js';
 
 const CLAUDE = process.env.CLAUDE_BIN ?? 'claude';
@@ -111,7 +111,7 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
     `export ORCHESTRATOR_AGENT_ID=${JSON.stringify(agentId)}`,
     `export ORCHESTRATOR_API_URL=${JSON.stringify(`http://localhost:${process.env.PORT ?? 3000}`)}`,
     `unset CLAUDECODE`,
-    `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''} "$(cat ${JSON.stringify(pFile)})"`,
+    `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''} "$(cat ${JSON.stringify(pFile)})"`,
   ].join('\n') + '\n';
   fs.writeFileSync(script, scriptLines, { mode: 0o755 });
 
