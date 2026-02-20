@@ -10,7 +10,7 @@ const CLAUDE = process.env.CLAUDE_BIN ?? 'claude';
 const MCP_PORT = process.env.MCP_PORT ?? '3001';
 const LOGS_DIR = path.join(process.cwd(), 'data', 'agent-logs');
 
-const SYSTEM_PROMPT = `You are a Claude Code agent in a multi-agent orchestration system.
+export const SYSTEM_PROMPT = `You are a Claude Code agent in a multi-agent orchestration system.
 Use these MCP tools from the 'orchestrator' server:
 
 FILE LOCKING (required before any edits):
