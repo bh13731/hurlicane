@@ -1,6 +1,8 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { McpServer as MCP, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { askUserHandler, askUserSchema } from './tools/askUser.js';
 import { lockFilesHandler, lockFilesSchema } from './tools/lockFiles.js';
 import { releaseFilesHandler, releaseFilesSchema } from './tools/releaseFiles.js';
@@ -10,39 +12,96 @@ import { createJobHandler, createJobSchema } from './tools/createJob.js';
 import { waitForJobsHandler, waitForJobsSchema } from './tools/waitForJobs.js';
 import { writeNoteHandler, writeNoteSchema, readNoteHandler, readNoteSchema, listNotesHandler, listNotesSchema } from './tools/notes.js';
 
-// One SSEServerTransport per active agent connection
-const transports: Map<string, SSEServerTransport> = new Map();
+// agentId → { sessionId → transport }
+const agentTransports: Map<string, Map<string, StreamableHTTPServerTransport>> = new Map();
 
 export function createMcpApp(): express.Application {
   const app = express();
   app.use(express.json());
 
-  // SSE endpoint — agent connects here
-  app.get('/mcp/:agentId', async (req, res) => {
+  // POST — handles initialization + tool calls from agents
+  app.post('/mcp/:agentId', async (req, res) => {
     const { agentId } = req.params;
-    console.log(`[mcp] SSE connect: agent ${agentId}`);
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-    const transport = new SSEServerTransport(`/mcp/${agentId}/message`, res);
-    transports.set(agentId, transport);
+    let transportMap = agentTransports.get(agentId);
+    if (!transportMap) {
+      transportMap = new Map();
+      agentTransports.set(agentId, transportMap);
+    }
 
-    const server = buildMcpServer(agentId);
-    await server.connect(transport);
+    let transport: StreamableHTTPServerTransport | undefined;
 
-    res.on('close', () => {
-      transports.delete(agentId);
-      console.log(`[mcp] SSE disconnect: agent ${agentId}`);
-    });
-  });
+    if (sessionId && transportMap.has(sessionId)) {
+      transport = transportMap.get(sessionId)!;
+    } else if (!sessionId && isInitializeRequest(req.body)) {
+      console.log(`[mcp] new session: agent ${agentId}`);
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (sid) => {
+          transportMap!.set(sid, transport!);
+        },
+      });
 
-  // Message endpoint — tool calls from agent arrive here
-  app.post('/mcp/:agentId/message', async (req, res) => {
-    const { agentId } = req.params;
-    const transport = transports.get(agentId);
-    if (!transport) {
-      res.status(404).json({ error: 'No active transport for agent' });
+      transport.onclose = () => {
+        const sid = transport!.sessionId;
+        if (sid) transportMap!.delete(sid);
+        if (transportMap!.size === 0) agentTransports.delete(agentId);
+        console.log(`[mcp] session closed: agent ${agentId}`);
+      };
+
+      const server = buildMcpServer(agentId);
+      await server.connect(transport);
+    } else if (isInitializeRequest(req.body)) {
+      // Re-initialization with a stale session ID (e.g. after server restart) — create fresh session
+      console.log(`[mcp] re-initialize: agent ${agentId} (stale session)`);
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (sid) => {
+          transportMap!.set(sid, transport!);
+        },
+      });
+
+      transport.onclose = () => {
+        const sid = transport!.sessionId;
+        if (sid) transportMap!.delete(sid);
+        if (transportMap!.size === 0) agentTransports.delete(agentId);
+        console.log(`[mcp] session closed: agent ${agentId}`);
+      };
+
+      const server = buildMcpServer(agentId);
+      await server.connect(transport);
+    } else {
+      // Unknown session, non-initialize request — 404 tells MCP client to re-initialize
+      res.status(404).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Session not found — please re-initialize' }, id: null });
       return;
     }
-    await transport.handlePostMessage(req, res);
+
+    await transport!.handleRequest(req, res, req.body);
+  });
+
+  // GET — SSE streaming channel (server→client notifications)
+  app.get('/mcp/:agentId', async (req, res) => {
+    const { agentId } = req.params;
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    const transport = sessionId && agentTransports.get(agentId)?.get(sessionId);
+    if (!transport) {
+      res.status(400).json({ error: 'Invalid or missing session' });
+      return;
+    }
+    await transport.handleRequest(req, res);
+  });
+
+  // DELETE — session termination
+  app.delete('/mcp/:agentId', async (req, res) => {
+    const { agentId } = req.params;
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    const transport = sessionId && agentTransports.get(agentId)?.get(sessionId);
+    if (!transport) {
+      res.status(400).json({ error: 'Invalid or missing session' });
+      return;
+    }
+    await transport.handleRequest(req, res);
   });
 
   return app;

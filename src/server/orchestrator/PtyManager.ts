@@ -7,8 +7,10 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { SYSTEM_PROMPT, HOOK_SETTINGS } from './AgentRunner.js';
 import type { Job } from '../../shared/types.js';
+import { isCodexModel, codexModelName } from '../../shared/types.js';
 
 const CLAUDE = process.env.CLAUDE_BIN ?? 'claude';
+const CODEX = process.env.CODEX_BIN ?? 'codex';
 const MCP_PORT = process.env.MCP_PORT ?? '3001';
 const SCRIPTS_DIR = path.join(process.cwd(), 'data', 'agent-scripts');
 const PTY_LOG_DIR = path.join(process.cwd(), 'data', 'agent-logs');
@@ -94,7 +96,7 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
     mcpServers: {
       orchestrator: {
         url: `http://localhost:${mcpPort}/mcp/${agentId}`,
-        type: 'sse',
+        type: 'http',
       },
     },
   });
@@ -104,14 +106,29 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
   const pFile = promptPath(agentId);
   fs.writeFileSync(pFile, buildInteractivePrompt(job), 'utf8');
 
-  // Write a launcher script — claude receives the prompt as a positional arg (pre-fills input)
+  // Write a launcher script — receives the prompt as a positional arg (pre-fills input)
   const script = scriptPath(agentId);
+  const useCodex = isCodexModel(model);
+
+  let execLine: string;
+  if (useCodex) {
+    const mcpUrl = `http://localhost:${mcpPort}/mcp/${agentId}`;
+    const codexSubModel = codexModelName(model);
+    const modelFlag = codexSubModel ? ` -m ${JSON.stringify(codexSubModel)}` : '';
+    // Do NOT pass the prompt as a positional arg — that causes Codex to run non-interactively
+    // and exit immediately. Instead we paste it into the TUI after it initialises.
+    // Note: --skip-git-repo-check is a Claude flag and does NOT exist in Codex.
+    execLine = `exec ${JSON.stringify(CODEX)} --dangerously-bypass-approvals-and-sandbox -C ${JSON.stringify(workDir)} -c 'mcp_servers.orchestrator.url="${mcpUrl}"'${modelFlag}`;
+  } else {
+    execLine = `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''} "$(cat ${JSON.stringify(pFile)})"`;
+  }
+
   const scriptLines = [
     '#!/bin/sh',
     `export ORCHESTRATOR_AGENT_ID=${JSON.stringify(agentId)}`,
     `export ORCHESTRATOR_API_URL=${JSON.stringify(`http://localhost:${process.env.PORT ?? 3000}`)}`,
     `unset CLAUDECODE`,
-    `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''} "$(cat ${JSON.stringify(pFile)})"`,
+    execLine,
   ].join('\n') + '\n';
   fs.writeFileSync(script, scriptLines, { mode: 0o755 });
 
@@ -152,10 +169,21 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
   const agentWithJob = queries.getAgentWithJob(agentId);
   if (agentWithJob) socket.emitAgentUpdate(agentWithJob);
 
-  // After claude's TUI has initialised (prompt pre-filled from CLI arg), send Enter to submit
+  // After the TUI has initialised, submit the initial prompt.
+  // For Claude: prompt is pre-filled via CLI arg, so just send Enter.
+  // For Codex: prompt was NOT passed as CLI arg (that causes non-interactive exit),
+  //   so paste it from file into the TUI first, then send Enter.
   setTimeout(() => {
     try {
       if (isTmuxSessionAlive(agentId)) {
+        if (useCodex) {
+          try {
+            execFileSync('tmux', ['load-buffer', '-b', `agent-${agentId}`, pFile], { stdio: 'pipe' });
+            execFileSync('tmux', ['paste-buffer', '-b', `agent-${agentId}`, '-t', sessionName(agentId)], { stdio: 'pipe' });
+          } catch (err: any) {
+            console.warn(`[pty ${agentId}] failed to paste codex prompt:`, err.message);
+          }
+        }
         try {
           execFileSync('tmux', ['send-keys', '-t', sessionName(agentId), 'Enter'], { stdio: 'pipe' });
         } catch (err: any) {
@@ -288,7 +316,15 @@ export function disconnectAll(): string[] {
 }
 
 function buildInteractivePrompt(job: Job): string {
-  let prompt = `# Task: ${job.title}\n\n`;
+  const model: string | null = (job as any).model ?? null;
+  let prompt = '';
+
+  // Codex has no --append-system-prompt flag, so prepend it to the prompt
+  if (isCodexModel(model)) {
+    prompt += SYSTEM_PROMPT + '\n\n---\n\n';
+  }
+
+  prompt += `# Task: ${job.title}\n\n`;
 
   const templateId = (job as any).template_id as string | null;
   if (templateId) {

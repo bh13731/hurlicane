@@ -15,6 +15,10 @@
  */
 import { resolve } from 'path';
 
+// Crash-proof: any unhandled error → fail open
+process.on('uncaughtException', () => process.exit(0));
+process.on('unhandledRejection', () => process.exit(0));
+
 // Fast path: only enforce inside orchestrator agent subprocesses.
 const agentId = process.env.ORCHESTRATOR_AGENT_ID;
 if (!agentId) process.exit(0);
@@ -27,6 +31,7 @@ let debounce = null;
 
 async function processInput() {
   clearTimeout(noDataTimer);
+
   let data;
   try {
     data = JSON.parse(input);
@@ -34,7 +39,7 @@ async function processInput() {
     process.exit(0);
   }
 
-  const { tool_input } = data;
+  const tool_input = data?.tool_input;
 
   // All writable tools expose the target path as file_path or notebook_path.
   const rawPath = tool_input?.file_path ?? tool_input?.notebook_path;
@@ -63,15 +68,19 @@ async function processInput() {
   }
 }
 
+function safeProcessInput() {
+  processInput().catch(() => process.exit(0));
+}
+
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => {
   input += chunk;
   // Process 30ms after the last chunk — stdin won't close in agent mode
   clearTimeout(debounce);
-  debounce = setTimeout(processInput, 30);
+  debounce = setTimeout(safeProcessInput, 30);
 });
 // Handle proper stdin close (manual testing, CI, etc.)
 process.stdin.on('end', () => {
   clearTimeout(debounce);
-  processInput();
+  safeProcessInput();
 });

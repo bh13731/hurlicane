@@ -156,6 +156,42 @@ export interface ClaudeStreamEvent {
   };
 }
 
+// ─── Codex stream-json event shapes ──────────────────────────────────────────
+
+export interface CodexStreamEvent {
+  type: string;
+  thread_id?: string;
+  item?: {
+    type: string;
+    text?: string;
+    command?: string;
+    aggregated_output?: string;
+    exit_code?: number;
+    status?: string;
+    id?: string;
+    message?: string;
+  };
+  usage?: {
+    input_tokens: number;
+    cached_input_tokens: number;
+    output_tokens: number;
+  };
+  error?: {
+    message: string;
+  };
+  message?: string;
+}
+
+export function isCodexModel(model: string | null): boolean {
+  return model === 'codex' || (model != null && model.startsWith('codex-'));
+}
+
+/** Extract the underlying model name for the -m flag (e.g. 'codex-o3' → 'o3'). Returns null for plain 'codex'. */
+export function codexModelName(model: string | null): string | null {
+  if (model != null && model.startsWith('codex-')) return model.slice(6);
+  return null;
+}
+
 // ─── API Request/Response shapes ─────────────────────────────────────────────
 
 export interface CreateJobRequest {

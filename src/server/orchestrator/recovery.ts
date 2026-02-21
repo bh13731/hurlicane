@@ -24,10 +24,14 @@ function statusFromLog(agentId: string): 'done' | 'failed' | null {
     const lines = content.split('\n').filter(Boolean);
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
-        const ev = JSON.parse(lines[i]) as ClaudeStreamEvent;
+        const ev = JSON.parse(lines[i]);
+        // Claude result event
         if (ev.type === 'result') {
           return ev.is_error ? 'failed' : 'done';
         }
+        // Codex turn events
+        if (ev.type === 'turn.completed') return 'done';
+        if (ev.type === 'turn.failed') return 'failed';
       } catch { /* skip malformed lines */ }
     }
   } catch { /* log file may not exist */ }

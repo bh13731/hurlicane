@@ -5,7 +5,7 @@ import '@xterm/xterm/css/xterm.css';
 import socket from '../socket';
 import { QuestionBubble } from './QuestionBubble';
 import { DiffViewer } from './DiffViewer';
-import type { AgentWithJob, AgentOutput, AgentOutputSegment, ClaudeStreamEvent, ChildAgentSummary } from '@shared/types';
+import type { AgentWithJob, AgentOutput, AgentOutputSegment, ClaudeStreamEvent, CodexStreamEvent, ChildAgentSummary } from '@shared/types';
 
 interface AgentTerminalProps {
   agent: AgentWithJob;
@@ -45,6 +45,61 @@ function renderEvent(event: ClaudeStreamEvent): string {
       return `\x1b[31m✗ ${event.error?.message ?? 'error'}\x1b[0m\r\n`;
     default:
       return '';
+  }
+}
+
+function isCodexEvent(event: any): boolean {
+  return typeof event.type === 'string' && event.type.includes('.');
+}
+
+function renderCodexEvent(event: CodexStreamEvent): string {
+  switch (event.type) {
+    case 'thread.started':
+      return `\x1b[36m[codex thread ${event.thread_id ?? ''}]\x1b[0m\r\n`;
+    case 'item.completed': {
+      const item = event.item;
+      if (!item) return '';
+      if (item.type === 'reasoning' && item.text) {
+        return `\r\n\x1b[2m\x1b[3m${item.text}\x1b[0m\r\n`;
+      }
+      if (item.type === 'agent_message' && item.text) {
+        return `\r\n${item.text}\r\n`;
+      }
+      if (item.type === 'command_execution') {
+        let out = `\r\n\x1b[2m⚙ ${item.command ?? 'command'}\x1b[0m\r\n`;
+        if (item.aggregated_output) {
+          const preview = item.aggregated_output.length > 500
+            ? item.aggregated_output.slice(0, 500) + '…'
+            : item.aggregated_output;
+          out += `\x1b[2m${preview}\x1b[0m\r\n`;
+        }
+        if (item.exit_code != null && item.exit_code !== 0) {
+          out += `\x1b[31m(exit ${item.exit_code})\x1b[0m\r\n`;
+        }
+        return out;
+      }
+      return '';
+    }
+    case 'turn.completed':
+      return `\r\n\x1b[32m✓ Done\x1b[0m\r\n`;
+    case 'turn.failed':
+      return `\r\n\x1b[31m✗ Turn failed${event.message ? ': ' + event.message : ''}\x1b[0m\r\n`;
+    case 'error':
+      return `\x1b[31m✗ ${event.error?.message ?? event.message ?? 'error'}\x1b[0m\r\n`;
+    default:
+      return '';
+  }
+}
+
+function renderAnyEvent(raw: string): string {
+  try {
+    const event = JSON.parse(raw);
+    if (isCodexEvent(event)) {
+      return renderCodexEvent(event as CodexStreamEvent);
+    }
+    return renderEvent(event as ClaudeStreamEvent);
+  } catch {
+    return raw + '\r\n';
   }
 }
 
@@ -210,6 +265,15 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
   }, [agent.id, agent.status]);
 
   const isInteractive = !!(agent.job as any).is_interactive;
+  const [tmuxCopied, setTmuxCopied] = useState(false);
+
+  const copyTmuxCommand = () => {
+    const cmd = `tmux attach-session -t orchestrator-${agent.id}`;
+    navigator.clipboard.writeText(cmd).then(() => {
+      setTmuxCopied(true);
+      setTimeout(() => setTmuxCopied(false), 2000);
+    });
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -356,13 +420,8 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
               term.write(`\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n\r\n`);
             }
             for (const line of seg.output) {
-              try {
-                const event: ClaudeStreamEvent = JSON.parse(line.content);
-                const rendered = renderEvent(event);
-                if (rendered) term.write(rendered);
-              } catch {
-                term.write(line.content + '\r\n');
-              }
+              const rendered = renderAnyEvent(line.content);
+              if (rendered) term.write(rendered);
             }
           }
         })
@@ -371,13 +430,8 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
       // Stream live output
       const outputHandler = ({ agent_id, line }: { agent_id: string; line: AgentOutput }) => {
         if (agent_id !== agent.id) return;
-        try {
-          const event: ClaudeStreamEvent = JSON.parse(line.content);
-          const rendered = renderEvent(event);
-          if (rendered) term.write(rendered);
-        } catch {
-          term.write(line.content + '\r\n');
-        }
+        const rendered = renderAnyEvent(line.content);
+        if (rendered) term.write(rendered);
       };
 
       socket.on('agent:output', outputHandler);
@@ -412,6 +466,15 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
           <span className="terminal-job-title">{agent.job.title}</span>
         </div>
         <div className="terminal-header-actions">
+          {isInteractive && (
+            <button
+              className="btn btn-sm"
+              onClick={copyTmuxCommand}
+              title={`tmux attach-session -t orchestrator-${agent.id}`}
+            >
+              {tmuxCopied ? 'Copied!' : 'Copy tmux'}
+            </button>
+          )}
           {isInteractive && (agent.status === 'running' || agent.status === 'starting') && (
             <button
               className="btn btn-danger btn-sm"

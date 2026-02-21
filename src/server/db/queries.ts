@@ -236,6 +236,7 @@ function enrichAgent(agent: Agent): AgentWithJob {
 function extractSearchText(content: string): string {
   try {
     const ev = JSON.parse(content);
+    // Claude events
     if (ev.type === 'assistant' && ev.message?.content) {
       return (ev.message.content as any[])
         .filter(b => b.type === 'text')
@@ -244,6 +245,14 @@ function extractSearchText(content: string): string {
     }
     if (ev.type === 'result') return ev.result ?? '';
     if (ev.type === 'error') return ev.error?.message ?? '';
+    // Codex events
+    if (ev.type === 'item.completed' && ev.item) {
+      if (ev.item.type === 'agent_message' && ev.item.text) return ev.item.text;
+      if (ev.item.type === 'reasoning' && ev.item.text) return ev.item.text;
+      if (ev.item.type === 'command_execution') {
+        return [ev.item.command, ev.item.aggregated_output].filter(Boolean).join(' ');
+      }
+    }
     return '';
   } catch { return ''; }
 }
@@ -644,8 +653,13 @@ export function getAgentResultText(agentId: string): string | null {
   for (const row of rows) {
     try {
       const ev = JSON.parse(row.content);
+      // Claude result event
       if (ev.type === 'result' && typeof ev.result === 'string') {
         return ev.result;
+      }
+      // Codex: last agent_message before turn.completed
+      if (ev.type === 'item.completed' && ev.item?.type === 'agent_message' && typeof ev.item.text === 'string') {
+        return ev.item.text;
       }
     } catch { /* skip */ }
   }

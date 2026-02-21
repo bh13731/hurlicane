@@ -4,9 +4,11 @@ import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
-import type { Job, ClaudeStreamEvent } from '../../shared/types.js';
+import type { Job, ClaudeStreamEvent, CodexStreamEvent } from '../../shared/types.js';
+import { isCodexModel, codexModelName } from '../../shared/types.js';
 
 const CLAUDE = process.env.CLAUDE_BIN ?? 'claude';
+const CODEX = process.env.CODEX_BIN ?? 'codex';
 const MCP_PORT = process.env.MCP_PORT ?? '3001';
 const LOGS_DIR = path.join(process.cwd(), 'data', 'agent-logs');
 
@@ -95,35 +97,59 @@ export function runAgent(options: RunOptions): void {
   const logFd = fs.openSync(logPath, 'w');
   const errFd = fs.openSync(errPath, 'w');
 
-  const mcpConfig = JSON.stringify({
-    mcpServers: {
-      orchestrator: {
-        url: `http://localhost:${mcpPort}/mcp/${agentId}`,
-        type: 'sse',
-      },
-    },
-  });
-
   const workDir = (job as any).work_dir ?? process.cwd();
   const maxTurns = (job as any).max_turns ?? 50;
   const model: string | null = (job as any).model ?? null;
+  const useCodex = isCodexModel(model);
 
-  const claudeArgs = [
-    '--print',
-    '--output-format', 'stream-json',
-    '--verbose',
-    '--dangerously-skip-permissions',
-    '--settings', HOOK_SETTINGS,
-    '--mcp-config', mcpConfig,
-    '--append-system-prompt', SYSTEM_PROMPT,
-    '--max-turns', String(maxTurns),
-    ...(model ? ['--model', model] : []),
-    ...(options.resumeSessionId ? ['--resume', options.resumeSessionId] : []),
-  ];
+  const mcpUrl = `http://localhost:${mcpPort}/mcp/${agentId}`;
 
-  console.log(`[agent ${agentId}] spawning for job "${job.title}"${model ? ` (model: ${model})` : ''}`);
+  let binary: string;
+  let args: string[];
 
-  const child = spawn(CLAUDE, claudeArgs, {
+  if (useCodex) {
+    const codexSubModel = codexModelName(model);
+    const codexArgs = [
+      ...(options.resumeSessionId
+        ? ['exec', 'resume', options.resumeSessionId]
+        : ['exec']),
+      '--json',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '-C', workDir,
+      '--skip-git-repo-check',
+      '-c', `mcp_servers.orchestrator.url="${mcpUrl}"`,
+      ...(codexSubModel ? ['-m', codexSubModel] : []),
+    ];
+    binary = CODEX;
+    args = codexArgs;
+  } else {
+    const mcpConfig = JSON.stringify({
+      mcpServers: {
+        orchestrator: {
+          url: mcpUrl,
+          type: 'http',
+        },
+      },
+    });
+
+    args = [
+      '--print',
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--dangerously-skip-permissions',
+      '--settings', HOOK_SETTINGS,
+      '--mcp-config', mcpConfig,
+      '--append-system-prompt', SYSTEM_PROMPT,
+      '--max-turns', String(maxTurns),
+      ...(model ? ['--model', model] : []),
+      ...(options.resumeSessionId ? ['--resume', options.resumeSessionId] : []),
+    ];
+    binary = CLAUDE;
+  }
+
+  console.log(`[agent ${agentId}] spawning ${useCodex ? 'codex' : 'claude'} for job "${job.title}"${model ? ` (model: ${model})` : ''}`);
+
+  const child = spawn(binary, args, {
     cwd: workDir,
     detached: true,            // becomes process group leader — survives server restart
     stdio: ['pipe', logFd, errFd],  // stdout/stderr go to files, not pipes
@@ -306,12 +332,22 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
     const lines = content.split('\n').filter(Boolean);
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
-        const ev = JSON.parse(lines[i]) as ClaudeStreamEvent;
+        const ev = JSON.parse(lines[i]);
+        // Claude result event
         if (ev.type === 'result') {
           statusFromLog = ev.is_error ? 'failed' : 'done';
           costUsd = ev.total_cost_usd ?? null;
           durationMs = ev.duration_ms ?? null;
           numTurns = ev.num_turns ?? null;
+          break;
+        }
+        // Codex turn events
+        if (ev.type === 'turn.completed') {
+          statusFromLog = 'done';
+          break;
+        }
+        if (ev.type === 'turn.failed') {
+          statusFromLog = 'failed';
           break;
         }
       } catch { /* skip */ }
@@ -367,11 +403,17 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
   if (updatedJob) socket.emitJobUpdate(updatedJob);
 }
 
-function handleStreamEvent(agentId: string, event: ClaudeStreamEvent, raw: string, seq: number): void {
+function handleStreamEvent(agentId: string, event: ClaudeStreamEvent | CodexStreamEvent, raw: string, seq: number): void {
   storeOutput(agentId, seq, event.type, raw);
 
-  if (event.type === 'system' && event.session_id) {
-    queries.updateAgent(agentId, { session_id: event.session_id });
+  // Claude: capture session_id from system init event
+  if (event.type === 'system' && (event as ClaudeStreamEvent).session_id) {
+    queries.updateAgent(agentId, { session_id: (event as ClaudeStreamEvent).session_id });
+  }
+
+  // Codex: capture thread_id as session_id from thread.started event
+  if (event.type === 'thread.started' && (event as CodexStreamEvent).thread_id) {
+    queries.updateAgent(agentId, { session_id: (event as CodexStreamEvent).thread_id });
   }
 
   const latestRow = queries.getLatestAgentOutput(agentId);
@@ -389,7 +431,15 @@ function storeOutput(agentId: string, seq: number, eventType: string, content: s
 }
 
 function buildPrompt(job: Job): string {
-  let prompt = `# Task: ${job.title}\n\n`;
+  const model: string | null = (job as any).model ?? null;
+  let prompt = '';
+
+  // Codex has no --append-system-prompt flag, so prepend it to the prompt
+  if (isCodexModel(model)) {
+    prompt += SYSTEM_PROMPT + '\n\n---\n\n';
+  }
+
+  prompt += `# Task: ${job.title}\n\n`;
 
   const templateId = (job as any).template_id as string | null;
   if (templateId) {

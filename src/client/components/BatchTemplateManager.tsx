@@ -284,6 +284,12 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
                     <option value="claude-opus-4-6[1m]">claude-opus-4-6[1m] — most capable, 1M context</option>
                     <option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m] — balanced, 1M context</option>
                     <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 — fastest, cheapest</option>
+                    <option value="codex">codex — default (gpt-5.3-codex)</option>
+                    <option value="codex-gpt-5.3-codex">codex — gpt-5.3-codex</option>
+                    <option value="codex-gpt-5.2-codex">codex — gpt-5.2-codex</option>
+                    <option value="codex-gpt-5.1-codex-max">codex — gpt-5.1-codex-max</option>
+                    <option value="codex-gpt-5.2">codex — gpt-5.2</option>
+                    <option value="codex-gpt-5.1-codex-mini">codex — gpt-5.1-codex-mini</option>
                   </select>
                 </div>
 
