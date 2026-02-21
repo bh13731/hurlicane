@@ -180,6 +180,7 @@ router.delete('/:id/disconnect', (req, res) => {
   if (!agent) { res.status(404).json({ error: 'not found' }); return; }
 
   disconnectAgent(req.params.id);
+  getFileLockRegistry().releaseAll(req.params.id);
   queries.updateAgent(req.params.id, { status: 'done', finished_at: Date.now() });
   queries.updateJobStatus(agent.job_id, 'done');
 
