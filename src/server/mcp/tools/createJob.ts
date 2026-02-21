@@ -17,21 +17,17 @@ export const createJobSchema = z.object({
 export async function createJobHandler(agentId: string, input: z.infer<typeof createJobSchema>): Promise<string> {
   const { description, title, priority, work_dir, max_turns, model, depends_on, use_worktree } = input;
 
-  // Inherit work_dir and project_id from calling agent's job if not specified
+  // Inherit work_dir, project_id, and model from calling agent's job if not specified
   let resolvedWorkDir = work_dir ?? null;
   let inheritedProjectId: string | null = null;
-  if (!resolvedWorkDir) {
-    const agent = queries.getAgentById(agentId);
-    if (agent) {
-      const parentJob = queries.getJobById(agent.job_id);
-      resolvedWorkDir = (parentJob as any)?.work_dir ?? null;
-      inheritedProjectId = parentJob?.project_id ?? null;
-    }
-  } else {
-    const agent = queries.getAgentById(agentId);
-    if (agent) {
-      const parentJob = queries.getJobById(agent.job_id);
-      inheritedProjectId = parentJob?.project_id ?? null;
+  let inheritedModel: string | null = null;
+  const agent = queries.getAgentById(agentId);
+  if (agent) {
+    const parentJob = queries.getJobById(agent.job_id);
+    if (parentJob) {
+      if (!resolvedWorkDir) resolvedWorkDir = (parentJob as any)?.work_dir ?? null;
+      inheritedProjectId = parentJob.project_id ?? null;
+      inheritedModel = parentJob.model ?? null;
     }
   }
 
@@ -43,7 +39,7 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     priority: priority ?? 0,
     work_dir: resolvedWorkDir,
     max_turns: max_turns ?? 50,
-    model: model ?? null,
+    model: model ?? inheritedModel,
     template_id: null,
     depends_on: depends_on?.length ? JSON.stringify(depends_on) : null,
     use_worktree: use_worktree ? 1 : 0,
