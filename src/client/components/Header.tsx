@@ -52,7 +52,7 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
           </div>
         )}
         {todayCost != null && todayCost > 0 && (
-          <div className="header-cost" title="Total cost of agents started today">
+          <div className="header-cost" title="Today's spend">
             ${todayCost.toFixed(4)} today
           </div>
         )}

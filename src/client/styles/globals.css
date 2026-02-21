@@ -68,6 +68,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+
 .header-actions {
   display: flex;
   gap: 8px;
