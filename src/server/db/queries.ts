@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { getDb } from './database.js';
 import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, Debate, DebateStatus, DebateRole, JobStatus, AgentStatus, SearchResult } from '../../shared/types.js';
 
@@ -26,12 +27,14 @@ export function insertJob(job: {
   debate_id?: string | null;
   debate_round?: number | null;
   debate_role?: DebateRole | null;
+  scheduled_at?: number | null;
+  repeat_interval_ms?: number | null;
 }): Job {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_round, debate_role, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_round, debate_role, scheduled_at, repeat_interval_ms, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     job.id, job.title, job.description, job.context,
     job.status ?? 'queued', job.priority,
@@ -45,6 +48,8 @@ export function insertJob(job: {
     job.debate_id ?? null,
     job.debate_round ?? null,
     job.debate_role ?? null,
+    job.scheduled_at ?? null,
+    job.repeat_interval_ms ?? null,
     now, now
   );
   return getJobById(job.id)!;
@@ -90,9 +95,11 @@ export function updateJobFlagged(id: string, flagged: number): void {
 export function getNextQueuedJob(): Job | null {
   const db = getDb();
   // Skip jobs whose dependencies have not all completed successfully
+  // Skip jobs scheduled in the future
   const row = db.prepare(`
     SELECT * FROM jobs j
     WHERE j.status = 'queued'
+      AND (j.scheduled_at IS NULL OR j.scheduled_at <= unixepoch() * 1000)
       AND NOT EXISTS (
         SELECT 1 FROM json_each(COALESCE(j.depends_on, '[]')) dep
         JOIN jobs d ON d.id = dep.value
@@ -101,6 +108,27 @@ export function getNextQueuedJob(): Job | null {
     ORDER BY j.priority DESC, j.created_at ASC LIMIT 1
   `).get();
   return row ? cast<Job>(row) : null;
+}
+
+export function scheduleRepeatJob(job: Job): Job {
+  const repeatIntervalMs = job.repeat_interval_ms!;
+  return insertJob({
+    id: randomUUID(),
+    title: job.title,
+    description: job.description,
+    context: job.context,
+    priority: job.priority,
+    work_dir: (job as any).work_dir ?? null,
+    max_turns: (job as any).max_turns ?? 50,
+    model: job.model ?? null,
+    template_id: job.template_id ?? null,
+    depends_on: null,
+    is_interactive: job.is_interactive,
+    use_worktree: job.use_worktree,
+    project_id: job.project_id ?? null,
+    scheduled_at: Date.now() + repeatIntervalMs,
+    repeat_interval_ms: repeatIntervalMs,
+  });
 }
 
 export function getJobsWithFailedDeps(): Job[] {
@@ -244,7 +272,7 @@ function enrichAgent(agent: Agent): AgentWithJob {
   const jobRow = db.prepare('SELECT * FROM jobs WHERE id = ?').get(agent.job_id);
   if (!jobRow) {
     // Job was deleted while agent still references it — return a stub
-    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, work_dir: null, max_turns: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_round: null, debate_role: null, created_at: 0, updated_at: 0 };
+    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, work_dir: null, max_turns: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_round: null, debate_role: null, scheduled_at: null, repeat_interval_ms: null, created_at: 0, updated_at: 0 };
     return { ...agent, job: stub, template_name: null, pending_question: null, active_locks: [], child_agents: [] };
   }
   const job = cast<Job>(jobRow);

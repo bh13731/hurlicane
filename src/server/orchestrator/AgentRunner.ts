@@ -439,6 +439,13 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
     try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); }
     // If this job is part of a debate, check if the round is complete
     try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] debateOnJobCompleted error:`, err); }
+    // If the job has a repeat interval, queue the next run
+    if (updatedJob.repeat_interval_ms) {
+      try {
+        const nextJob = queries.scheduleRepeatJob(updatedJob);
+        socket.emitJobNew(nextJob);
+      } catch (err) { console.error(`[agent ${agentId}] scheduleRepeatJob error:`, err); }
+    }
   }
 }
 

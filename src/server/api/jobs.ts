@@ -59,6 +59,8 @@ router.post('/', async (req, res) => {
     is_interactive: body.interactive ? 1 : 0,
     use_worktree: body.useWorktree ? 1 : 0,
     project_id: body.projectId ?? null,
+    scheduled_at: body.scheduledAt ?? null,
+    repeat_interval_ms: body.repeatIntervalMs ?? null,
   });
 
   socket.emitJobNew(job);

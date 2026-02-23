@@ -156,6 +156,12 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!jobCols.includes('debate_role')) {
     db.exec('ALTER TABLE jobs ADD COLUMN debate_role TEXT');
   }
+  if (!jobCols.includes('scheduled_at')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN scheduled_at INTEGER');
+  }
+  if (!jobCols.includes('repeat_interval_ms')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN repeat_interval_ms INTEGER');
+  }
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_debate ON jobs(debate_id, debate_round)');
 
   // Post-debate action columns

@@ -19,6 +19,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   const [interactive, setInteractive] = useState(false);
   const [useWorktree, setUseWorktree] = useState(false);
+  const [repeatSeconds, setRepeatSeconds] = useState<number | ''>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,6 +65,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
         interactive: interactive || undefined,
         useWorktree: useWorktree || undefined,
+        repeatIntervalMs: repeatSeconds ? (repeatSeconds as number) * 1000 : undefined,
       });
       onClose();
     } catch (err) {
@@ -230,6 +232,24 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               Use worktree
               <span className="tooltip-icon" data-tip="Creates a git worktree so the agent works in an isolated checkout on a new branch">?</span>
             </label>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="repeatSeconds">
+              Repeat every
+              <span className="tooltip-icon" data-tip="After the job completes, automatically re-queue it after this many seconds. Leave blank for no repeat.">?</span>
+            </label>
+            <div className="repeat-input-row">
+              <input
+                id="repeatSeconds"
+                type="number"
+                value={repeatSeconds}
+                onChange={e => setRepeatSeconds(e.target.value === '' ? '' : Number(e.target.value))}
+                placeholder="no repeat"
+                min={1}
+              />
+              <span className="repeat-unit">seconds</span>
+            </div>
           </div>
 
           {error && <div className="form-error">{error}</div>}

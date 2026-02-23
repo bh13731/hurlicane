@@ -12,10 +12,11 @@ export const createJobSchema = z.object({
   model: z.string().optional().describe('Model override, e.g. "claude-opus-4-6" (default: auto-classify)'),
   depends_on: z.array(z.string()).optional().describe('Job IDs that must complete before this job runs'),
   use_worktree: z.boolean().optional().describe('Create a git worktree so the agent works in an isolated checkout'),
+  repeat_interval_ms: z.number().optional().describe('Re-queue the job automatically after it completes; value is the delay in ms before the next run'),
 });
 
 export async function createJobHandler(agentId: string, input: z.infer<typeof createJobSchema>): Promise<string> {
-  const { description, title, priority, work_dir, max_turns, model, depends_on, use_worktree } = input;
+  const { description, title, priority, work_dir, max_turns, model, depends_on, use_worktree, repeat_interval_ms } = input;
 
   // Inherit work_dir, project_id, and model from calling agent's job if not specified
   let resolvedWorkDir = work_dir ?? null;
@@ -44,6 +45,7 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     depends_on: depends_on?.length ? JSON.stringify(depends_on) : null,
     use_worktree: use_worktree ? 1 : 0,
     project_id: inheritedProjectId,
+    repeat_interval_ms: repeat_interval_ms ?? null,
   });
 
   socket.emitJobNew(job);

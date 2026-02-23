@@ -23,6 +23,8 @@ export interface Job {
   debate_id: string | null;   // FK → debates.id
   debate_round: number | null;
   debate_role: DebateRole | null;
+  scheduled_at: number | null;
+  repeat_interval_ms: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -239,6 +241,8 @@ export interface CreateJobRequest {
   interactive?: boolean;
   useWorktree?: boolean;
   projectId?: string;
+  repeatIntervalMs?: number;
+  scheduledAt?: number;
 }
 
 export interface SearchResult {
