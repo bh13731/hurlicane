@@ -47,6 +47,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showDebateForm, setShowDebateForm] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [leftTab, setLeftTab] = useState<'feed' | 'lineage'>('feed');
 
   const [todayClaudeCost, setTodayClaudeCost] = useState<number | null>(null);
   const [todayCodexCost, setTodayCodexCost] = useState<number | null>(null);
@@ -215,6 +216,7 @@ export default function App() {
 
   const handleSelectAgent = useCallback((agent: AgentWithJob) => {
     setSelectedAgent(agent);
+    setActiveProjectId(agent.job.project_id ?? null);
   }, []);
 
   const handleSelectJob = useCallback((job: Job) => {
@@ -224,6 +226,7 @@ export default function App() {
 
   const handleCloseTerminal = useCallback(() => {
     setSelectedAgent(null);
+    setLeftTab('feed');
   }, []);
 
   return (
@@ -231,29 +234,34 @@ export default function App() {
       <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onHome={() => { setSelectedAgent(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} />
 
       <div className="main-layout">
-        {selectedAgent ? (
-          <div className="left-sidebar-stack">
+        <div className={`left-sidebar-stack ${leftTab === 'lineage' && selectedAgent ? '' : 'left-sidebar-stack--narrow'}`}>
+          {selectedAgent && (
+            <div className="left-sidebar-tabs">
+              <button
+                className={`left-sidebar-tab ${leftTab === 'feed' ? 'left-sidebar-tab--active' : ''}`}
+                onClick={() => setLeftTab('feed')}
+              >Feed</button>
+              <button
+                className={`left-sidebar-tab ${leftTab === 'lineage' ? 'left-sidebar-tab--active' : ''}`}
+                onClick={() => setLeftTab('lineage')}
+              >Lineage</button>
+            </div>
+          )}
+          {leftTab === 'lineage' && selectedAgent ? (
             <JobLineagePanel
               selectedAgent={selectedAgent}
               allAgents={agents}
               onSelectAgent={handleSelectAgent}
             />
-            <RunningJobsPanel
-              agents={agents}
-              projects={projects}
-              onSelectAgent={handleSelectAgent}
-            />
-          </div>
-        ) : (
-          <div className="left-sidebar-stack left-sidebar-stack--narrow">
-            <WorkQueueSidebar jobs={filteredJobs} onSelectJob={handleSelectJob} />
-            <RunningJobsPanel
-              agents={agents}
-              projects={projects}
-              onSelectAgent={handleSelectAgent}
-            />
-          </div>
-        )}
+          ) : (
+            <WorkQueueSidebar jobs={jobs} projects={projects} onSelectJob={handleSelectJob} />
+          )}
+          <RunningJobsPanel
+            agents={agents}
+            projects={projects}
+            onSelectAgent={handleSelectAgent}
+          />
+        </div>
 
         <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
           <AgentGrid agents={filteredAgents} queuedJobs={filteredJobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} templates={templates} selectedAgentId={selectedAgent?.id ?? null} />

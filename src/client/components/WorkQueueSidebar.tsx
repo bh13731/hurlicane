@@ -1,8 +1,9 @@
 import React from 'react';
-import type { Job } from '@shared/types';
+import type { Job, Project } from '@shared/types';
 
 interface WorkQueueSidebarProps {
   jobs: Job[];
+  projects?: Project[];
   onSelectJob?: (job: Job) => void;
 }
 
@@ -11,16 +12,23 @@ function statusOrder(status: string): number {
   return order[status] ?? 99;
 }
 
-export function WorkQueueSidebar({ jobs, onSelectJob }: WorkQueueSidebarProps) {
+export function WorkQueueSidebar({ jobs, projects = [], onSelectJob }: WorkQueueSidebarProps) {
+  const projectMap = Object.fromEntries(projects.map(p => [p.id, p.name]));
+
   const queued = jobs.filter(j => j.status === 'queued');
   const active = jobs.filter(j => j.status === 'assigned' || j.status === 'running');
   const done = jobs
     .filter(j => j.status === 'done' || j.status === 'failed' || j.status === 'cancelled')
     .sort((a, b) => b.updated_at - a.updated_at);
 
+  const ProjectTag = ({ job }: { job: Job }) =>
+    job.project_id && projectMap[job.project_id] ? (
+      <span className="sidebar-job-project">{projectMap[job.project_id]}</span>
+    ) : null;
+
   return (
     <aside className="sidebar">
-      <h2 className="sidebar-title">Work Queue</h2>
+      <h2 className="sidebar-title">Activity Feed</h2>
 
       {active.length > 0 && (
         <div className="sidebar-section">
@@ -32,6 +40,7 @@ export function WorkQueueSidebar({ jobs, onSelectJob }: WorkQueueSidebarProps) {
               onClick={() => onSelectJob?.(job)}
             >
               <span className="sidebar-job-title">{job.title}</span>
+              <ProjectTag job={job} />
             </div>
           ))}
         </div>
@@ -44,6 +53,7 @@ export function WorkQueueSidebar({ jobs, onSelectJob }: WorkQueueSidebarProps) {
             <div key={job.id} className="sidebar-job">
               <span className="sidebar-job-bullet">•</span>
               <span className="sidebar-job-title">{job.title}</span>
+              <ProjectTag job={job} />
             </div>
           ))}
         </div>
@@ -60,6 +70,7 @@ export function WorkQueueSidebar({ jobs, onSelectJob }: WorkQueueSidebarProps) {
             >
               <span className="sidebar-job-bullet">{job.status === 'done' ? '✓' : job.status === 'failed' ? '✗' : '⊘'}</span>
               <span className="sidebar-job-title">{job.title}</span>
+              <ProjectTag job={job} />
             </div>
           ))}
         </div>
