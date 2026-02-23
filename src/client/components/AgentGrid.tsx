@@ -25,7 +25,7 @@ function tilePriority(agent: AgentWithJob): number {
   if (agent.status === 'running' || agent.status === 'starting') return 0;
   if (agent.status === 'waiting_user') return 1;
   if ((agent.status === 'done' || agent.status === 'failed') && agent.output_read === 0) return 2;
-  if (agent.job.flagged) return 3;
+  if (agent.job?.flagged) return 3;
   return 4;
 }
 
@@ -78,13 +78,16 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, selectedAgen
     ALL_STATUSES.map(s => [s, agents.filter(a => a.status === s).length])
   ) as Record<AgentStatus, number>;
 
-  const flaggedCount = agents.filter(a => a.job.flagged).length;
+  const flaggedCount = agents.filter(a => a.job?.flagged).length;
+  const unreadIds = agents
+    .filter(a => (a.status === 'done' || a.status === 'failed') && a.output_read === 0)
+    .map(a => a.id);
 
   const visibleAgents = (() => {
     let result = activeFilters.size === 0
       ? orderedAgents
       : orderedAgents.filter(a => activeFilters.has(a.status));
-    if (showFlaggedOnly) result = result.filter(a => a.job.flagged);
+    if (showFlaggedOnly) result = result.filter(a => a.job?.flagged);
     return result;
   })();
 
@@ -134,13 +137,14 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, selectedAgen
 
   return (
     <div className="agent-grid-container">
-      {agents.length > 0 && (presentStatuses.length > 1 || flaggedCount > 0) && (
+      {agents.length > 0 && (presentStatuses.length > 1 || flaggedCount > 0 || unreadIds.length > 0) && (
         <div className="agent-filter-bar">
           {presentStatuses.map(status => (
             <button
               key={status}
               className={`agent-filter-btn status-filter-${status} ${activeFilters.has(status) ? 'agent-filter-btn-active' : ''}`}
               onClick={() => toggleFilter(status)}
+              aria-pressed={activeFilters.has(status)}
             >
               {STATUS_LABELS[status]}
               <span className="agent-filter-count">{counts[status]}</span>
@@ -150,6 +154,8 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, selectedAgen
             <button
               className={`agent-filter-btn agent-filter-flagged${showFlaggedOnly ? ' agent-filter-btn-active agent-filter-flagged-active' : ''}`}
               onClick={() => setShowFlaggedOnly(v => !v)}
+              aria-pressed={showFlaggedOnly}
+              aria-label={`Filter flagged agents (${flaggedCount})`}
             >
               ⚑ Flagged
               <span className="agent-filter-count">{flaggedCount}</span>
@@ -161,6 +167,19 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, selectedAgen
               onClick={() => { setActiveFilters(new Set()); setShowFlaggedOnly(false); }}
             >
               Clear
+            </button>
+          )}
+          {unreadIds.length > 0 && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => fetch('/api/agents/read-all', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: unreadIds }),
+              })}
+            >
+              Mark All Read
+              <span className="agent-filter-count">{unreadIds.length}</span>
             </button>
           )}
           {agents.some(a => (a.job as any).is_interactive && (a.status === 'running' || a.status === 'starting')) && (

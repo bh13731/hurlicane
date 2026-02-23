@@ -26,7 +26,15 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
   const [runMaxTurns, setRunMaxTurns] = useState(50);
   const [runInteractive, setRunInteractive] = useState(false);
   const [runUseWorktree, setRunUseWorktree] = useState(false);
+  const [runDebate, setRunDebate] = useState(false);
+  const [runClaudeModel, setRunClaudeModel] = useState('claude-sonnet-4-6[1m]');
+  const [runCodexModel, setRunCodexModel] = useState('codex');
+  const [runDebateMaxRounds, setRunDebateMaxRounds] = useState(3);
+  const [runPostActionPrompt, setRunPostActionPrompt] = useState('');
+  const [runPostActionRole, setRunPostActionRole] = useState<'claude' | 'codex'>('claude');
+  const [runPostActionVerification, setRunPostActionVerification] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmDeleteBt, setConfirmDeleteBt] = useState<BatchTemplate | null>(null);
 
   useEffect(() => {
     fetch('/api/batch-templates').then(r => r.json()).then(setBatchTemplates).catch(console.error);
@@ -60,6 +68,13 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
     setRunMaxTurns(50);
     setRunInteractive(false);
     setRunUseWorktree(false);
+    setRunDebate(false);
+    setRunClaudeModel('claude-sonnet-4-6[1m]');
+    setRunCodexModel('codex');
+    setRunDebateMaxRounds(3);
+    setRunPostActionPrompt('');
+    setRunPostActionRole('claude');
+    setRunPostActionVerification(false);
   }
 
   function cancelForm() {
@@ -110,10 +125,10 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
   }
 
   async function handleDelete(bt: BatchTemplate) {
-    if (!confirm(`Delete batch template "${bt.name}"?`)) return;
     await fetch(`/api/batch-templates/${bt.id}`, { method: 'DELETE' });
     setBatchTemplates(prev => prev.filter(x => x.id !== bt.id));
     if (selected?.id === bt.id || runningId === bt.id) cancelForm();
+    setConfirmDeleteBt(null);
   }
 
   async function handleRun(e: React.FormEvent) {
@@ -126,12 +141,19 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           templateId: runTemplateId || undefined,
-          model: runModel || undefined,
-          interactive: runInteractive || undefined,
-          useWorktree: runUseWorktree || undefined,
+          model: runDebate ? undefined : (runModel || undefined),
+          interactive: runDebate ? undefined : (runInteractive || undefined),
+          useWorktree: runDebate ? undefined : (runUseWorktree || undefined),
           workDir: runWorkDir.trim() || undefined,
           maxTurns: runMaxTurns,
           projectName: runProjectName.trim() || undefined,
+          debate: runDebate || undefined,
+          claudeModel: runDebate ? runClaudeModel : undefined,
+          codexModel: runDebate ? runCodexModel : undefined,
+          debateMaxRounds: runDebate ? runDebateMaxRounds : undefined,
+          postActionPrompt: runDebate && runPostActionPrompt.trim() ? runPostActionPrompt.trim() : undefined,
+          postActionRole: runDebate && runPostActionPrompt.trim() ? runPostActionRole : undefined,
+          postActionVerification: runDebate && runPostActionPrompt.trim() ? runPostActionVerification : undefined,
         }),
       });
       if (!res.ok) return;
@@ -179,7 +201,7 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
                 <span style={{ fontSize: 11, color: '#6e7681', flexShrink: 0 }}>{bt.items.length}</span>
                 <button
                   className="btn-icon template-delete-btn"
-                  onClick={e => { e.stopPropagation(); handleDelete(bt); }}
+                  onClick={e => { e.stopPropagation(); setConfirmDeleteBt(bt); }}
                   title="Delete"
                 >
                   ✕
@@ -229,7 +251,7 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
                   <button type="button" className="btn btn-secondary" onClick={cancelForm}>Cancel</button>
                   {selected && (
                     <>
-                      <button type="button" className="btn btn-danger" onClick={() => handleDelete(selected)}>
+                      <button type="button" className="btn btn-danger" onClick={() => setConfirmDeleteBt(selected)}>
                         Delete
                       </button>
                       <button type="button" className="btn btn-primary" onClick={() => startRun(selected)}>
@@ -274,67 +296,191 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
                 </div>
 
                 <div className="form-group">
-                  <label htmlFor="run-model">Model <span className="form-label-hint">(leave blank to auto-select)</span></label>
-                  <select
-                    id="run-model"
-                    value={runModel}
-                    onChange={e => setRunModel(e.target.value)}
-                  >
-                    <option value="">Auto-select (Haiku classifies the task)</option>
-                    <option value="claude-opus-4-6[1m]">claude-opus-4-6[1m] — most capable, 1M context</option>
-                    <option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m] — balanced, 1M context</option>
-                    <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 — fastest, cheapest</option>
-                    <option value="codex">codex — default (gpt-5.3-codex)</option>
-                    <option value="codex-gpt-5.3-codex">codex — gpt-5.3-codex</option>
-                    <option value="codex-gpt-5.2-codex">codex — gpt-5.2-codex</option>
-                    <option value="codex-gpt-5.1-codex-max">codex — gpt-5.1-codex-max</option>
-                    <option value="codex-gpt-5.2">codex — gpt-5.2</option>
-                    <option value="codex-gpt-5.1-codex-mini">codex — gpt-5.1-codex-mini</option>
-                  </select>
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label htmlFor="run-workdir">Working Directory</label>
-                    <input
-                      id="run-workdir"
-                      type="text"
-                      value={runWorkDir}
-                      onChange={e => setRunWorkDir(e.target.value)}
-                      placeholder="/path/to/project (optional)"
-                    />
-                  </div>
-                  <div className="form-group form-group-sm">
-                    <label htmlFor="run-max-turns">Max Turns</label>
-                    <input
-                      id="run-max-turns"
-                      type="number"
-                      value={runMaxTurns}
-                      onChange={e => setRunMaxTurns(Number(e.target.value))}
-                      min={1}
-                      max={200}
-                    />
-                  </div>
-                </div>
-
-                <div className="form-group">
                   <label className="form-checkbox-label">
-                    <input type="checkbox" checked={runInteractive} onChange={e => setRunInteractive(e.target.checked)} />
-                    Interactive session
+                    <input type="checkbox" checked={runDebate} onChange={e => setRunDebate(e.target.checked)} />
+                    Debate mode
+                    <span className="form-label-hint" style={{ marginLeft: 4 }}>(each item runs as a Claude vs Codex debate)</span>
                   </label>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-checkbox-label">
-                    <input type="checkbox" checked={runUseWorktree} onChange={e => setRunUseWorktree(e.target.checked)} />
-                    Use worktree
-                  </label>
-                </div>
+                {runDebate ? (
+                  <>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label htmlFor="run-claude-model">Claude Model</label>
+                        <select
+                          id="run-claude-model"
+                          value={runClaudeModel}
+                          onChange={e => setRunClaudeModel(e.target.value)}
+                        >
+                          <option value="claude-opus-4-6[1m]">claude-opus-4-6[1m]</option>
+                          <option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m]</option>
+                          <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="run-codex-model">Codex Model</label>
+                        <select
+                          id="run-codex-model"
+                          value={runCodexModel}
+                          onChange={e => setRunCodexModel(e.target.value)}
+                        >
+                          <option value="codex">codex (default)</option>
+                          <option value="codex-gpt-5.3-codex">codex-gpt-5.3-codex</option>
+                          <option value="codex-gpt-5.2-codex">codex-gpt-5.2-codex</option>
+                          <option value="codex-gpt-5.1-codex-max">codex-gpt-5.1-codex-max</option>
+                          <option value="codex-gpt-5.2">codex-gpt-5.2</option>
+                          <option value="codex-gpt-5.1-codex-mini">codex-gpt-5.1-codex-mini</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group form-group-sm">
+                        <label htmlFor="run-debate-max-rounds">Max Rounds</label>
+                        <input
+                          id="run-debate-max-rounds"
+                          type="number"
+                          value={runDebateMaxRounds}
+                          onChange={e => setRunDebateMaxRounds(Number(e.target.value))}
+                          min={1}
+                          max={10}
+                        />
+                      </div>
+                      <div className="form-group form-group-sm">
+                        <label htmlFor="run-max-turns">Max Turns</label>
+                        <input
+                          id="run-max-turns"
+                          type="number"
+                          value={runMaxTurns}
+                          onChange={e => setRunMaxTurns(Number(e.target.value))}
+                          min={1}
+                          max={200}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="run-workdir">Working Directory</label>
+                        <input
+                          id="run-workdir"
+                          type="text"
+                          value={runWorkDir}
+                          onChange={e => setRunWorkDir(e.target.value)}
+                          placeholder="/path/to/project (optional)"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="run-post-action">Post-Debate Action <span className="form-label-hint">(optional — runs after each debate concludes)</span></label>
+                      <textarea
+                        id="run-post-action"
+                        value={runPostActionPrompt}
+                        onChange={e => setRunPostActionPrompt(e.target.value)}
+                        placeholder="e.g. Implement what you agreed upon"
+                        rows={3}
+                      />
+                    </div>
+
+                    {runPostActionPrompt.trim() && (
+                      <div className="form-group">
+                        <label>Run action with</label>
+                        <div className="radio-group">
+                          <label className="radio-label">
+                            <input type="radio" value="claude" checked={runPostActionRole === 'claude'} onChange={() => setRunPostActionRole('claude')} />
+                            Claude ({runClaudeModel})
+                          </label>
+                          <label className="radio-label">
+                            <input type="radio" value="codex" checked={runPostActionRole === 'codex'} onChange={() => setRunPostActionRole('codex')} />
+                            Codex ({runCodexModel})
+                          </label>
+                        </div>
+                      </div>
+                    )}
+
+                    {runPostActionPrompt.trim() && (
+                      <div className="form-group">
+                        <label className="form-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={runPostActionVerification}
+                            onChange={e => setRunPostActionVerification(e.target.checked)}
+                          />
+                          Verification
+                          <span className="form-label-hint" style={{ marginLeft: 4 }}>
+                            (after action, the other model reviews and the implementer can apply feedback)
+                          </span>
+                        </label>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="form-group">
+                      <label htmlFor="run-model">Model <span className="form-label-hint">(leave blank to auto-select)</span></label>
+                      <select
+                        id="run-model"
+                        value={runModel}
+                        onChange={e => setRunModel(e.target.value)}
+                      >
+                        <option value="">Auto-select (Haiku classifies the task)</option>
+                        <option value="claude-opus-4-6[1m]">claude-opus-4-6[1m] — most capable, 1M context</option>
+                        <option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m] — balanced, 1M context</option>
+                        <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 — fastest, cheapest</option>
+                        <option value="codex">codex — default (gpt-5.3-codex)</option>
+                        <option value="codex-gpt-5.3-codex">codex — gpt-5.3-codex</option>
+                        <option value="codex-gpt-5.2-codex">codex — gpt-5.2-codex</option>
+                        <option value="codex-gpt-5.1-codex-max">codex — gpt-5.1-codex-max</option>
+                        <option value="codex-gpt-5.2">codex — gpt-5.2</option>
+                        <option value="codex-gpt-5.1-codex-mini">codex — gpt-5.1-codex-mini</option>
+                      </select>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label htmlFor="run-workdir">Working Directory</label>
+                        <input
+                          id="run-workdir"
+                          type="text"
+                          value={runWorkDir}
+                          onChange={e => setRunWorkDir(e.target.value)}
+                          placeholder="/path/to/project (optional)"
+                        />
+                      </div>
+                      <div className="form-group form-group-sm">
+                        <label htmlFor="run-max-turns">Max Turns</label>
+                        <input
+                          id="run-max-turns"
+                          type="number"
+                          value={runMaxTurns}
+                          onChange={e => setRunMaxTurns(Number(e.target.value))}
+                          min={1}
+                          max={200}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-checkbox-label">
+                        <input type="checkbox" checked={runInteractive} onChange={e => setRunInteractive(e.target.checked)} />
+                        Interactive session
+                      </label>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-checkbox-label">
+                        <input type="checkbox" checked={runUseWorktree} onChange={e => setRunUseWorktree(e.target.checked)} />
+                        Use worktree
+                      </label>
+                    </div>
+                  </>
+                )}
 
                 <div className="form-actions">
                   <button type="button" className="btn btn-secondary" onClick={cancelForm}>Cancel</button>
                   <button type="submit" className="btn btn-primary" disabled={submitting}>
-                    {submitting ? 'Running...' : `Run Batch (${runBt.items.length} jobs)`}
+                    {submitting ? 'Running...' : runDebate
+                      ? `Run Batch (${runBt.items.length} debates)`
+                      : `Run Batch (${runBt.items.length} jobs)`}
                   </button>
                 </div>
               </form>
@@ -346,6 +492,23 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
           </div>
         </div>
       </div>
+      {confirmDeleteBt && (
+        <div className="modal-overlay" onClick={() => setConfirmDeleteBt(null)}>
+          <div className="modal" style={{ width: 360 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Delete Batch Template</h2>
+              <button className="btn-icon" onClick={() => setConfirmDeleteBt(null)} aria-label="Close">&times;</button>
+            </div>
+            <div className="confirm-body">
+              <p className="confirm-text">Delete <strong>{confirmDeleteBt.name}</strong>? This cannot be undone.</p>
+              <div className="confirm-actions">
+                <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDeleteBt(null)}>Cancel</button>
+                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(confirmDeleteBt)}>Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

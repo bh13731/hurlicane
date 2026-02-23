@@ -14,20 +14,24 @@ import { DAGModal } from './components/DAGModal';
 import { JobLineagePanel } from './components/JobLineagePanel';
 import { RunningJobsPanel } from './components/RunningJobsPanel';
 import { ProjectSelector } from './components/ProjectSelector';
+import { SettingsModal } from './components/SettingsModal';
+import { DebateForm } from './components/DebateForm';
 import { useSocket } from './hooks/useSocket';
 import { useAgents } from './hooks/useAgents';
 import { useJobs } from './hooks/useJobs';
 import { useLocks } from './hooks/useLocks';
 import { useProjects } from './hooks/useProjects';
+import { useDebates } from './hooks/useDebates';
 import { useToasts } from './hooks/useToasts';
 import { ToastFeed } from './components/ToastFeed';
-import type { AgentWithJob, AgentOutput, CreateJobRequest, Job, Template, BatchTemplate } from '@shared/types';
+import type { AgentWithJob, AgentOutput, CreateJobRequest, CreateDebateRequest, Job, Template, BatchTemplate } from '@shared/types';
 
 export default function App() {
   const { agents, setInitial: setInitialAgents, addAgent, updateAgent } = useAgents();
   const { jobs, setInitial: setInitialJobs, addJob, updateJob } = useJobs();
   const { locks, setInitial: setInitialLocks, addLock, removeLock } = useLocks();
   const { projects, setInitial: setInitialProjects, addProject, removeProject } = useProjects();
+  const { debates, setInitial: setInitialDebates, addDebate, updateDebate: updateDebateState } = useDebates();
   const { toasts, dismiss: dismissToast } = useToasts();
   const [templates, setTemplates] = useState<Template[]>([]);
 
@@ -40,9 +44,12 @@ export default function App() {
   const [showDag, setShowDag] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   const [showBatchTemplates, setShowBatchTemplates] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showDebateForm, setShowDebateForm] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
-  const [todayCost, setTodayCost] = useState<number | null>(null);
+  const [todayClaudeCost, setTodayClaudeCost] = useState<number | null>(null);
+  const [todayCodexCost, setTodayCodexCost] = useState<number | null>(null);
   const fetchingCost = useRef(false);
 
   const fetchTodayCost = useCallback(async () => {
@@ -54,8 +61,10 @@ export default function App() {
       const res = await fetch(`/api/usage?since=${since}`);
       if (!res.ok) return;
       const data = await res.json();
-      const cost = data.totals?.totalCost ?? data.daily?.[0]?.totalCost ?? null;
-      setTodayCost(cost);
+      const claudeCost = data.totals?.totalCost ?? data.daily?.[0]?.totalCost ?? null;
+      const codexCost = data.codex?.totals?.costUSD ?? data.codex?.daily?.[0]?.costUSD ?? null;
+      setTodayClaudeCost(claudeCost);
+      setTodayCodexCost(codexCost);
     } catch {
       // ignore — don't show broken state
     } finally {
@@ -79,6 +88,7 @@ export default function App() {
       setInitialLocks(snapshot.locks);
       setTemplates(snapshot.templates ?? []);
       setInitialProjects(snapshot.projects ?? []);
+      setInitialDebates(snapshot.debates ?? []);
     },
     onAgentNew: addAgent,
     onAgentUpdate: handleAgentUpdate,
@@ -95,6 +105,8 @@ export default function App() {
     onLockReleased: (lockId) => removeLock(lockId),
     onJobNew: addJob,
     onJobUpdate: updateJob,
+    onDebateNew: addDebate,
+    onDebateUpdate: updateDebateState,
   });
 
   // Fetch on mount, then every 60s
@@ -157,6 +169,22 @@ export default function App() {
     }
   }, [activeProjectId]);
 
+  const handleSubmitDebate = useCallback(async (req: CreateDebateRequest) => {
+    const res = await fetch('/api/debates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error ?? 'Failed to create debate');
+    }
+    const data = await res.json();
+    // Add the project created for this debate and switch to it
+    addProject(data.project);
+    setActiveProjectId(data.project.id);
+  }, [addProject]);
+
   const handleSelectAgent = useCallback((agent: AgentWithJob) => {
     setSelectedAgent(agent);
   }, []);
@@ -172,7 +200,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayCost={todayCost ?? undefined} />
+      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onHome={() => { setSelectedAgent(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} />
 
       <div className="main-layout">
         {selectedAgent ? (
@@ -189,7 +217,14 @@ export default function App() {
             />
           </div>
         ) : (
-          <WorkQueueSidebar jobs={filteredJobs} onSelectJob={handleSelectJob} />
+          <div className="left-sidebar-stack left-sidebar-stack--narrow">
+            <WorkQueueSidebar jobs={filteredJobs} onSelectJob={handleSelectJob} />
+            <RunningJobsPanel
+              agents={agents}
+              projects={projects}
+              onSelectAgent={handleSelectAgent}
+            />
+          </div>
         )}
 
         <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
@@ -266,6 +301,17 @@ export default function App() {
             handleSelectAgent(agent);
             setShowDag(false);
           }}
+        />
+      )}
+
+      {showSettings && (
+        <SettingsModal onClose={() => setShowSettings(false)} />
+      )}
+
+      {showDebateForm && (
+        <DebateForm
+          onSubmit={handleSubmitDebate}
+          onClose={() => setShowDebateForm(false)}
         />
       )}
 

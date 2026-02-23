@@ -3,6 +3,8 @@
 export type JobStatus = 'queued' | 'assigned' | 'running' | 'done' | 'failed' | 'cancelled';
 export type AgentStatus = 'starting' | 'running' | 'waiting_user' | 'done' | 'failed' | 'cancelled';
 export type QuestionStatus = 'pending' | 'answered' | 'timeout';
+export type DebateStatus = 'running' | 'consensus' | 'disagreement' | 'failed' | 'cancelled';
+export type DebateRole = 'claude' | 'codex' | 'post_action' | 'verification_review' | 'verification_response';
 
 export interface Job {
   id: string;
@@ -18,6 +20,33 @@ export interface Job {
   is_interactive: number;     // 0=batch, 1=interactive tmux session
   use_worktree: number;       // 0=normal, 1=create git worktree
   project_id: string | null;  // FK → projects.id
+  debate_id: string | null;   // FK → debates.id
+  debate_round: number | null;
+  debate_role: DebateRole | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Debate {
+  id: string;
+  title: string;
+  task: string;
+  claude_model: string;
+  codex_model: string;
+  max_rounds: number;
+  current_round: number;
+  status: DebateStatus;
+  consensus: string | null; // JSON summary when consensus reached
+  project_id: string;
+  work_dir: string | null;
+  max_turns: number;
+  template_id: string | null;
+  post_action_prompt: string | null;  // instruction to run after debate concludes
+  post_action_role: DebateRole | null; // which side's model runs the action
+  post_action_job_id: string | null;  // FK → jobs.id once created
+  post_action_verification: number;   // 0=off, 1=other model reviews post-action then implementer responds
+  verification_review_job_id: string | null;   // FK → jobs.id for the review job
+  verification_response_job_id: string | null; // FK → jobs.id for the response job
   created_at: number;
   updated_at: number;
 }
@@ -104,6 +133,7 @@ export interface QueueSnapshot {
   templates: Template[];
   projects: Project[];
   batchTemplates: BatchTemplate[];
+  debates: Debate[];
 }
 
 export interface ServerToClientEvents {
@@ -119,6 +149,8 @@ export interface ServerToClientEvents {
   'job:update': (payload: { job: Job }) => void;
   'pty:data': (payload: { agent_id: string; data: string }) => void;
   'pty:closed': (payload: { agent_id: string }) => void;
+  'debate:new': (payload: { debate: Debate }) => void;
+  'debate:update': (payload: { debate: Debate }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -301,9 +333,39 @@ export interface RunBatchTemplateRequest {
   workDir?: string;
   maxTurns?: number;
   projectName?: string;
+  debate?: boolean;
+  claudeModel?: string;
+  codexModel?: string;
+  debateMaxRounds?: number;
+  postActionPrompt?: string;
+  postActionRole?: DebateRole;
+  postActionVerification?: boolean;
 }
 
 export interface RunBatchTemplateResponse {
+  project: Project;
+  jobs: Job[];
+  debates?: Debate[];
+}
+
+// ─── Debates ──────────────────────────────────────────────────────────────────
+
+export interface CreateDebateRequest {
+  title?: string;
+  task: string;
+  claudeModel: string;
+  codexModel: string;
+  maxRounds?: number;
+  workDir?: string;
+  maxTurns?: number;
+  templateId?: string;
+  postActionPrompt?: string;
+  postActionRole?: DebateRole;
+  postActionVerification?: boolean;
+}
+
+export interface CreateDebateResponse {
+  debate: Debate;
   project: Project;
   jobs: Job[];
 }

@@ -38,6 +38,15 @@ export function stopWorkQueue(): void {
 async function tick(): Promise<void> {
   if (!_running) return;
 
+  // Cascade-fail: mark queued jobs as failed if any dependency failed/cancelled
+  for (const job of queries.getJobsWithFailedDeps()) {
+    const failedDeps = queries.getFailedDepsForJob(job.id);
+    const names = failedDeps.map(d => `${d.title} (${d.status})`).join(', ');
+    console.log(`[queue] cascade-fail "${job.title}" — failed deps: ${names}`);
+    queries.updateJobStatus(job.id, 'failed');
+    socket.emitJobUpdate(queries.getJobById(job.id)!);
+  }
+
   const activeAgents = queries.listAgents().filter(a =>
     a.status === 'starting' || a.status === 'running' || a.status === 'waiting_user'
   );

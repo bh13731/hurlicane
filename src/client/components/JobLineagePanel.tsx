@@ -229,7 +229,7 @@ export function JobLineagePanel({ selectedAgent, allAgents, onSelectAgent }: Pro
                     x={x + 12} y={y + 32}
                     fill={color}
                     fontSize={10}
-                    fontFamily="'Menlo','Monaco','Courier New',monospace"
+                    fontFamily="'IBM Plex Mono','Menlo','Monaco','Courier New',monospace"
                   >
                     {agent.status}
                   </text>

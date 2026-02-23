@@ -256,7 +256,7 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
     if (diffFetched) return;
     setDiffFetched(true);
     fetch(`/api/agents/${agent.id}/diff`)
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(d => {
         setBaseSha(d.base_sha ?? null);
         setDiff(d.diff ?? null);
@@ -284,7 +284,7 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
         foreground: '#e6edf3',
         cursor: '#58a6ff',
       },
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontFamily: '"IBM Plex Mono", Menlo, Monaco, "Courier New", monospace',
       fontSize: 13,
       convertEol: !isInteractive,
       scrollback: 50000,
@@ -318,25 +318,22 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
 
       const TERMINAL_STATUSES = ['done', 'failed', 'cancelled'];
       fetch(`/api/agents/${agent.id}/pty-history`)
-        .then(r => r.json())
-        .then(({ chunks }: { chunks: string[] }) => {
+        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+        .then(({ chunks = [] }: { chunks?: string[] }) => {
           if (chunks.length > 0) {
-            // For completed sessions, strip escape sequences that prevent scrolling:
-            // - Alternate-screen entry/exit (\e[?1049h etc.) — TUI runs in alt screen
-            //   which has no scrollback; stripping keeps content in main screen buffer
-            // - Mouse reporting modes (\e[?1000h etc.) — TUI enables mouse mode for its
-            //   own scrollable areas; if left active, scroll-wheel events are captured as
-            //   mouse reports instead of scrolling xterm's buffer
-            // - Clear-scrollback (\e[3J) — would destroy accumulated scrollback
-            // We leave them intact for live (running) sessions so interactive use works.
             const isCompleted = TERMINAL_STATUSES.includes(agent.status);
             const STRIP_FOR_REPLAY_RE = /\x1b\[\?(?:1049|47|1047|1000|1002|1003|1006|1005|1004)[hl]|\x1b\[3J/g;
-            for (const chunk of chunks) {
-              term.write(isCompleted ? chunk.replace(STRIP_FOR_REPLAY_RE, '') : chunk);
-            }
+            // Write all history as a single string for efficient xterm.js processing
+            // (individual writes queue separately and can render garbled intermediate states)
+            const combined = isCompleted
+              ? chunks.map(c => c.replace(STRIP_FOR_REPLAY_RE, '')).join('')
+              : chunks.join('');
+            term.write(combined);
           }
-          // Flush any live data that arrived during the fetch
-          for (const data of pendingPtyData) term.write(data);
+          // Flush any live data that arrived during the fetch (batched)
+          if (pendingPtyData.length > 0) {
+            term.write(pendingPtyData.join(''));
+          }
           pendingPtyData.length = 0;
           historyLoaded = true;
           inputEnabled = true;
@@ -348,18 +345,26 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
             term.scrollToTop();
             term.write('\r\n\x1b[2m[session ended]\x1b[0m\r\n');
           } else {
+            // Force a resize to ensure tmux redraws at the correct client dimensions
+            // (history may have been generated at a different terminal size)
+            try { fitAddon.fit(); } catch { /* ignore */ }
+            socket.emit('pty:resize', { agent_id: agent.id, cols: term.cols, rows: term.rows });
             term.focus();
           }
         })
         .catch(() => {
-          // Still flush any pending data
-          for (const data of pendingPtyData) term.write(data);
+          // Still flush any pending data (batched)
+          if (pendingPtyData.length > 0) {
+            term.write(pendingPtyData.join(''));
+          }
           pendingPtyData.length = 0;
           historyLoaded = true;
           inputEnabled = true;
           if (TERMINAL_STATUSES.includes(agent.status)) {
             term.write('\r\n\x1b[2m[session ended — no history available]\x1b[0m\r\n');
           } else {
+            try { fitAddon.fit(); } catch { /* ignore */ }
+            socket.emit('pty:resize', { agent_id: agent.id, cols: term.cols, rows: term.rows });
             term.focus();
           }
         });
@@ -388,12 +393,17 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
         socket.emit('pty:input', { agent_id: agent.id, data });
       });
 
-      // Handle resize
+      // Handle resize (debounced to prevent rapid-fire resize events that
+      // cause many tmux redraws and can overwhelm xterm.js rendering)
+      let resizeTimer: ReturnType<typeof setTimeout> | null = null;
       const resizeObserver = new ResizeObserver(() => {
-        try {
-          fitAddon.fit();
-          socket.emit('pty:resize', { agent_id: agent.id, cols: term.cols, rows: term.rows });
-        } catch { /* ignore */ }
+        if (resizeTimer) clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          try {
+            fitAddon.fit();
+            socket.emit('pty:resize', { agent_id: agent.id, cols: term.cols, rows: term.rows });
+          } catch { /* ignore */ }
+        }, 100);
       });
       if (containerRef.current) resizeObserver.observe(containerRef.current);
 
@@ -401,6 +411,7 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
         socket.off('pty:data', ptyDataHandler);
         socket.off('pty:closed', ptyClosedHandler);
         inputDispose.dispose();
+        if (resizeTimer) clearTimeout(resizeTimer);
         resizeObserver.disconnect();
         term.dispose();
         termRef.current = null;
@@ -411,19 +422,22 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
       fetch(`/api/agents/${agent.id}/full-output`)
         .then(r => r.json())
         .then((segments: AgentOutputSegment[]) => {
+          if (!Array.isArray(segments)) return;
+          // Build all history into a single string for efficient rendering
+          let combined = '';
           for (let i = 0; i < segments.length; i++) {
             const seg = segments[i];
             if (i > 0) {
-              // Separator between prior run and continuation
-              term.write(`\r\n\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n`);
-              term.write(`\x1b[2m↩ ${seg.job_description}\x1b[0m\r\n`);
-              term.write(`\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n\r\n`);
+              combined += `\r\n\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n`;
+              combined += `\x1b[2m↩ ${seg.job_description}\x1b[0m\r\n`;
+              combined += `\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n\r\n`;
             }
             for (const line of seg.output) {
               const rendered = renderAnyEvent(line.content);
-              if (rendered) term.write(rendered);
+              if (rendered) combined += rendered;
             }
           }
+          if (combined) term.write(combined);
         })
         .catch(console.error);
 
@@ -436,14 +450,19 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
 
       socket.on('agent:output', outputHandler);
 
-      // Handle resize
+      // Handle resize (debounced)
+      let resizeTimer: ReturnType<typeof setTimeout> | null = null;
       const resizeObserver = new ResizeObserver(() => {
-        try { fitAddon.fit(); } catch { /* ignore */ }
+        if (resizeTimer) clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          try { fitAddon.fit(); } catch { /* ignore */ }
+        }, 100);
       });
       if (containerRef.current) resizeObserver.observe(containerRef.current);
 
       return () => {
         socket.off('agent:output', outputHandler);
+        if (resizeTimer) clearTimeout(resizeTimer);
         resizeObserver.disconnect();
         term.dispose();
         termRef.current = null;
@@ -483,6 +502,15 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
               Disconnect
             </button>
           )}
+          {isInteractive && agent.status === 'failed' && (
+            <button
+              className="btn btn-sm"
+              onClick={() => fetch(`/api/agents/${agent.id}/reconnect`, { method: 'POST' })}
+              title="Re-attach to the tmux session if it is still alive"
+            >
+              Reconnect
+            </button>
+          )}
           {!isInteractive && ['starting', 'running', 'waiting_user'].includes(agent.status) && (
             <CancelButton agentId={agent.id} onCancelled={onClose} />
           )}
@@ -490,11 +518,13 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
             className={`flag-btn${agent.job.flagged ? ' flag-btn-active' : ''}`}
             onClick={() => fetch(`/api/jobs/${agent.job.id}/flag`, { method: 'POST' })}
             title={agent.job.flagged ? 'Remove flag' : 'Flag for review'}
+            aria-label={agent.job.flagged ? 'Remove flag' : 'Flag for review'}
+            aria-pressed={!!agent.job.flagged}
             style={{ fontSize: '16px' }}
           >
             ⚑
           </button>
-          <button className="btn-icon" onClick={onClose}>✕</button>
+          <button className="btn-icon" onClick={onClose} aria-label="Close terminal panel">✕</button>
         </div>
       </div>
 
@@ -540,8 +570,12 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
                 key={child.id}
                 className="followup-link"
                 onClick={async () => {
-                  const res = await fetch(`/api/agents/${child.id}`);
-                  if (res.ok && onContinued) onContinued(await res.json());
+                  try {
+                    const res = await fetch(`/api/agents/${child.id}`);
+                    if (res.ok && onContinued) onContinued(await res.json());
+                  } catch (err) {
+                    console.error('Failed to load child agent:', err);
+                  }
                 }}
               >
                 <span className={`followup-status-dot followup-status-${child.status}`} />

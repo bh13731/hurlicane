@@ -69,7 +69,7 @@ export function SearchModal({ onClose, onSelectAgent }: SearchModalProps) {
             value={query}
             onChange={e => setQuery(e.target.value)}
           />
-          {loading && <span className="search-spinner">…</span>}
+          {loading && <span className="spinner spinner-sm" />}
           <button className="btn-icon" onClick={onClose}>✕</button>
         </div>
 

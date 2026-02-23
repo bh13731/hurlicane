@@ -23,6 +23,7 @@ export function initDb(dbPath: string): DatabaseSync {
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');
   db.exec('PRAGMA foreign_keys = ON');
+  db.exec('PRAGMA busy_timeout = 5000');
 
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf-8');
   db.exec(schema);
@@ -122,6 +123,60 @@ export function initDb(dbPath: string): DatabaseSync {
         updated_at INTEGER NOT NULL
       )
     `);
+  }
+
+  // Debates table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS debates (
+      id            TEXT PRIMARY KEY,
+      title         TEXT NOT NULL,
+      task          TEXT NOT NULL,
+      claude_model  TEXT NOT NULL,
+      codex_model   TEXT NOT NULL,
+      max_rounds    INTEGER NOT NULL DEFAULT 3,
+      current_round INTEGER NOT NULL DEFAULT 0,
+      status        TEXT NOT NULL DEFAULT 'running',
+      consensus     TEXT,
+      project_id    TEXT NOT NULL REFERENCES projects(id),
+      work_dir      TEXT,
+      max_turns     INTEGER NOT NULL DEFAULT 50,
+      template_id   TEXT REFERENCES templates(id),
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    )
+  `);
+
+  // Debate columns on jobs
+  if (!jobCols.includes('debate_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN debate_id TEXT REFERENCES debates(id)');
+  }
+  if (!jobCols.includes('debate_round')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN debate_round INTEGER');
+  }
+  if (!jobCols.includes('debate_role')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN debate_role TEXT');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_debate ON jobs(debate_id, debate_round)');
+
+  // Post-debate action columns
+  const debateCols: string[] = (db.prepare('PRAGMA table_info(debates)').all() as any[]).map((r: any) => r.name);
+  if (!debateCols.includes('post_action_prompt')) {
+    db.exec('ALTER TABLE debates ADD COLUMN post_action_prompt TEXT');
+  }
+  if (!debateCols.includes('post_action_role')) {
+    db.exec('ALTER TABLE debates ADD COLUMN post_action_role TEXT');
+  }
+  if (!debateCols.includes('post_action_job_id')) {
+    db.exec('ALTER TABLE debates ADD COLUMN post_action_job_id TEXT');
+  }
+  if (!debateCols.includes('post_action_verification')) {
+    db.exec('ALTER TABLE debates ADD COLUMN post_action_verification INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!debateCols.includes('verification_review_job_id')) {
+    db.exec('ALTER TABLE debates ADD COLUMN verification_review_job_id TEXT');
+  }
+  if (!debateCols.includes('verification_response_job_id')) {
+    db.exec('ALTER TABLE debates ADD COLUMN verification_response_job_id TEXT');
   }
 
   _db = db;

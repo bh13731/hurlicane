@@ -50,6 +50,11 @@ SHARED SCRATCHPAD (coordinate data between agents):
   - write_note(key, value): Write a note visible to all agents. Use namespaced keys like "results/step1".
   - read_note(key): Read a note. Returns { found, key, value, updated_at }.
   - list_notes(prefix?): List note keys, optionally filtered by prefix.
+  - watch_notes(keys?, prefix?, until_value?, timeout_ms?):
+      Block until notes exist. In keys mode, all listed keys must exist.
+      In prefix mode, at least one note under the prefix must exist.
+      If until_value is set, matched notes must have that exact value.
+      Use this to wait for data from other agents instead of polling read_note.
 
 IMPORTANT RULES:
 - Always call lock_files BEFORE modifying any file. It will wait for you automatically.
@@ -291,12 +296,16 @@ function startTailing(
     });
 
     child.on('error', (err) => {
-      console.error(`[agent ${agentId}] spawn error:`, err);
-      stopTailing(agentId);
-      queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
-      queries.updateJobStatus(job.id, 'failed');
-      const updated = queries.getAgentWithJob(agentId);
-      if (updated) socket.emitAgentUpdate(updated);
+      try {
+        console.error(`[agent ${agentId}] spawn error:`, err);
+        stopTailing(agentId);
+        queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
+        queries.updateJobStatus(job.id, 'failed');
+        const updated = queries.getAgentWithJob(agentId);
+        if (updated) socket.emitAgentUpdate(updated);
+      } catch (innerErr) {
+        console.error(`[agent ${agentId}] error in spawn error handler:`, innerErr);
+      }
     });
   } else {
     // Reattach mode: poll the PID to detect when the process exits
@@ -427,9 +436,9 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
   if (updated) socket.emitAgentUpdate(updated);
   const updatedJob = queries.getJobById(job.id);
   if (updatedJob) {
-    socket.emitJobUpdate(updatedJob);
+    try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); }
     // If this job is part of a debate, check if the round is complete
-    debateOnJobCompleted(updatedJob);
+    try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] debateOnJobCompleted error:`, err); }
   }
 }
 

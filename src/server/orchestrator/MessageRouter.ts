@@ -19,11 +19,15 @@ class MessageRouter {
   waitForAnswer(questionId: string, timeoutMs: number): Promise<string> {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
-        this.pending.delete(questionId);
-        // Mark question timed out in DB
-        queries.updateQuestion(questionId, { status: 'timeout', answer: '[TIMEOUT] No response received', answered_at: Date.now() });
-        const q = queries.getQuestionById(questionId);
-        if (q) socket.emitQuestionAnswered(q);
+        try {
+          this.pending.delete(questionId);
+          // Mark question timed out in DB
+          queries.updateQuestion(questionId, { status: 'timeout', answer: '[TIMEOUT] No response received', answered_at: Date.now() });
+          const q = queries.getQuestionById(questionId);
+          if (q) socket.emitQuestionAnswered(q);
+        } catch (err) {
+          console.error(`[MessageRouter] error handling timeout for question ${questionId}:`, err);
+        }
         resolve('[TIMEOUT] No response received');
       }, timeoutMs);
 

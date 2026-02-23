@@ -37,8 +37,11 @@ export async function resolveModel(job: Job): Promise<string> {
   const prompt = buildClassifierPrompt(job);
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
@@ -50,6 +53,7 @@ export async function resolveModel(job: Job): Promise<string> {
         messages: [{ role: 'user', content: prompt }],
       }),
     });
+    clearTimeout(timeout);
 
     if (!response.ok) {
       throw new Error(`Anthropic API ${response.status}: ${await response.text()}`);

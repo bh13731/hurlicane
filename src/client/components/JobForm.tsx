@@ -20,6 +20,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [interactive, setInteractive] = useState(false);
   const [useWorktree, setUseWorktree] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const pendingJobs = availableJobs.filter(
     j => j.status === 'queued' || j.status === 'assigned' || j.status === 'running'
@@ -50,6 +51,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
     e.preventDefault();
     if (!description.trim()) return;
     setLoading(true);
+    setError(null);
     try {
       await onSubmit({
         title: title.trim() || undefined,
@@ -64,6 +66,8 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         useWorktree: useWorktree || undefined,
       });
       onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to submit job');
     } finally {
       setLoading(false);
     }
@@ -227,6 +231,8 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               <span className="tooltip-icon" data-tip="Creates a git worktree so the agent works in an isolated checkout on a new branch">?</span>
             </label>
           </div>
+
+          {error && <div className="form-error">{error}</div>}
 
           <div className="form-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>

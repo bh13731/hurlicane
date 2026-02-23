@@ -7,6 +7,14 @@ const router = Router();
 
 const VALID_SINCE = /^[0-9]{8}$/;
 
+async function runCcusage(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  try {
+    return await execFileAsync('npx', args, { timeout: 30_000 });
+  } catch (err: any) {
+    return { stdout: err.stdout ?? '', stderr: err.stderr ?? '' };
+  }
+}
+
 router.get('/', async (req, res) => {
   const since = (req.query.since as string) || '7d';
 
@@ -15,33 +23,19 @@ router.get('/', async (req, res) => {
     return;
   }
 
-  let stdout = '';
-  let stderr = '';
+  const [claudeResult, codexResult] = await Promise.all([
+    runCcusage(['ccusage', 'daily', '--since', since, '--json']),
+    runCcusage(['@ccusage/codex', 'daily', '--since', since, '--json']),
+  ]);
 
-  try {
-    ({ stdout, stderr } = await execFileAsync(
-      'npx',
-      ['ccusage', 'daily', '--since', since, '--json'],
-      { timeout: 30_000 }
-    ));
-  } catch (err: any) {
-    // execFile rejects on non-zero exit but may still have usable output
-    stdout = err.stdout ?? '';
-    stderr = err.stderr ?? '';
-    if (!stdout.trim()) {
-      res.status(500).json({ error: `ccusage failed: ${err.message ?? stderr}` });
-      return;
-    }
-  }
-
-  if (!stdout.trim()) {
-    res.status(500).json({ error: 'ccusage returned no output' });
+  if (!claudeResult.stdout.trim()) {
+    res.status(500).json({ error: `ccusage failed: ${claudeResult.stderr}` });
     return;
   }
 
-  let parsed: unknown;
+  let parsed: any;
   try {
-    parsed = JSON.parse(stdout);
+    parsed = JSON.parse(claudeResult.stdout);
   } catch (parseErr: any) {
     res.status(500).json({ error: `Failed to parse ccusage output: ${parseErr.message}` });
     return;
@@ -50,11 +44,21 @@ router.get('/', async (req, res) => {
   // ccusage returns [] when there is no data for the period;
   // normalize to the object shape the client expects.
   if (Array.isArray(parsed)) {
-    res.json({ daily: [], totals: null });
-    return;
+    parsed = { daily: [], totals: null };
   }
 
-  res.json(parsed);
+  // Attach Codex data (best-effort; null if unavailable)
+  let codex: unknown = null;
+  if (codexResult.stdout.trim()) {
+    try {
+      const codexParsed = JSON.parse(codexResult.stdout);
+      codex = Array.isArray(codexParsed) ? { daily: [], totals: null } : codexParsed;
+    } catch {
+      // ignore parse error — codex stays null
+    }
+  }
+
+  res.json({ ...parsed, codex });
 });
 
 export default router;

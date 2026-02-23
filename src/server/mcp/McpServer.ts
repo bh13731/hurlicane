@@ -11,6 +11,7 @@ import { reportStatusHandler, reportStatusSchema } from './tools/reportStatus.js
 import { createJobHandler, createJobSchema } from './tools/createJob.js';
 import { waitForJobsHandler, waitForJobsSchema } from './tools/waitForJobs.js';
 import { writeNoteHandler, writeNoteSchema, readNoteHandler, readNoteSchema, listNotesHandler, listNotesSchema } from './tools/notes.js';
+import { watchNotesHandler, watchNotesSchema } from './tools/watchNotes.js';
 
 // agentId → { sessionId → transport }
 const agentTransports: Map<string, Map<string, StreamableHTTPServerTransport>> = new Map();
@@ -250,6 +251,21 @@ function buildMcpServer(agentId: string): MCP {
     { prefix: listNotesSchema.shape.prefix },
     async (input) => {
       const result = await listNotesHandler(agentId, input as any);
+      return { content: [{ type: 'text', text: result }] };
+    }
+  );
+
+  server.tool(
+    'watch_notes',
+    'Block until specified notes exist (and optionally match a value). Use to wait for data from other agents.',
+    {
+      keys: watchNotesSchema.shape.keys,
+      prefix: watchNotesSchema.shape.prefix,
+      until_value: watchNotesSchema.shape.until_value,
+      timeout_ms: watchNotesSchema.shape.timeout_ms,
+    },
+    async (input) => {
+      const result = await watchNotesHandler(agentId, input as any);
       return { content: [{ type: 'text', text: result }] };
     }
   );

@@ -13,6 +13,7 @@ interface ProjectSelectorProps {
 export function ProjectSelector({ projects, activeProjectId, onSelect, onCreate, onDelete, onClose }: ProjectSelectorProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,7 +28,7 @@ export function ProjectSelector({ projects, activeProjectId, onSelect, onCreate,
       <div className="modal" style={{ width: 480 }} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2>Projects</h2>
-          <button className="btn-icon" onClick={onClose}>&times;</button>
+          <button className="btn-icon" onClick={onClose} aria-label="Close">&times;</button>
         </div>
         <div style={{ padding: '12px 20px' }}>
           {/* Main Dashboard option */}
@@ -36,7 +37,7 @@ export function ProjectSelector({ projects, activeProjectId, onSelect, onCreate,
             onClick={() => { onSelect(null); onClose(); }}
           >
             <span>Main Dashboard</span>
-            <span style={{ fontSize: 11, color: '#6e7681' }}>all unscoped jobs</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>all unscoped jobs</span>
           </div>
 
           {/* Project list */}
@@ -48,12 +49,12 @@ export function ProjectSelector({ projects, activeProjectId, onSelect, onCreate,
             >
               <span>{p.name}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {p.description && <span style={{ fontSize: 11, color: '#6e7681' }}>{p.description}</span>}
+                {p.description && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.description}</span>}
                 <button
                   className="btn-icon"
                   style={{ fontSize: 13, padding: '2px 4px' }}
                   title="Delete project"
-                  onClick={(e) => { e.stopPropagation(); onDelete(p.id); }}
+                  onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(p.id); }}
                 >
                   &times;
                 </button>
@@ -62,7 +63,7 @@ export function ProjectSelector({ projects, activeProjectId, onSelect, onCreate,
           ))}
 
           {projects.length === 0 && (
-            <p style={{ fontSize: 13, color: '#6e7681', margin: '12px 0' }}>No projects yet. Create one below.</p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '12px 0' }}>No projects yet. Create one below.</p>
           )}
 
           {/* Create form */}
@@ -86,6 +87,33 @@ export function ProjectSelector({ projects, activeProjectId, onSelect, onCreate,
           </form>
         </div>
       </div>
+      {confirmDeleteId && (() => {
+        const project = projects.find(p => p.id === confirmDeleteId);
+        return (
+          <div className="modal-overlay" onClick={() => setConfirmDeleteId(null)}>
+            <div className="modal" style={{ width: 360 }} onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>Delete Project</h2>
+                <button className="btn-icon" onClick={() => setConfirmDeleteId(null)} aria-label="Close">&times;</button>
+              </div>
+              <div className="confirm-body">
+                <p className="confirm-text">
+                  Delete <strong>{project?.name}</strong>? This cannot be undone.
+                </p>
+                <div className="confirm-actions">
+                  <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDeleteId(null)}>Cancel</button>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => { onDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -14,6 +14,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
   const [workDir, setWorkDir] = useState('');
   const [model, setModel] = useState('');
   const [saving, setSaving] = useState(false);
+  const [confirmDeleteTpl, setConfirmDeleteTpl] = useState<Template | null>(null);
 
   useEffect(() => {
     fetch('/api/templates').then(r => r.json()).then(setTemplates).catch(console.error);
@@ -71,10 +72,10 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
   }
 
   async function handleDelete(t: Template) {
-    if (!confirm(`Delete template "${t.name}"?`)) return;
     await fetch(`/api/templates/${t.id}`, { method: 'DELETE' });
     setTemplates(prev => prev.filter(x => x.id !== t.id));
     if (editing?.id === t.id) cancelForm();
+    setConfirmDeleteTpl(null);
   }
 
   return (
@@ -103,7 +104,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
                 <span className="template-item-name">{t.name}</span>
                 <button
                   className="btn-icon template-delete-btn"
-                  onClick={e => { e.stopPropagation(); handleDelete(t); }}
+                  onClick={e => { e.stopPropagation(); setConfirmDeleteTpl(t); }}
                   title="Delete"
                 >
                   ✕
@@ -170,7 +171,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
                 <div className="form-actions">
                   <button type="button" className="btn btn-secondary" onClick={cancelForm}>Cancel</button>
                   {editing && (
-                    <button type="button" className="btn btn-danger" onClick={() => handleDelete(editing)}>
+                    <button type="button" className="btn btn-danger" onClick={() => setConfirmDeleteTpl(editing)}>
                       Delete
                     </button>
                   )}
@@ -187,6 +188,23 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
           </div>
         </div>
       </div>
+      {confirmDeleteTpl && (
+        <div className="modal-overlay" onClick={() => setConfirmDeleteTpl(null)}>
+          <div className="modal" style={{ width: 360 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Delete Template</h2>
+              <button className="btn-icon" onClick={() => setConfirmDeleteTpl(null)} aria-label="Close">&times;</button>
+            </div>
+            <div className="confirm-body">
+              <p className="confirm-text">Delete <strong>{confirmDeleteTpl.name}</strong>? This cannot be undone.</p>
+              <div className="confirm-actions">
+                <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDeleteTpl(null)}>Cancel</button>
+                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(confirmDeleteTpl)}>Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

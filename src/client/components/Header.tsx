@@ -9,12 +9,16 @@ interface HeaderProps {
   onTimeline: () => void;
   onDag: () => void;
   onProjects: () => void;
+  onSettings: () => void;
+  onDebate: () => void;
+  onHome: () => void;
   currentProjectName?: string | null;
   onClearProject?: () => void;
-  todayCost?: number;
+  todayClaudeCost?: number;
+  todayCodexCost?: number;
 }
 
-function HurlwindLogo() {
+function HurlicaLogo() {
   return (
     <svg width="28" height="28" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
       {/* Outer vortex arm */}
@@ -39,47 +43,62 @@ function HurlwindLogo() {
   );
 }
 
-export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, currentProjectName, onClearProject, todayCost }: HeaderProps) {
+export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost }: HeaderProps) {
+  const hasCost = (todayClaudeCost != null && todayClaudeCost > 0) || (todayCodexCost != null && todayCodexCost > 0);
   return (
     <header className="header">
       <div className="header-left">
-        <HurlwindLogo />
-        <h1 className="header-title">Hurlwind</h1>
+        <button className="header-logo-btn" onClick={onHome} title="Go to main page" aria-label="Go to main dashboard">
+          <HurlicaLogo />
+          <h1 className="header-title">Hurlicane</h1>
+        </button>
         {currentProjectName && (
           <div className="header-project-badge" title={`Active project: ${currentProjectName}`}>
             {currentProjectName}
-            <button className="header-project-clear" onClick={onClearProject}>&times;</button>
+            <button className="header-project-clear" onClick={onClearProject} aria-label={`Clear project filter: ${currentProjectName}`}>&times;</button>
           </div>
         )}
-        {todayCost != null && todayCost > 0 && (
+        {hasCost && (
           <div className="header-cost" title="Today's spend">
-            ${todayCost.toFixed(4)} today
+            {todayClaudeCost != null && todayClaudeCost > 0 && (
+              <span title="Claude cost today">Claude ${todayClaudeCost.toFixed(4)}</span>
+            )}
+            {todayClaudeCost != null && todayClaudeCost > 0 && todayCodexCost != null && todayCodexCost > 0 && (
+              <span style={{ opacity: 0.4, margin: '0 4px' }}>|</span>
+            )}
+            {todayCodexCost != null && todayCodexCost > 0 && (
+              <span title="Codex cost today" style={{ color: 'var(--codex)' }}>Codex ${todayCodexCost.toFixed(4)}</span>
+            )}
+            <span style={{ opacity: 0.6, marginLeft: 4 }}>today</span>
           </div>
         )}
       </div>
       <div className="header-actions">
-        <button className="btn btn-secondary" onClick={onSearch}>
-          Search
+        <input
+          type="text"
+          className="search-input-header"
+          placeholder="⌘ Search..."
+          readOnly
+          onFocus={onSearch}
+        />
+        <span className="header-divider" />
+        <div className="header-btn-group" title="Visualizations">
+          <button className="header-btn" onClick={onTimeline}>Timeline</button>
+          <button className="header-btn" onClick={onDag}>Graph</button>
+          <button className="header-btn" onClick={onUsage}>Usage</button>
+        </div>
+        <span className="header-divider" />
+        <div className="header-btn-group" title="Management">
+          <button className="header-btn" onClick={onProjects}>Projects</button>
+          <button className="header-btn" onClick={onTemplates}>Templates</button>
+          <button className="header-btn" onClick={onBatchTemplates}>Batches</button>
+          <button className="header-btn" onClick={onDebate}>Debate</button>
+        </div>
+        <span className="header-divider" />
+        <button className="btn-icon" onClick={onSettings} title="Settings" aria-label="Settings">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd"/></svg>
         </button>
-        <button className="btn btn-secondary" onClick={onTimeline}>
-          Timeline
-        </button>
-        <button className="btn btn-secondary" onClick={onDag}>
-          Graph
-        </button>
-        <button className="btn btn-secondary" onClick={onUsage}>
-          Usage
-        </button>
-        <button className="btn btn-secondary" onClick={onProjects}>
-          Projects
-        </button>
-        <button className="btn btn-secondary" onClick={onTemplates}>
-          Templates
-        </button>
-        <button className="btn btn-secondary" onClick={onBatchTemplates}>
-          Batches
-        </button>
-        <button className="btn btn-primary" onClick={onNewJob}>
+        <button className="btn btn-primary btn-sm" onClick={onNewJob}>
           + New Job
         </button>
       </div>

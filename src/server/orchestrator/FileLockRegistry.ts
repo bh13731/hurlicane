@@ -6,7 +6,7 @@ import type { FileLock } from '../../shared/types.js';
 export interface AcquireResult {
   success: boolean;
   acquired: string[];
-  blocked: Array<{ file: string; held_by: string; expires_at: number }>;
+  blocked: Array<{ file: string; held_by: string; expires_at: number; held_by_status: string | null; lock_reason: string | null }>;
   timed_out?: boolean;
 }
 
@@ -32,7 +32,14 @@ class FileLockRegistry {
     for (const file of files) {
       for (const lock of queries.getActiveLocksForFile(file)) {
         if (lock.agent_id !== agentId) {
-          blocked.push({ file, held_by: lock.agent_id, expires_at: lock.expires_at });
+          const holder = queries.getAgentById(lock.agent_id);
+          blocked.push({
+            file,
+            held_by: lock.agent_id,
+            expires_at: lock.expires_at,
+            held_by_status: holder?.status_message ?? null,
+            lock_reason: lock.reason ?? null,
+          });
         }
       }
     }
@@ -92,7 +99,14 @@ class FileLockRegistry {
         for (const file of files) {
           for (const lock of queries.getActiveLocksForFile(file)) {
             if (lock.agent_id !== agentId) {
-              blocked.push({ file, held_by: lock.agent_id, expires_at: lock.expires_at });
+              const holder = queries.getAgentById(lock.agent_id);
+              blocked.push({
+                file,
+                held_by: lock.agent_id,
+                expires_at: lock.expires_at,
+                held_by_status: holder?.status_message ?? null,
+                lock_reason: lock.reason ?? null,
+              });
             }
           }
         }

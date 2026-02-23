@@ -8,7 +8,7 @@ import type { CreateJobRequest } from '../../shared/types.js';
 const router = Router();
 const anthropic = new Anthropic();
 
-const TITLE_MAX = 28;
+const TITLE_MAX = 45;
 
 function autoTitle(description: string): string {
   const firstLine = description.trim().split('\n')[0].trim();
@@ -35,7 +35,7 @@ async function generateSmartTitle(description: string): Promise<string> {
   return autoTitle(description);
 }
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const body = req.body as CreateJobRequest;
   if (!body.description) {
     res.status(400).json({ error: 'description is required' });
@@ -43,9 +43,11 @@ router.post('/', (req, res) => {
   }
 
   const explicitTitle = body.title?.trim();
+  const title = explicitTitle || await generateSmartTitle(body.description);
+
   const job = queries.insertJob({
     id: randomUUID(),
-    title: explicitTitle || autoTitle(body.description),
+    title,
     description: body.description,
     context: body.context ? JSON.stringify(body.context) : null,
     priority: body.priority ?? 0,
@@ -61,17 +63,6 @@ router.post('/', (req, res) => {
 
   socket.emitJobNew(job);
   res.status(201).json(job);
-
-  // Asynchronously replace the placeholder title with a smarter one
-  if (!explicitTitle) {
-    generateSmartTitle(body.description).then(smartTitle => {
-      if (smartTitle !== job.title) {
-        queries.updateJobTitle(job.id, smartTitle);
-        const updated = queries.getJobById(job.id);
-        if (updated) socket.emitJobUpdate(updated);
-      }
-    }).catch(() => { /* already warned inside generateSmartTitle */ });
-  }
 });
 
 router.get('/', (req, res) => {

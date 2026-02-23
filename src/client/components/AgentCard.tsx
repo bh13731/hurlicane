@@ -67,7 +67,7 @@ export function AgentCard({ agent, onClick, onSelectParent, templateName, isSele
   return (
     <div
       className={`agent-card${isSelected ? ' agent-card-selected' : ''}`}
-      style={{ borderColor, borderWidth: borderColor !== 'transparent' ? 2 : 1 }}
+      style={borderColor !== 'transparent' ? { borderLeftColor: borderColor, borderLeftWidth: 3 } : undefined}
       onClick={() => onClick(agent)}
     >
       <div className="agent-card-header">
@@ -85,6 +85,8 @@ export function AgentCard({ agent, onClick, onSelectParent, templateName, isSele
           className={`flag-btn${agent.job.flagged ? ' flag-btn-active' : ''}`}
           onClick={handleFlag}
           title={agent.job.flagged ? 'Remove flag' : 'Flag for review'}
+          aria-label={agent.job.flagged ? 'Remove flag' : 'Flag for review'}
+          aria-pressed={!!agent.job.flagged}
         >
           ⚑
         </button>
@@ -102,6 +104,12 @@ export function AgentCard({ agent, onClick, onSelectParent, templateName, isSele
       {agent.job.model && (
         <div className="agent-model" title={agent.job.model}>
           {agent.job.model.replace('claude-', '')}
+        </div>
+      )}
+
+      {agent.job.debate_id && (
+        <div className="agent-debate-badge" title={`Debate round ${agent.job.debate_round}, ${agent.job.debate_role} side`}>
+          R{agent.job.debate_round} {agent.job.debate_role === 'claude' ? 'Claude' : 'Codex'}
         </div>
       )}
 

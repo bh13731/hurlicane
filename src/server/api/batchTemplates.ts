@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import type { CreateBatchTemplateRequest, UpdateBatchTemplateRequest, RunBatchTemplateRequest } from '../../shared/types.js';
+import { buildInitialPrompt } from '../orchestrator/DebateManager.js';
+import type { CreateBatchTemplateRequest, UpdateBatchTemplateRequest, RunBatchTemplateRequest, Debate, Job } from '../../shared/types.js';
 
 const router = Router();
 
@@ -67,7 +68,7 @@ router.delete('/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// Run a batch template — creates project + N jobs
+// Run a batch template — creates project + N jobs (or N debates in debate mode)
 router.post('/:id/run', (req, res) => {
   const bt = queries.getBatchTemplateById(req.params.id);
   if (!bt) { res.status(404).json({ error: 'batch template not found' }); return; }
@@ -79,32 +80,115 @@ router.post('/:id/run', (req, res) => {
   const project = queries.insertProject({
     id: randomUUID(),
     name: body.projectName?.trim() || bt.name,
-    description: `Batch run of "${bt.name}" (${bt.items.length} items)`,
+    description: body.debate
+      ? `Batch debate of "${bt.name}" (${bt.items.length} items, ${body.claudeModel} vs ${body.codexModel})`
+      : `Batch run of "${bt.name}" (${bt.items.length} items)`,
     created_at: now,
     updated_at: now,
   });
 
-  // Create one job per item
-  const jobs = bt.items.map(item => {
-    const job = queries.insertJob({
-      id: randomUUID(),
-      title: item.length > 28 ? item.slice(0, 27) + '\u2026' : item,
-      description: item,
-      context: null,
-      priority: 0,
-      model: body.model ?? null,
-      template_id: body.templateId ?? null,
-      is_interactive: body.interactive ? 1 : 0,
-      use_worktree: body.useWorktree ? 1 : 0,
-      work_dir: body.workDir ?? null,
-      max_turns: body.maxTurns ?? 50,
-      project_id: project.id,
-    });
-    socket.emitJobNew(job);
-    return job;
-  });
+  if (body.debate) {
+    // Debate mode: create one debate per item
+    if (!body.claudeModel?.trim() || !body.codexModel?.trim()) {
+      res.status(400).json({ error: 'claudeModel and codexModel are required for debate mode' });
+      return;
+    }
+    const maxRounds = Math.min(Math.max(body.debateMaxRounds ?? 3, 1), 10);
+    const allDebates: Debate[] = [];
+    const allJobs: Job[] = [];
 
-  res.status(201).json({ project, jobs });
+    for (const item of bt.items) {
+      const debateId = randomUUID();
+      const debate: Debate = {
+        id: debateId,
+        title: item.length > 40 ? item.slice(0, 39) + '\u2026' : item,
+        task: item,
+        claude_model: body.claudeModel.trim(),
+        codex_model: body.codexModel.trim(),
+        max_rounds: maxRounds,
+        current_round: 0,
+        status: 'running',
+        consensus: null,
+        project_id: project.id,
+        work_dir: body.workDir?.trim() || null,
+        max_turns: body.maxTurns ?? 50,
+        template_id: body.templateId?.trim() || null,
+        post_action_prompt: body.postActionPrompt?.trim() || null,
+        post_action_role: body.postActionRole ?? null,
+        post_action_job_id: null,
+        post_action_verification: (body.postActionVerification && !!body.postActionPrompt?.trim()) ? 1 : 0,
+        verification_review_job_id: null,
+        verification_response_job_id: null,
+        created_at: now,
+        updated_at: now,
+      };
+      queries.insertDebate(debate);
+      socket.emitDebateNew(debate);
+      allDebates.push(debate);
+
+      const initialPrompt = buildInitialPrompt(debate);
+
+      const claudeJob = queries.insertJob({
+        id: randomUUID(),
+        title: `[Debate R0] Claude`,
+        description: initialPrompt,
+        context: null,
+        priority: 0,
+        model: debate.claude_model,
+        template_id: debate.template_id,
+        work_dir: debate.work_dir,
+        max_turns: debate.max_turns,
+        project_id: project.id,
+        debate_id: debateId,
+        debate_round: 0,
+        debate_role: 'claude',
+      });
+      socket.emitJobNew(claudeJob);
+      allJobs.push(claudeJob);
+
+      const codexJob = queries.insertJob({
+        id: randomUUID(),
+        title: `[Debate R0] Codex`,
+        description: initialPrompt,
+        context: null,
+        priority: 0,
+        model: debate.codex_model,
+        template_id: debate.template_id,
+        work_dir: debate.work_dir,
+        max_turns: debate.max_turns,
+        project_id: project.id,
+        debate_id: debateId,
+        debate_round: 0,
+        debate_role: 'codex',
+      });
+      socket.emitJobNew(codexJob);
+      allJobs.push(codexJob);
+    }
+
+    res.status(201).json({ project, jobs: allJobs, debates: allDebates });
+  } else {
+    // Normal mode: create one job per item
+    const jobs = bt.items.map(item => {
+      const job = queries.insertJob({
+        id: randomUUID(),
+        title: item.length > 28 ? item.slice(0, 27) + '\u2026' : item,
+        description: item,
+        context: null,
+        priority: 0,
+        model: body.model ?? null,
+        template_id: body.templateId ?? null,
+        is_interactive: body.interactive ? 1 : 0,
+        use_worktree: body.useWorktree ? 1 : 0,
+        work_dir: body.workDir ?? null,
+        max_turns: body.maxTurns ?? 50,
+        project_id: project.id,
+      });
+      socket.emitJobNew(job);
+      return job;
+    });
+
+    res.status(201).json({ project, jobs });
+  }
 });
 
 export default router;

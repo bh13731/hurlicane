@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { runAgent, cancelledAgents } from '../orchestrator/AgentRunner.js';
-import { disconnectAgent, disconnectAll, getPtyBuffer } from '../orchestrator/PtyManager.js';
+import { disconnectAgent, disconnectAll, getPtyBuffer, attachPty, isTmuxSessionAlive } from '../orchestrator/PtyManager.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 
 const router = Router();
@@ -13,6 +13,23 @@ router.get('/', (_req, res) => {
 });
 
 // Must be registered before /:id to avoid param capture
+router.post('/read-all', (req, res) => {
+  const { ids } = req.body as { ids?: string[] };
+  const targets = Array.isArray(ids) && ids.length > 0
+    ? ids
+    : queries.getAgentsWithJob()
+        .filter(a => (a.status === 'done' || a.status === 'failed') && a.output_read === 0)
+        .map(a => a.id);
+  for (const id of targets) {
+    const agent = queries.getAgentById(id);
+    if (!agent || agent.output_read !== 0) continue;
+    queries.updateAgent(id, { output_read: 1 });
+    const updated = queries.getAgentWithJob(id);
+    if (updated) socket.emitAgentUpdate(updated);
+  }
+  res.json({ marked: targets.length });
+});
+
 router.delete('/disconnect-all', (_req, res) => {
   const agentIds = disconnectAll();
   let count = 0;
@@ -189,6 +206,37 @@ router.delete('/:id/disconnect', (req, res) => {
   const updatedJob = queries.getJobById(agent.job_id);
   if (updatedJob) socket.emitJobUpdate(updatedJob);
   res.json(updated);
+});
+
+// Re-attach the PTY for an interactive agent whose tmux session is still alive
+// but whose node-pty connection was lost (e.g. posix_spawnp failed transiently).
+router.post('/:id/reconnect', (req, res) => {
+  const agent = queries.getAgentById(req.params.id);
+  if (!agent) { res.status(404).json({ error: 'not found' }); return; }
+
+  const job = queries.getJobById(agent.job_id);
+  if (!job) { res.status(404).json({ error: 'job not found' }); return; }
+
+  if (!(job as any).is_interactive) {
+    res.status(400).json({ error: 'Only interactive agents can be reconnected' }); return;
+  }
+
+  if (!isTmuxSessionAlive(req.params.id)) {
+    res.status(400).json({ error: 'tmux session is no longer alive' }); return;
+  }
+
+  queries.updateAgent(req.params.id, { status: 'running', error_message: null, finished_at: null });
+  queries.updateJobStatus(agent.job_id, 'running');
+
+  const updated = queries.getAgentWithJob(req.params.id)!;
+  socket.emitAgentUpdate(updated);
+  const updatedJob = queries.getJobById(agent.job_id);
+  if (updatedJob) socket.emitJobUpdate(updatedJob);
+
+  // Re-attach node-pty to the existing tmux session
+  attachPty(req.params.id, job);
+
+  res.json(queries.getAgentWithJob(req.params.id));
 });
 
 export default router;

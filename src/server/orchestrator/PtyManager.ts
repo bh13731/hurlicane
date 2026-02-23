@@ -20,6 +20,7 @@ const _ptys = new Map<string, IPty>();
 
 // Rolling buffer of raw PTY output per agent (capped at 2000 chunks to bound memory)
 const _ptyBuffers = new Map<string, string[]>();
+const _pendingResizes = new Map<string, { cols: number; rows: number }>();
 const PTY_BUFFER_MAX = 2000;
 
 function getPtyLogPath(agentId: string): string {
@@ -39,8 +40,11 @@ export function getPtyBuffer(agentId: string): string[] {
       // Read only the tail of the file
       const buf = Buffer.alloc(MAX_READ_BYTES);
       const fd = fs.openSync(logPath, 'r');
-      fs.readSync(fd, buf, 0, MAX_READ_BYTES, stat.size - MAX_READ_BYTES);
-      fs.closeSync(fd);
+      try {
+        fs.readSync(fd, buf, 0, MAX_READ_BYTES, stat.size - MAX_READ_BYTES);
+      } finally {
+        fs.closeSync(fd);
+      }
       content = buf.toString('utf8');
       // Skip the first (potentially partial) line
       const firstNewline = content.indexOf('\n');
@@ -213,6 +217,14 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
 export function attachPty(agentId: string, job: Job, cols = 220, rows = 50): void {
   if (_ptys.has(agentId)) return; // already attached
 
+  // Use dimensions from client resize if received before PTY was attached
+  const pendingSize = _pendingResizes.get(agentId);
+  if (pendingSize) {
+    cols = pendingSize.cols;
+    rows = pendingSize.rows;
+    _pendingResizes.delete(agentId);
+  }
+
   if (!isTmuxSessionAlive(agentId)) {
     console.warn(`[pty ${agentId}] tmux session not alive, cannot attach`);
     queries.updateAgent(agentId, { status: 'done', finished_at: Date.now() });
@@ -293,6 +305,8 @@ export function writeInput(agentId: string, data: string): void {
 }
 
 export function resizePty(agentId: string, cols: number, rows: number): void {
+  // Always store the latest size so attachPty can use it if the PTY isn't ready yet
+  _pendingResizes.set(agentId, { cols, rows });
   const ptyInstance = _ptys.get(agentId);
   if (ptyInstance) ptyInstance.resize(cols, rows);
 }
@@ -300,6 +314,7 @@ export function resizePty(agentId: string, cols: number, rows: number): void {
 export function disconnectAgent(agentId: string): void {
   // Delete buffer first so the onData guard prevents writes during teardown
   _ptyBuffers.delete(agentId);
+  _pendingResizes.delete(agentId);
 
   try {
     execFileSync('tmux', ['kill-session', '-t', sessionName(agentId)], { stdio: 'pipe' });

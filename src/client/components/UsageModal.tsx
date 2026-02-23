@@ -58,31 +58,31 @@ interface Totals {
   totalCost: number;
 }
 
+interface CodexDailyEntry {
+  date: string;
+  costUSD: number;
+}
+
+interface CodexTotals {
+  costUSD: number;
+}
+
+interface CodexData {
+  daily: CodexDailyEntry[];
+  totals: CodexTotals | null;
+}
+
 interface UsageData {
   daily: DailyEntry[];
   totals: Totals | null;
+  codex: CodexData | null;
 }
 
 interface UsageModalProps {
   onClose: () => void;
 }
 
-const tdStyle: React.CSSProperties = {
-  padding: '7px 12px',
-  borderBottom: '1px solid #30363d',
-  whiteSpace: 'nowrap',
-};
-
-const tdNum: React.CSSProperties = {
-  ...tdStyle,
-  textAlign: 'right',
-  fontVariantNumeric: 'tabular-nums',
-};
-
-const tdCost: React.CSSProperties = {
-  ...tdNum,
-  color: '#3fb950',
-};
+// Table styles now handled by .usage-table CSS classes
 
 export function UsageModal({ onClose }: UsageModalProps) {
   const [days, setDays] = useState(7);
@@ -157,47 +157,52 @@ export function UsageModal({ onClose }: UsageModalProps) {
 
         <div style={{ padding: '16px 20px', overflowX: 'auto' }}>
           {loading && (
-            <div style={{ color: '#8b949e', textAlign: 'center', padding: 40 }}>
-              Loading usage data...
+            <div className="usage-loading">
+              <span className="spinner" /> Loading usage data...
             </div>
           )}
           {error && (
-            <div style={{ color: '#f85149', padding: 12, background: '#3d1a1a', borderRadius: 6 }}>
-              {error}
-            </div>
+            <div className="usage-error">{error}</div>
           )}
           {!loading && !error && data && (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <table className="usage-table">
               <thead>
-                <tr style={{ background: '#21262d' }}>
-                  <th style={{ ...tdStyle, textAlign: 'left', color: '#8b949e', fontWeight: 600 }}>Date</th>
-                  <th style={{ ...tdStyle, textAlign: 'left', color: '#8b949e', fontWeight: 600 }}>Models</th>
-                  <th style={{ ...tdNum, color: '#8b949e', fontWeight: 600 }}>Input</th>
-                  <th style={{ ...tdNum, color: '#8b949e', fontWeight: 600 }}>Output</th>
-                  <th style={{ ...tdNum, color: '#8b949e', fontWeight: 600 }}>Cache Write</th>
-                  <th style={{ ...tdNum, color: '#8b949e', fontWeight: 600 }}>Cache Read</th>
-                  <th style={{ ...tdNum, color: '#8b949e', fontWeight: 600 }}>Total Tokens</th>
-                  <th style={{ ...tdNum, color: '#8b949e', fontWeight: 600 }}>Cost (USD)</th>
+                <tr>
+                  <th>Date</th>
+                  <th>Models</th>
+                  <th>Input</th>
+                  <th>Output</th>
+                  <th>Cache Write</th>
+                  <th>Cache Read</th>
+                  <th>Total Tokens</th>
+                  <th>Claude</th>
+                  {data.codex && <th className="cost-codex">Codex</th>}
+                  {data.codex && <th>Total</th>}
                 </tr>
               </thead>
               <tbody>
-                {data.daily.map((entry) => (
-                  <tr key={entry.date} style={{ borderBottom: '1px solid #21262d' }}>
-                    <td style={{ ...tdStyle, color: '#e6edf3' }}>{entry.date}</td>
-                    <td style={{ ...tdStyle, color: '#8b949e', fontSize: 12 }}>
-                      {entry.modelsUsed.map(shortModel).join(', ')}
-                    </td>
-                    <td style={tdNum}>{fmt(entry.inputTokens)}</td>
-                    <td style={tdNum}>{fmt(entry.outputTokens)}</td>
-                    <td style={tdNum}>{fmt(entry.cacheCreationTokens)}</td>
-                    <td style={tdNum}>{fmt(entry.cacheReadTokens)}</td>
-                    <td style={tdNum}>{fmt(entry.totalTokens)}</td>
-                    <td style={tdCost}>{fmtCost(entry.totalCost)}</td>
-                  </tr>
-                ))}
+                {data.daily.map((entry) => {
+                  const codexEntry = data.codex?.daily.find(c => c.date === entry.date);
+                  const codexCost = codexEntry?.costUSD ?? 0;
+                  const total = entry.totalCost + codexCost;
+                  return (
+                    <tr key={entry.date}>
+                      <td>{entry.date}</td>
+                      <td>{entry.modelsUsed.map(shortModel).join(', ')}</td>
+                      <td>{fmt(entry.inputTokens)}</td>
+                      <td>{fmt(entry.outputTokens)}</td>
+                      <td>{fmt(entry.cacheCreationTokens)}</td>
+                      <td>{fmt(entry.cacheReadTokens)}</td>
+                      <td>{fmt(entry.totalTokens)}</td>
+                      <td className="cost-claude">{fmtCost(entry.totalCost)}</td>
+                      {data.codex && <td className={codexCost > 0 ? 'cost-codex' : ''}>{fmtCost(codexCost)}</td>}
+                      {data.codex && <td className="cost-total">{fmtCost(total)}</td>}
+                    </tr>
+                  );
+                })}
                 {data.daily.length === 0 && (
                   <tr>
-                    <td colSpan={8} style={{ ...tdStyle, textAlign: 'center', color: '#8b949e', padding: 40 }}>
+                    <td colSpan={data.codex ? 10 : 8} className="usage-empty">
                       No usage data for this period.
                     </td>
                   </tr>
@@ -205,22 +210,28 @@ export function UsageModal({ onClose }: UsageModalProps) {
               </tbody>
               {data.totals && data.daily.length > 1 && (
                 <tfoot>
-                  <tr style={{ background: '#21262d', fontWeight: 600 }}>
-                    <td style={{ ...tdStyle, color: '#e6edf3' }}>Total</td>
-                    <td style={tdStyle} />
-                    <td style={tdNum}>{fmt(data.totals.inputTokens)}</td>
-                    <td style={tdNum}>{fmt(data.totals.outputTokens)}</td>
-                    <td style={tdNum}>{fmt(data.totals.cacheCreationTokens)}</td>
-                    <td style={tdNum}>{fmt(data.totals.cacheReadTokens)}</td>
-                    <td style={tdNum}>{fmt(data.totals.totalTokens)}</td>
-                    <td style={tdCost}>{fmtCost(data.totals.totalCost)}</td>
+                  <tr>
+                    <td>Total</td>
+                    <td />
+                    <td>{fmt(data.totals.inputTokens)}</td>
+                    <td>{fmt(data.totals.outputTokens)}</td>
+                    <td>{fmt(data.totals.cacheCreationTokens)}</td>
+                    <td>{fmt(data.totals.cacheReadTokens)}</td>
+                    <td>{fmt(data.totals.totalTokens)}</td>
+                    <td className="cost-claude">{fmtCost(data.totals.totalCost)}</td>
+                    {data.codex && (
+                      <td className="cost-codex">{fmtCost(data.codex.totals?.costUSD ?? 0)}</td>
+                    )}
+                    {data.codex && (
+                      <td className="cost-total">{fmtCost(data.totals.totalCost + (data.codex.totals?.costUSD ?? 0))}</td>
+                    )}
                   </tr>
                 </tfoot>
               )}
             </table>
           )}
           {!loading && !error && !data && (
-            <div style={{ color: '#8b949e', textAlign: 'center', padding: 40 }}>
+            <div className="usage-loading" style={{ fontStyle: 'italic' }}>
               No usage data found.
             </div>
           )}
