@@ -5,7 +5,10 @@ A web-based dashboard for running multiple Claude Code (and Codex) agents in par
 ## Requirements
 
 - **Node.js ≥ 22** — uses the experimental `node:sqlite` module
-- **[Claude Code CLI](https://github.com/anthropics/claude-code)** — default path: `/Users/kph/.local/bin/claude`
+- **[Claude Code CLI](https://github.com/anthropics/claude-code)** — install via npm, then find your binary with `which claude`
+  ```bash
+  npm install -g @anthropic-ai/claude-code
+  ```
 - **tmux** — required for interactive sessions
   ```bash
   # macOS
@@ -26,6 +29,10 @@ A web-based dashboard for running multiple Claude Code (and Codex) agents in par
   brew install sqlite
   # Ubuntu/Debian
   sudo apt install sqlite3
+  ```
+- **[Codex CLI](https://github.com/openai/codex)** *(optional)* — only needed if you want to run OpenAI Codex agents
+  ```bash
+  npm install -g @openai/codex
   ```
 
 ## Setup
@@ -257,7 +264,7 @@ Click the settings icon in the header to open the Settings modal. Currently conf
 | `PORT` | `3000` | HTTP + UI server port |
 | `MCP_PORT` | `3001` | MCP tool server port (agents connect here) |
 | `DB_PATH` | `data/orchestrator.db` | SQLite database location |
-| `CLAUDE_BIN` | `/Users/kph/.local/bin/claude` | Path to the Claude Code CLI |
+| `CLAUDE_BIN` | `$(which claude)` | Path to the Claude Code CLI |
 | `ORCHESTRATOR_AGENT_ID` | *(set automatically)* | Agent identity; used by the lock hook |
 | `ORCHESTRATOR_API_URL` | `http://localhost:3000` | Base URL for lock verification |
 
