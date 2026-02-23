@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as queries from '../db/queries.js';
 import { reattachAgent, getLogPath } from './AgentRunner.js';
 import { isTmuxSessionAlive, attachPty } from './PtyManager.js';
+import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
 import type { ClaudeStreamEvent } from '../../shared/types.js';
 
 function isPidAlive(pid: number): boolean {
@@ -112,6 +113,10 @@ export function runRecovery(): void {
       queries.updateAgent(agent.id, { status: 'done', finished_at: Date.now() });
       queries.updateJobStatus(agent.job_id, 'done');
       queries.releaseLocksForAgent(agent.id);
+      const doneJob = queries.getJobById(agent.job_id);
+      if (doneJob) {
+        try { debateOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] debateOnJobCompleted error for agent ${agent.id}:`, err); }
+      }
       interactiveFailed++;
     }
   }
