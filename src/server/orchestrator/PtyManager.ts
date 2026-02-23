@@ -6,6 +6,7 @@ import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { SYSTEM_PROMPT, HOOK_SETTINGS } from './AgentRunner.js';
+import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
 import type { Job } from '../../shared/types.js';
 import { isCodexModel, codexModelName } from '../../shared/types.js';
 
@@ -114,6 +115,10 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
   const script = scriptPath(agentId);
   const useCodex = isCodexModel(model);
 
+  // Debate-stage jobs (post_action, verification_*) run Claude with --print so the process
+  // exits automatically when the task is done, triggering the next verification stage.
+  const isDebateStage = !!(job as any).debate_role;
+
   let execLine: string;
   if (useCodex) {
     const mcpUrl = `http://localhost:${mcpPort}/mcp/${agentId}`;
@@ -124,7 +129,8 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
     // Note: --skip-git-repo-check is a Claude flag and does NOT exist in Codex.
     execLine = `exec ${JSON.stringify(CODEX)} --dangerously-bypass-approvals-and-sandbox -C ${JSON.stringify(workDir)} -c 'mcp_servers.orchestrator.url="${mcpUrl}"'${modelFlag}`;
   } else {
-    execLine = `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''} "$(cat ${JSON.stringify(pFile)})"`;
+    const printFlag = isDebateStage ? ' --print' : '';
+    execLine = `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''}${printFlag} "$(cat ${JSON.stringify(pFile)})"`;
   }
 
   const scriptLines = [
@@ -291,7 +297,11 @@ export function attachPty(agentId: string, job: Job, cols = 220, rows = 50): voi
         const updated = queries.getAgentWithJob(agentId);
         if (updated) socket.emitAgentUpdate(updated);
         const updatedJob = queries.getJobById(job.id);
-        if (updatedJob) socket.emitJobUpdate(updatedJob);
+        if (updatedJob) {
+          socket.emitJobUpdate(updatedJob);
+          // If this job is part of a debate, trigger the next stage (e.g. verification)
+          try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[pty ${agentId}] debateOnJobCompleted error:`, err); }
+        }
       }
     } catch (err) {
       console.error(`[pty ${agentId}] onExit error:`, err);
