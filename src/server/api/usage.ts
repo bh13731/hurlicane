@@ -10,9 +10,17 @@ const VALID_SINCE = /^[0-9]{8}$/;
 // gpt-5.2-codex pricing, used as fallback for newer GPT models that LiteLLM hasn't priced yet
 const GPT52_CODEX = { input: 1.75e-6, cacheRead: 1.75e-7, output: 1.40e-5 };
 
+// Codex returns dates like "Feb 23, 2026"; normalize to "2026-02-23" to match Claude data
+function normalizeDate(d: string): string {
+  const parsed = new Date(d);
+  if (isNaN(parsed.getTime())) return d;
+  return parsed.toISOString().slice(0, 10);
+}
+
 function applyCodexFallbackPricing(codex: any): any {
   if (!Array.isArray(codex.daily)) return codex;
   const daily = codex.daily.map((entry: any) => {
+    entry = { ...entry, date: normalizeDate(entry.date) };
     if (entry.costUSD !== 0 || !entry.totalTokens) return entry;
     const models = Object.keys(entry.models ?? {});
     if (!models.some((m: string) => /gpt/i.test(m))) return entry;
