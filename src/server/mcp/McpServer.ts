@@ -15,93 +15,123 @@ import { writeNoteHandler, writeNoteSchema, readNoteHandler, readNoteSchema, lis
 // agentId → { sessionId → transport }
 const agentTransports: Map<string, Map<string, StreamableHTTPServerTransport>> = new Map();
 
+/**
+ * Close all active MCP transport sessions. Call during shutdown so
+ * clients get a clean disconnect instead of hanging on in-flight requests.
+ */
+export async function closeAllMcpSessions(): Promise<void> {
+  const promises: Promise<void>[] = [];
+  for (const [, transportMap] of agentTransports) {
+    for (const [, transport] of transportMap) {
+      promises.push(transport.close().catch(() => {}));
+    }
+  }
+  await Promise.all(promises);
+  agentTransports.clear();
+}
+
 export function createMcpApp(): express.Application {
   const app = express();
   app.use(express.json());
 
   // POST — handles initialization + tool calls from agents
   app.post('/mcp/:agentId', async (req, res) => {
-    const { agentId } = req.params;
-    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    try {
+      const { agentId } = req.params;
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-    let transportMap = agentTransports.get(agentId);
-    if (!transportMap) {
-      transportMap = new Map();
-      agentTransports.set(agentId, transportMap);
+      let transportMap = agentTransports.get(agentId);
+      if (!transportMap) {
+        transportMap = new Map();
+        agentTransports.set(agentId, transportMap);
+      }
+
+      let transport: StreamableHTTPServerTransport | undefined;
+
+      if (sessionId && transportMap.has(sessionId)) {
+        transport = transportMap.get(sessionId)!;
+      } else if (!sessionId && isInitializeRequest(req.body)) {
+        console.log(`[mcp] new session: agent ${agentId}`);
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (sid) => {
+            transportMap!.set(sid, transport!);
+          },
+        });
+
+        transport.onclose = () => {
+          const sid = transport!.sessionId;
+          if (sid) transportMap!.delete(sid);
+          if (transportMap!.size === 0) agentTransports.delete(agentId);
+          console.log(`[mcp] session closed: agent ${agentId}`);
+        };
+
+        const server = buildMcpServer(agentId);
+        await server.connect(transport);
+      } else if (isInitializeRequest(req.body)) {
+        // Re-initialization with a stale session ID (e.g. after server restart) — create fresh session
+        console.log(`[mcp] re-initialize: agent ${agentId} (stale session)`);
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (sid) => {
+            transportMap!.set(sid, transport!);
+          },
+        });
+
+        transport.onclose = () => {
+          const sid = transport!.sessionId;
+          if (sid) transportMap!.delete(sid);
+          if (transportMap!.size === 0) agentTransports.delete(agentId);
+          console.log(`[mcp] session closed: agent ${agentId}`);
+        };
+
+        const server = buildMcpServer(agentId);
+        await server.connect(transport);
+      } else {
+        // Unknown session, non-initialize request — 404 tells MCP client to re-initialize
+        res.status(404).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Session not found — please re-initialize' }, id: null });
+        return;
+      }
+
+      await transport!.handleRequest(req, res, req.body);
+    } catch (err) {
+      console.error(`[mcp] POST error (agent ${req.params.agentId}):`, err);
+      if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
     }
-
-    let transport: StreamableHTTPServerTransport | undefined;
-
-    if (sessionId && transportMap.has(sessionId)) {
-      transport = transportMap.get(sessionId)!;
-    } else if (!sessionId && isInitializeRequest(req.body)) {
-      console.log(`[mcp] new session: agent ${agentId}`);
-      transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (sid) => {
-          transportMap!.set(sid, transport!);
-        },
-      });
-
-      transport.onclose = () => {
-        const sid = transport!.sessionId;
-        if (sid) transportMap!.delete(sid);
-        if (transportMap!.size === 0) agentTransports.delete(agentId);
-        console.log(`[mcp] session closed: agent ${agentId}`);
-      };
-
-      const server = buildMcpServer(agentId);
-      await server.connect(transport);
-    } else if (isInitializeRequest(req.body)) {
-      // Re-initialization with a stale session ID (e.g. after server restart) — create fresh session
-      console.log(`[mcp] re-initialize: agent ${agentId} (stale session)`);
-      transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (sid) => {
-          transportMap!.set(sid, transport!);
-        },
-      });
-
-      transport.onclose = () => {
-        const sid = transport!.sessionId;
-        if (sid) transportMap!.delete(sid);
-        if (transportMap!.size === 0) agentTransports.delete(agentId);
-        console.log(`[mcp] session closed: agent ${agentId}`);
-      };
-
-      const server = buildMcpServer(agentId);
-      await server.connect(transport);
-    } else {
-      // Unknown session, non-initialize request — 404 tells MCP client to re-initialize
-      res.status(404).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Session not found — please re-initialize' }, id: null });
-      return;
-    }
-
-    await transport!.handleRequest(req, res, req.body);
   });
 
   // GET — SSE streaming channel (server→client notifications)
   app.get('/mcp/:agentId', async (req, res) => {
-    const { agentId } = req.params;
-    const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    const transport = sessionId && agentTransports.get(agentId)?.get(sessionId);
-    if (!transport) {
-      res.status(400).json({ error: 'Invalid or missing session' });
-      return;
+    try {
+      const { agentId } = req.params;
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      const transport = sessionId && agentTransports.get(agentId)?.get(sessionId);
+      if (!transport) {
+        res.status(400).json({ error: 'Invalid or missing session' });
+        return;
+      }
+      await transport.handleRequest(req, res);
+    } catch (err) {
+      console.error(`[mcp] GET error (agent ${req.params.agentId}):`, err);
+      if (!res.headersSent) res.status(500).json({ error: 'Internal error' });
     }
-    await transport.handleRequest(req, res);
   });
 
   // DELETE — session termination
   app.delete('/mcp/:agentId', async (req, res) => {
-    const { agentId } = req.params;
-    const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    const transport = sessionId && agentTransports.get(agentId)?.get(sessionId);
-    if (!transport) {
-      res.status(400).json({ error: 'Invalid or missing session' });
-      return;
+    try {
+      const { agentId } = req.params;
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      const transport = sessionId && agentTransports.get(agentId)?.get(sessionId);
+      if (!transport) {
+        res.status(400).json({ error: 'Invalid or missing session' });
+        return;
+      }
+      await transport.handleRequest(req, res);
+    } catch (err) {
+      console.error(`[mcp] DELETE error (agent ${req.params.agentId}):`, err);
+      if (!res.headersSent) res.status(500).json({ error: 'Internal error' });
     }
-    await transport.handleRequest(req, res);
   });
 
   return app;

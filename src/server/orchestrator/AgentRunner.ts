@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
+import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
 import type { Job, ClaudeStreamEvent, CodexStreamEvent } from '../../shared/types.js';
 import { isCodexModel, codexModelName } from '../../shared/types.js';
 
@@ -224,10 +225,20 @@ function startTailing(
     }
     if (size <= filePos) return;
 
-    const buf = Buffer.alloc(size - filePos);
-    const fd = fs.openSync(logPath, 'r');
-    const bytesRead = fs.readSync(fd, buf, 0, buf.length, filePos);
-    fs.closeSync(fd);
+    let buf: Buffer;
+    let bytesRead: number;
+    try {
+      buf = Buffer.alloc(size - filePos);
+      const fd = fs.openSync(logPath, 'r');
+      try {
+        bytesRead = fs.readSync(fd, buf, 0, buf.length, filePos);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch (err) {
+      console.warn(`[agent ${agentId}] readNewContent error:`, err);
+      return;
+    }
     filePos += bytesRead;
 
     lineBuf += buf.toString('utf8');
@@ -269,9 +280,13 @@ function startTailing(
     // Normal spawn: wait for the process to exit via child event
     child.on('close', (code) => {
       setTimeout(() => {
-        readNewContent(); // flush any remaining output
-        stopTailing(agentId);
-        handleAgentExit(agentId, job, code);
+        try {
+          readNewContent(); // flush any remaining output
+          stopTailing(agentId);
+          handleAgentExit(agentId, job, code);
+        } catch (err) {
+          console.error(`[agent ${agentId}] error in close handler:`, err);
+        }
       }, 500);
     });
 
@@ -294,10 +309,14 @@ function startTailing(
       } catch {
         clearInterval(pidPoll);
         setTimeout(() => {
-          readNewContent();
-          stopTailing(agentId);
-          // Read exit code from stderr file if available; use 0 if result event was 'success'
-          handleAgentExit(agentId, job, null);
+          try {
+            readNewContent();
+            stopTailing(agentId);
+            // Read exit code from stderr file if available; use 0 if result event was 'success'
+            handleAgentExit(agentId, job, null);
+          } catch (err) {
+            console.error(`[agent ${agentId}] error in reattach exit handler:`, err);
+          }
         }, 500);
       }
     }, 3000);
@@ -324,6 +343,7 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
 
   // Try to determine success/failure from the last result event in the log
   let statusFromLog: 'done' | 'failed' | null = null;
+  let logErrorMsg: string | null = null;
   let costUsd: number | null = null;
   let durationMs: number | null = null;
   let numTurns: number | null = null;
@@ -348,7 +368,12 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
         }
         if (ev.type === 'turn.failed') {
           statusFromLog = 'failed';
+          logErrorMsg = ev.error?.message ?? null;
           break;
+        }
+        // Codex inline error event (captured before turn.failed)
+        if (ev.type === 'error' && ev.message && !logErrorMsg) {
+          logErrorMsg = ev.message;
         }
       } catch { /* skip */ }
     }
@@ -356,9 +381,10 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
 
   const status = statusFromLog ?? (exitCode === 0 ? 'done' : 'failed');
 
-  // Read stderr for error details
-  let stderrMsg: string | null = null;
-  if (status === 'failed') {
+  // Prefer the error message extracted from the log (meaningful for Codex);
+  // fall back to stderr only when the log has no useful message.
+  let stderrMsg: string | null = logErrorMsg;
+  if (!stderrMsg && status === 'failed') {
     try {
       const lines = fs.readFileSync(getStderrPath(agentId), 'utf8').split('\n').filter(Boolean);
       stderrMsg = lines.slice(-10).join('\n') || null;
@@ -400,7 +426,11 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
   const updated = queries.getAgentWithJob(agentId);
   if (updated) socket.emitAgentUpdate(updated);
   const updatedJob = queries.getJobById(job.id);
-  if (updatedJob) socket.emitJobUpdate(updatedJob);
+  if (updatedJob) {
+    socket.emitJobUpdate(updatedJob);
+    // If this job is part of a debate, check if the round is complete
+    debateOnJobCompleted(updatedJob);
+  }
 }
 
 function handleStreamEvent(agentId: string, event: ClaudeStreamEvent | CodexStreamEvent, raw: string, seq: number): void {

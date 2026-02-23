@@ -173,7 +173,7 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
   // For Claude: prompt is pre-filled via CLI arg, so just send Enter.
   // For Codex: prompt was NOT passed as CLI arg (that causes non-interactive exit),
   //   so paste it from file into the TUI first, then send Enter.
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
       if (isTmuxSessionAlive(agentId)) {
         if (useCodex) {
@@ -183,6 +183,9 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
           } catch (err: any) {
             console.warn(`[pty ${agentId}] failed to paste codex prompt:`, err.message);
           }
+          // paste-buffer returns before tmux finishes feeding content into the terminal;
+          // give it a moment to settle so Enter arrives after the full paste is processed.
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
         try {
           execFileSync('tmux', ['send-keys', '-t', sessionName(agentId), 'Enter'], { stdio: 'pipe' });
@@ -249,29 +252,37 @@ export function attachPty(agentId: string, job: Job, cols = 220, rows = 50): voi
   console.log(`[pty ${agentId}] attached to tmux session`);
 
   ptyInstance.onData((data) => {
-    const buf = _ptyBuffers.get(agentId);
-    if (!buf) return; // already disconnected
-    socket.emitPtyData(agentId, data);
-    buf.push(data);
-    if (buf.length > PTY_BUFFER_MAX) buf.splice(0, buf.length - PTY_BUFFER_MAX);
-    // Persist to disk so history survives server restarts and buffer eviction
     try {
-      fs.appendFileSync(getPtyLogPath(agentId), JSON.stringify(data) + '\n');
-    } catch { /* ignore write errors */ }
+      const buf = _ptyBuffers.get(agentId);
+      if (!buf) return; // already disconnected
+      socket.emitPtyData(agentId, data);
+      buf.push(data);
+      if (buf.length > PTY_BUFFER_MAX) buf.splice(0, buf.length - PTY_BUFFER_MAX);
+      // Persist to disk so history survives server restarts and buffer eviction
+      try {
+        fs.appendFileSync(getPtyLogPath(agentId), JSON.stringify(data) + '\n');
+      } catch { /* ignore write errors */ }
+    } catch (err) {
+      console.error(`[pty ${agentId}] onData error:`, err);
+    }
   });
 
   ptyInstance.onExit(() => {
-    console.log(`[pty ${agentId}] PTY exited`);
-    _ptys.delete(agentId);
-    socket.emitPtyClosed(agentId);
+    try {
+      console.log(`[pty ${agentId}] PTY exited`);
+      _ptys.delete(agentId);
+      socket.emitPtyClosed(agentId);
 
-    if (!isTmuxSessionAlive(agentId)) {
-      queries.updateAgent(agentId, { status: 'done', finished_at: Date.now() });
-      queries.updateJobStatus(job.id, 'done');
-      const updated = queries.getAgentWithJob(agentId);
-      if (updated) socket.emitAgentUpdate(updated);
-      const updatedJob = queries.getJobById(job.id);
-      if (updatedJob) socket.emitJobUpdate(updatedJob);
+      if (!isTmuxSessionAlive(agentId)) {
+        queries.updateAgent(agentId, { status: 'done', finished_at: Date.now() });
+        queries.updateJobStatus(job.id, 'done');
+        const updated = queries.getAgentWithJob(agentId);
+        if (updated) socket.emitAgentUpdate(updated);
+        const updatedJob = queries.getJobById(job.id);
+        if (updatedJob) socket.emitJobUpdate(updatedJob);
+      }
+    } catch (err) {
+      console.error(`[pty ${agentId}] onExit error:`, err);
     }
   });
 }

@@ -8,8 +8,11 @@ import { startInteractiveAgent } from './PtyManager.js';
 import { resolveModel } from './ModelClassifier.js';
 import type { Job } from '../../shared/types.js';
 
-const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT_AGENTS ?? 20);
+let _maxConcurrent = Number(process.env.MAX_CONCURRENT_AGENTS ?? 20);
 const POLL_INTERVAL_MS = 2000;
+
+export function getMaxConcurrent(): number { return _maxConcurrent; }
+export function setMaxConcurrent(n: number): void { _maxConcurrent = n; }
 
 let _running = false;
 let _timer: NodeJS.Timeout | null = null;
@@ -20,8 +23,8 @@ export function startWorkQueue(): void {
   if (_running) return;
   _running = true;
   console.log('[queue] WorkQueueManager started');
-  _timer = setInterval(() => { tick().catch(console.error); }, POLL_INTERVAL_MS);
-  tick().catch(console.error);
+  _timer = setInterval(() => { try { tick().catch(console.error); } catch (err) { console.error('[queue] tick error:', err); } }, POLL_INTERVAL_MS);
+  try { tick().catch(console.error); } catch (err) { console.error('[queue] initial tick error:', err); }
 }
 
 export function stopWorkQueue(): void {
@@ -40,7 +43,7 @@ async function tick(): Promise<void> {
   );
 
   // Count classifying jobs against the concurrency limit so we don't over-dispatch
-  if (activeAgents.length + _classifying.size >= MAX_CONCURRENT) return;
+  if (activeAgents.length + _classifying.size >= _maxConcurrent) return;
 
   const job = queries.getNextQueuedJob();
   if (!job || _classifying.has(job.id)) return;

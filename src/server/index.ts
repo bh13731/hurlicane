@@ -6,8 +6,8 @@ import { fileURLToPath } from 'url';
 import { initDb, closeDb } from './db/database.js';
 import { initSocketManager } from './socket/SocketManager.js';
 import apiRouter from './api/router.js';
-import { createMcpApp } from './mcp/McpServer.js';
-import { startWorkQueue, stopWorkQueue } from './orchestrator/WorkQueueManager.js';
+import { createMcpApp, closeAllMcpSessions } from './mcp/McpServer.js';
+import { startWorkQueue, stopWorkQueue, setMaxConcurrent } from './orchestrator/WorkQueueManager.js';
 import { runRecovery } from './orchestrator/recovery.js';
 import { writeInput, resizePty } from './orchestrator/PtyManager.js';
 import * as queries from './db/queries.js';
@@ -17,6 +17,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
 const MCP_PORT = Number(process.env.MCP_PORT ?? 3001);
 const DB_PATH = process.env.DB_PATH ?? path.join(process.cwd(), 'data', 'orchestrator.db');
+
+// ── Global error handlers — prevent silent crashes ──────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('[server] Uncaught exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] Unhandled rejection:', reason);
+});
 
 async function main() {
   // 1. Init database
@@ -57,16 +65,17 @@ async function main() {
       templates: queries.listTemplates(),
       projects: queries.listProjects(),
       batchTemplates: queries.listBatchTemplates(),
+      debates: queries.listDebates(),
     });
 
-    socket.emit('queue:snapshot', buildSnapshot());
+    try { socket.emit('queue:snapshot', buildSnapshot()); } catch (err) { console.error('[socket] snapshot error:', err); }
 
     socket.on('request:snapshot', () => {
-      socket.emit('queue:snapshot', buildSnapshot());
+      try { socket.emit('queue:snapshot', buildSnapshot()); } catch (err) { console.error('[socket] snapshot error:', err); }
     });
 
-    socket.on('pty:input', ({ agent_id, data }) => writeInput(agent_id, data));
-    socket.on('pty:resize', ({ agent_id, cols, rows }) => resizePty(agent_id, cols, rows));
+    socket.on('pty:input', ({ agent_id, data }) => { try { writeInput(agent_id, data); } catch (err) { console.error('[socket] pty:input error:', err); } });
+    socket.on('pty:resize', ({ agent_id, cols, rows }) => { try { resizePty(agent_id, cols, rows); } catch (err) { console.error('[socket] pty:resize error:', err); } });
   });
 
   // 5. MCP server on separate port
@@ -77,6 +86,10 @@ async function main() {
 
   // 6. Start work queue
   startWorkQueue();
+
+  // Restore persisted settings
+  const savedMax = queries.getNote('setting:maxConcurrentAgents');
+  if (savedMax) setMaxConcurrent(Number(savedMax.value));
 
   // 7. Start main server
   httpServer.listen(PORT, () => {
@@ -104,6 +117,9 @@ async function main() {
     // Stop accepting new HTTP connections; wait for in-flight requests to drain
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
 
+    // Close all active MCP sessions so clients get a clean disconnect
+    await closeAllMcpSessions();
+
     // Close the MCP server
     await new Promise<void>((resolve) => mcpServer.close(() => resolve()));
 
@@ -118,8 +134,8 @@ async function main() {
     process.exit(0);
   }
 
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT',  () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM').catch(err => { console.error('[server] Shutdown error:', err); process.exit(1); }));
+  process.on('SIGINT',  () => shutdown('SIGINT').catch(err => { console.error('[server] Shutdown error:', err); process.exit(1); }));
 }
 
 main().catch((err) => {
