@@ -36,18 +36,20 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           <h2>Settings</h2>
           <button className="btn-icon" onClick={onClose}>&times;</button>
         </div>
-        <div className="form-group">
-          <label>Max Concurrent Agents</label>
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={maxConcurrent}
-            onChange={e => setMaxConcurrent(Number(e.target.value))}
-            style={{ width: 80 }}
-          />
+        <div className="modal-body">
+          <div className="form-group">
+            <label>Max Concurrent Agents</label>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={maxConcurrent}
+              onChange={e => setMaxConcurrent(Number(e.target.value))}
+              style={{ width: 80 }}
+            />
+          </div>
         </div>
-        <div className="form-actions">
+        <div className="modal-footer">
           <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : 'Save'}
           </button>

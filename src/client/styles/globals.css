@@ -1031,6 +1031,21 @@ body {
   font-size: 18px;
 }
 
+.modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+}
+
 .job-form {
   padding: 20px;
   display: flex;
