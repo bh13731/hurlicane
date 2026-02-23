@@ -11,6 +11,7 @@ interface AgentTerminalProps {
   agent: AgentWithJob;
   onClose: () => void;
   onContinued?: (newAgent: AgentWithJob) => void;
+  onRenameJob?: (jobId: string, newTitle: string) => void;
 }
 
 function renderEvent(event: ClaudeStreamEvent): string {
@@ -196,7 +197,7 @@ function ContinueInput({ agentId, onContinued }: { agentId: string; onContinued:
   );
 }
 
-export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProps) {
+export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: AgentTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const viewStartRef = useRef<number>(Date.now());
@@ -205,6 +206,28 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
   const [diff, setDiff] = useState<string | null>((agent as any).diff ?? null);
   const [baseSha, setBaseSha] = useState<string | null>((agent as any).base_sha ?? null);
   const [diffFetched, setDiffFetched] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  const startTitleEdit = () => {
+    setTitleDraft(agent.job.title);
+    setEditingTitle(true);
+    setTimeout(() => titleInputRef.current?.select(), 0);
+  };
+
+  const commitTitleEdit = () => {
+    const trimmed = titleDraft.trim();
+    if (trimmed && trimmed !== agent.job.title) {
+      onRenameJob?.(agent.job.id, trimmed);
+    }
+    setEditingTitle(false);
+  };
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') commitTitleEdit();
+    if (e.key === 'Escape') setEditingTitle(false);
+  };
 
   // Reset the view-start timestamp and child agents whenever we switch to a different agent
   useEffect(() => {
@@ -482,7 +505,27 @@ export function AgentTerminal({ agent, onClose, onContinued }: AgentTerminalProp
       <div className="terminal-header">
         <div className="terminal-header-info">
           <span className="terminal-agent-id">Agent {agent.id.slice(0, 6)}</span>
-          <span className="terminal-job-title">{agent.job.title}</span>
+          {editingTitle ? (
+            <input
+              ref={titleInputRef}
+              className="terminal-job-title-input"
+              value={titleDraft}
+              onChange={e => setTitleDraft(e.target.value)}
+              onBlur={commitTitleEdit}
+              onKeyDown={handleTitleKeyDown}
+            />
+          ) : (
+            <span className="terminal-job-title">
+              {agent.job.title}
+              <button
+                className="btn-icon rename-title-btn"
+                title="Rename job"
+                onClick={startTitleEdit}
+              >
+                ✎
+              </button>
+            </span>
+          )}
         </div>
         <div className="terminal-header-actions">
           {isInteractive && (

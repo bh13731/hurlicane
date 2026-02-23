@@ -91,6 +91,21 @@ router.post('/:id/flag', (req, res) => {
   res.json(updated);
 });
 
+router.patch('/:id/title', (req, res) => {
+  const job = queries.getJobById(req.params.id);
+  if (!job) { res.status(404).json({ error: 'not found' }); return; }
+  const title = req.body?.title?.trim();
+  if (!title) { res.status(400).json({ error: 'title required' }); return; }
+  queries.updateJobTitle(job.id, title);
+  const updated = queries.getJobById(job.id)!;
+  socket.emitJobUpdate(updated);
+  const agents = queries.getAgentsWithJobByJobId(job.id);
+  for (const agent of agents) {
+    socket.emitAgentUpdate(agent);
+  }
+  res.json(updated);
+});
+
 router.delete('/:id', (req, res) => {
   const job = queries.getJobById(req.params.id);
   if (!job) { res.status(404).json({ error: 'not found' }); return; }

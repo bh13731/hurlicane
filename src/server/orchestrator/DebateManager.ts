@@ -279,7 +279,6 @@ function maybeSpawnPostAction(
     template_id: debate.template_id,
     work_dir: debate.work_dir,
     max_turns: debate.max_turns,
-    is_interactive: 1,
     project_id: debate.project_id,
     debate_id: debate.id,
     debate_round: null,

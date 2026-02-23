@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import type { Project } from '@shared/types';
 
 interface ProjectSelectorProps {
@@ -7,13 +7,39 @@ interface ProjectSelectorProps {
   onSelect: (projectId: string | null) => void;
   onCreate: (name: string, description: string) => void;
   onDelete: (id: string) => void;
+  onRename: (id: string, newName: string) => void;
   onClose: () => void;
 }
 
-export function ProjectSelector({ projects, activeProjectId, onSelect, onCreate, onDelete, onClose }: ProjectSelectorProps) {
+export function ProjectSelector({ projects, activeProjectId, onSelect, onCreate, onDelete, onRename, onClose }: ProjectSelectorProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingId) editInputRef.current?.select();
+  }, [editingId]);
+
+  const startEdit = (e: React.MouseEvent, p: Project) => {
+    e.stopPropagation();
+    setEditingId(p.id);
+    setEditingName(p.name);
+  };
+
+  const commitEdit = () => {
+    if (editingId && editingName.trim() && editingName.trim() !== projects.find(p => p.id === editingId)?.name) {
+      onRename(editingId, editingName.trim());
+    }
+    setEditingId(null);
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') commitEdit();
+    if (e.key === 'Escape') setEditingId(null);
+  };
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,11 +71,31 @@ export function ProjectSelector({ projects, activeProjectId, onSelect, onCreate,
             <div
               key={p.id}
               className={`project-item ${activeProjectId === p.id ? 'project-item-active' : ''}`}
-              onClick={() => { onSelect(p.id); onClose(); }}
+              onClick={() => { if (editingId !== p.id) { onSelect(p.id); onClose(); } }}
             >
-              <span>{p.name}</span>
+              {editingId === p.id ? (
+                <input
+                  ref={editInputRef}
+                  className="project-name-input"
+                  value={editingName}
+                  onChange={e => setEditingName(e.target.value)}
+                  onBlur={commitEdit}
+                  onKeyDown={handleEditKeyDown}
+                  onClick={e => e.stopPropagation()}
+                />
+              ) : (
+                <span>{p.name}</span>
+              )}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {p.description && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.description}</span>}
+                <button
+                  className="btn-icon"
+                  style={{ fontSize: 13, padding: '2px 4px' }}
+                  title="Rename project"
+                  onClick={e => startEdit(e, p)}
+                >
+                  ✎
+                </button>
                 <button
                   className="btn-icon"
                   style={{ fontSize: 13, padding: '2px 4px' }}

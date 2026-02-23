@@ -30,7 +30,7 @@ export default function App() {
   const { agents, setInitial: setInitialAgents, addAgent, updateAgent } = useAgents();
   const { jobs, setInitial: setInitialJobs, addJob, updateJob } = useJobs();
   const { locks, setInitial: setInitialLocks, addLock, removeLock } = useLocks();
-  const { projects, setInitial: setInitialProjects, addProject, removeProject } = useProjects();
+  const { projects, setInitial: setInitialProjects, addProject, updateProject, removeProject } = useProjects();
   const { debates, setInitial: setInitialDebates, addDebate, updateDebate: updateDebateState } = useDebates();
   const { toasts, dismiss: dismissToast } = useToasts();
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -156,6 +156,34 @@ export default function App() {
     } catch { /* ignore */ }
   }, [removeProject, activeProjectId]);
 
+  const handleRenameProject = useCallback(async (id: string, newName: string) => {
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName }),
+      });
+      if (!res.ok) return;
+      const updated = await res.json();
+      updateProject(updated);
+    } catch { /* ignore */ }
+  }, [updateProject]);
+
+  const handleRenameJob = useCallback(async (jobId: string, newTitle: string) => {
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/title`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      if (!res.ok) return;
+      const updated = await res.json();
+      updateJob(updated);
+      // Keep selectedAgent in sync
+      setSelectedAgent(prev => prev && prev.job.id === jobId ? { ...prev, job: updated } : prev);
+    } catch { /* ignore */ }
+  }, [updateJob]);
+
   const handleSubmitJob = useCallback(async (req: CreateJobRequest) => {
     const payload = activeProjectId ? { ...req, projectId: activeProjectId } : req;
     const res = await fetch('/api/jobs', {
@@ -236,6 +264,7 @@ export default function App() {
             agent={selectedAgent}
             onClose={handleCloseTerminal}
             onContinued={handleSelectAgent}
+            onRenameJob={handleRenameJob}
           />
         ) : (
           <FileLockMap locks={locks} />
@@ -322,6 +351,7 @@ export default function App() {
           onSelect={setActiveProjectId}
           onCreate={handleCreateProject}
           onDelete={handleDeleteProject}
+          onRename={handleRenameProject}
           onClose={() => setShowProjects(false)}
         />
       )}
