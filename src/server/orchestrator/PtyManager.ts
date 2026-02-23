@@ -129,7 +129,7 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
     // Note: --skip-git-repo-check is a Claude flag and does NOT exist in Codex.
     execLine = `exec ${JSON.stringify(CODEX)} --dangerously-bypass-approvals-and-sandbox -C ${JSON.stringify(workDir)} -c 'mcp_servers.orchestrator.url="${mcpUrl}"'${modelFlag}`;
   } else {
-    const printFlag = isDebateStage ? ' --print' : '';
+    const printFlag = isDebateStage ? ' --print --output-format stream-json --verbose' : '';
     execLine = `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''}${printFlag} "$(cat ${JSON.stringify(pFile)})"`;
   }
 
