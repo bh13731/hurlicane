@@ -92,6 +92,11 @@ export function updateJobFlagged(id: string, flagged: number): void {
   db.prepare('UPDATE jobs SET flagged = ?, updated_at = ? WHERE id = ?').run(flagged, Date.now(), id);
 }
 
+export function updateJobScheduledAt(id: string, scheduledAt: number | null): void {
+  const db = getDb();
+  db.prepare('UPDATE jobs SET scheduled_at = ?, updated_at = ? WHERE id = ?').run(scheduledAt, Date.now(), id);
+}
+
 export function getNextQueuedJob(): Job | null {
   const db = getDb();
   // Skip jobs whose dependencies have not all completed successfully

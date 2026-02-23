@@ -224,6 +224,14 @@ export default function App() {
     if (agent) setSelectedAgent(agent);
   }, [agents]);
 
+  const handleCancelJob = useCallback(async (job: Job) => {
+    await fetch(`/api/jobs/${job.id}`, { method: 'DELETE' });
+  }, []);
+
+  const handleRunJobNow = useCallback(async (job: Job) => {
+    await fetch(`/api/jobs/${job.id}/run-now`, { method: 'POST' });
+  }, []);
+
   const handleCloseTerminal = useCallback(() => {
     setSelectedAgent(null);
     setLeftTab('feed');
@@ -254,7 +262,7 @@ export default function App() {
               onSelectAgent={handleSelectAgent}
             />
           ) : (
-            <WorkQueueSidebar jobs={jobs} projects={projects} onSelectJob={handleSelectJob} />
+            <WorkQueueSidebar jobs={jobs} projects={projects} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} />
           )}
           <RunningJobsPanel
             agents={agents}

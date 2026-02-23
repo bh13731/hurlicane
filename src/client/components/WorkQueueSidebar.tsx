@@ -5,14 +5,27 @@ interface WorkQueueSidebarProps {
   jobs: Job[];
   projects?: Project[];
   onSelectJob?: (job: Job) => void;
+  onCancelJob?: (job: Job) => void;
+  onRunJobNow?: (job: Job) => void;
 }
 
-function statusOrder(status: string): number {
-  const order: Record<string, number> = { queued: 0, assigned: 1, running: 2, done: 3, failed: 4, cancelled: 5 };
-  return order[status] ?? 99;
+function formatInterval(ms: number): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h`;
+  return `${Math.round(ms / 86_400_000)}d`;
 }
 
-export function WorkQueueSidebar({ jobs, projects = [], onSelectJob }: WorkQueueSidebarProps) {
+function formatTimeUntil(ts: number): string {
+  const diff = ts - Date.now();
+  if (diff <= 0) return 'now';
+  if (diff < 60_000) return `${Math.round(diff / 1000)}s`;
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m`;
+  if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h`;
+  return `${Math.round(diff / 86_400_000)}d`;
+}
+
+export function WorkQueueSidebar({ jobs, projects = [], onSelectJob, onCancelJob, onRunJobNow }: WorkQueueSidebarProps) {
   const projectMap = Object.fromEntries(projects.map(p => [p.id, p.name]));
 
   const queued = jobs.filter(j => j.status === 'queued');
@@ -25,6 +38,32 @@ export function WorkQueueSidebar({ jobs, projects = [], onSelectJob }: WorkQueue
     job.project_id && projectMap[job.project_id] ? (
       <span className="sidebar-job-project">{projectMap[job.project_id]}</span>
     ) : null;
+
+  const RepeatBadge = ({ job }: { job: Job }) =>
+    job.repeat_interval_ms ? (
+      <span className="sidebar-job-repeat" title={`Repeats every ${formatInterval(job.repeat_interval_ms)}`}>
+        ↻ {formatInterval(job.repeat_interval_ms)}
+      </span>
+    ) : null;
+
+  const ScheduledBadge = ({ job }: { job: Job }) => {
+    if (!job.scheduled_at || job.scheduled_at <= Date.now()) return null;
+    const label = `in ${formatTimeUntil(job.scheduled_at)}`;
+    return (
+      <span
+        className="sidebar-job-scheduled"
+        title={`Scheduled to run in ${formatTimeUntil(job.scheduled_at)} — click to run now`}
+        onClick={e => {
+          e.stopPropagation();
+          if (window.confirm(`Run "${job.title}" now instead of in ${formatTimeUntil(job.scheduled_at!)}?`)) {
+            onRunJobNow?.(job);
+          }
+        }}
+      >
+        {label}
+      </span>
+    );
+  };
 
   return (
     <aside className="sidebar">
@@ -40,6 +79,7 @@ export function WorkQueueSidebar({ jobs, projects = [], onSelectJob }: WorkQueue
               onClick={() => onSelectJob?.(job)}
             >
               <span className="sidebar-job-title">{job.title}</span>
+              <RepeatBadge job={job} />
               <ProjectTag job={job} />
             </div>
           ))}
@@ -53,7 +93,18 @@ export function WorkQueueSidebar({ jobs, projects = [], onSelectJob }: WorkQueue
             <div key={job.id} className="sidebar-job">
               <span className="sidebar-job-bullet">•</span>
               <span className="sidebar-job-title">{job.title}</span>
+              <ScheduledBadge job={job} />
+              <RepeatBadge job={job} />
               <ProjectTag job={job} />
+              {onCancelJob && (
+                <button
+                  className="sidebar-job-cancel"
+                  onClick={e => { e.stopPropagation(); onCancelJob(job); }}
+                  title="Cancel job"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -70,6 +121,7 @@ export function WorkQueueSidebar({ jobs, projects = [], onSelectJob }: WorkQueue
             >
               <span className="sidebar-job-bullet">{job.status === 'done' ? '✓' : job.status === 'failed' ? '✗' : '⊘'}</span>
               <span className="sidebar-job-title">{job.title}</span>
+              <RepeatBadge job={job} />
               <ProjectTag job={job} />
             </div>
           ))}

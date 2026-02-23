@@ -108,6 +108,19 @@ router.patch('/:id/title', (req, res) => {
   res.json(updated);
 });
 
+router.post('/:id/run-now', (req, res) => {
+  const job = queries.getJobById(req.params.id);
+  if (!job) { res.status(404).json({ error: 'not found' }); return; }
+  if (job.status !== 'queued') {
+    res.status(400).json({ error: 'Can only run-now queued jobs' });
+    return;
+  }
+  queries.updateJobScheduledAt(job.id, null);
+  const updated = queries.getJobById(job.id)!;
+  socket.emitJobUpdate(updated);
+  res.json(updated);
+});
+
 router.delete('/:id', (req, res) => {
   const job = queries.getJobById(req.params.id);
   if (!job) { res.status(404).json({ error: 'not found' }); return; }
