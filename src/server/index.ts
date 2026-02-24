@@ -83,10 +83,11 @@ async function main() {
   const mcpServer = mcpApp.listen(MCP_PORT, () => {
     console.log(`[server] MCP server listening on :${MCP_PORT}`);
   });
-  // Disable keepAliveTimeout: the default 5 s idle timeout would close SSE
-  // streams mid-flight (before long-running tools like wait_for_jobs return),
-  // causing the result to be silently dropped and the agent to hang.
+  // Disable idle timeouts on the MCP server. Node.js defaults (keepAliveTimeout=5s,
+  // headersTimeout=60s) close SSE connections mid-flight on long-running tools
+  // like wait_for_jobs, silently dropping the result and leaving agents hung.
   mcpServer.keepAliveTimeout = 0;
+  mcpServer.headersTimeout = 0;
 
   // 6. Start work queue
   startWorkQueue();

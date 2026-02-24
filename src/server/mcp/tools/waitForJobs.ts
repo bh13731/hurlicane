@@ -16,7 +16,7 @@ const POLL_MS = 2000;
 // connection before the tool returns, silently dropping the result.
 type Keepalive = () => Promise<void>;
 
-const KEEPALIVE_INTERVAL_MS = 20_000;
+const KEEPALIVE_INTERVAL_MS = 5_000;
 
 export async function waitForJobsHandler(
   agentId: string,
@@ -67,7 +67,9 @@ export async function waitForJobsHandler(
           title: job.title,
           status: job.status,
           result_text: latestAgent ? queries.getAgentResultText(latestAgent.id) : null,
-          diff: latestAgent?.diff ?? null,
+          // Omit diff — it can be hundreds of KB per job, and a multi-job
+          // wait can produce a multi-MB SSE event that causes delivery failures.
+          // Agents that need the diff can query the job directly.
         };
       });
 
