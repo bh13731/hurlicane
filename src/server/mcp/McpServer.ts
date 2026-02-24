@@ -163,7 +163,7 @@ function buildMcpServer(agentId: string): MCP {
 
   server.tool(
     'lock_files',
-    'Acquire exclusive locks on files before editing them. BLOCKS until locks are available or timeout_ms elapses. On timeout, returns success=false with timed_out=true — release your own locks then IMMEDIATELY call lock_files again (do not pause to reason first). The default timeout (660s) exceeds the default TTL (600s), so with defaults you will always eventually get the lock without timing out.',
+    'Acquire exclusive locks on files before editing them. BLOCKS until locks are available or timeout_ms elapses. On timeout, returns success=false with timed_out=true — release your own locks then IMMEDIATELY call lock_files again (do not pause to reason first). If a deadlock cycle is detected (success=false, deadlock_detected=true), release ALL your currently held locks with release_files, then retry lock_files for all files you need in a single call. The default timeout (660s) exceeds the default TTL (600s), so with defaults you will always eventually get the lock without timing out.',
     { files: lockFilesSchema.shape.files, reason: lockFilesSchema.shape.reason, ttl_ms: lockFilesSchema.shape.ttl_ms, timeout_ms: lockFilesSchema.shape.timeout_ms },
     async (input) => {
       const result = await lockFilesHandler(agentId, input as any);

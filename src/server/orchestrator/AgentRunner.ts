@@ -1,10 +1,13 @@
 import { spawn, execSync, type ChildProcess } from 'child_process';
+import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
 import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
+import { runCompletionChecks } from './CompletionChecks.js';
+import { handleRetry } from './RetryManager.js';
 import type { Job, ClaudeStreamEvent, CodexStreamEvent } from '../../shared/types.js';
 import { isCodexModel, codexModelName } from '../../shared/types.js';
 
@@ -30,7 +33,10 @@ Use these MCP tools from the 'orchestrator' server:
 FILE LOCKING (required before any edits):
   - lock_files(files, reason): Acquire exclusive locks BEFORE editing or creating files. BLOCKS until
     the locks are available — you will resume automatically once they are free. If it times out
-    (success=false, timed_out=true), release any locks you currently hold then retry, or ask_user.
+    (success=false, timed_out=true), release any locks you currently hold then IMMEDIATELY call
+    lock_files again (do not pause to reason first). If a deadlock cycle is detected
+    (success=false, deadlock_detected=true), release ALL your currently held locks with release_files,
+    then retry lock_files for all files you need in a single call.
   - release_files(files): Release locks when you are done with those files.
   - check_file_locks(): See what files other agents currently have locked.
 
@@ -341,6 +347,34 @@ function stopTailing(agentId: string): void {
   }
 }
 
+/**
+ * Scan the agent's last output events to find a wait_for_jobs tool call.
+ * Returns the job_ids it was waiting on, or null if not found.
+ */
+function findLastWaitForJobsIds(agentId: string): string[] | null {
+  const output = queries.getAgentOutput(agentId);
+  // Walk backwards — last assistant event is most recent tool call
+  for (let i = output.length - 1; i >= 0; i--) {
+    if (output[i].event_type !== 'assistant') continue;
+    try {
+      const ev = JSON.parse(output[i].content);
+      if (ev.type !== 'assistant' || !Array.isArray(ev.message?.content)) continue;
+      for (const block of ev.message.content) {
+        if (
+          block.type === 'tool_use' &&
+          (block.name === 'mcp__orchestrator__wait_for_jobs' || block.name === 'wait_for_jobs') &&
+          Array.isArray(block.input?.job_ids)
+        ) {
+          return block.input.job_ids as string[];
+        }
+      }
+      // Found the last assistant message but no wait_for_jobs in it
+      break;
+    } catch { /* skip malformed */ }
+  }
+  return null;
+}
+
 function handleAgentExit(agentId: string, job: Job, exitCode: number | null): void {
   console.log(`[agent ${agentId}] exited (code ${exitCode ?? 'unknown'})`);
 
@@ -429,7 +463,64 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
       }
     } catch { /* not a git repo, no changes, or git not available */ }
   }
-  queries.updateJobStatus(job.id, status);
+
+  // Run completion checks if the agent reported success and checks are configured
+  let finalStatus = status;
+  if (status === 'done' && job.completion_checks) {
+    try {
+      const freshAgent = queries.getAgentById(agentId);
+      if (freshAgent) {
+        const checkFailure = runCompletionChecks(job, freshAgent);
+        if (checkFailure) {
+          console.log(`[agent ${agentId}] completion checks failed: ${checkFailure}`);
+          finalStatus = 'failed';
+          queries.updateAgent(agentId, { status: 'failed', error_message: `Completion check failed: ${checkFailure}` });
+        }
+      }
+    } catch (err) { console.error(`[agent ${agentId}] completion check error:`, err); }
+  }
+
+  // Auto-resume: if the agent died while stuck in wait_for_jobs and all the
+  // awaited jobs are now done, re-spawn with --resume rather than failing.
+  if (finalStatus === 'failed') {
+    const waitedIds = findLastWaitForJobsIds(agentId);
+    if (waitedIds && waitedIds.length > 0) {
+      const TERMINAL_S = ['done', 'failed', 'cancelled'];
+      const waitedJobs = waitedIds.map(id => queries.getJobById(id));
+      const allDone = waitedJobs.every(j => j && j.status === 'done');
+      if (allDone) {
+        console.log(`[agent ${agentId}] died in wait_for_jobs with all deps done — auto-resuming job ${job.id}`);
+        const agentRec = queries.getAgentById(agentId);
+        const sessionId = agentRec?.session_id ?? null;
+
+        queries.updateAgent(agentId, {
+          status: 'failed',
+          exit_code: exitCode ?? -1,
+          error_message: 'Process exited during wait_for_jobs; watchdog auto-resumed.',
+          finished_at: Date.now(),
+        });
+        queries.releaseLocksForAgent(agentId);
+        getFileLockRegistry().releaseAll(agentId);
+
+        const newAgentId = randomUUID();
+        queries.insertAgent({ id: newAgentId, job_id: job.id, status: 'starting' });
+        queries.updateJobStatus(job.id, 'assigned');
+
+        const newAgentWithJob = queries.getAgentWithJob(newAgentId);
+        if (newAgentWithJob) socket.emitAgentNew(newAgentWithJob);
+        const updatedJob = queries.getJobById(job.id);
+        if (updatedJob) socket.emitJobUpdate(updatedJob);
+
+        runAgent({ agentId: newAgentId, job, resumeSessionId: sessionId ?? undefined });
+        return;
+      } else {
+        const stillPending = waitedJobs.filter(j => j && !TERMINAL_S.includes(j.status)).map(j => j!.id);
+        console.log(`[agent ${agentId}] died in wait_for_jobs but ${stillPending.length} deps still pending: [${stillPending.join(', ')}] — not auto-resuming`);
+      }
+    }
+  }
+
+  queries.updateJobStatus(job.id, finalStatus);
   getFileLockRegistry().releaseAll(agentId);
 
   const updated = queries.getAgentWithJob(agentId);
@@ -439,12 +530,16 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
     try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); }
     // If this job is part of a debate, check if the round is complete
     try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] debateOnJobCompleted error:`, err); }
-    // If the job has a repeat interval, queue the next run
-    if (updatedJob.repeat_interval_ms) {
+    // If the job succeeded and has a repeat interval, queue the next run
+    if (updatedJob.status === 'done' && updatedJob.repeat_interval_ms) {
       try {
         const nextJob = queries.scheduleRepeatJob(updatedJob);
         socket.emitJobNew(nextJob);
       } catch (err) { console.error(`[agent ${agentId}] scheduleRepeatJob error:`, err); }
+    }
+    // If the job failed, attempt retry
+    if (updatedJob.status === 'failed') {
+      try { handleRetry(updatedJob, agentId); } catch (err) { console.error(`[agent ${agentId}] handleRetry error:`, err); }
     }
   }
 }
@@ -491,11 +586,16 @@ function buildPrompt(job: Job): string {
   if (templateId) {
     const template = queries.getTemplateById(templateId);
     if (template) {
-      prompt += `## Guidelines\n\n${template.content}\n\n## Task Description\n\n`;
+      prompt += `## Guidelines\n\n${template.content}`;
+      if (job.description.trim()) {
+        prompt += `\n\n## Task Description\n\n`;
+      }
     }
   }
 
-  prompt += job.description;
+  if (job.description.trim()) {
+    prompt += job.description;
+  }
 
   if (job.context) {
     try {
