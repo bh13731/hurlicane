@@ -9,7 +9,7 @@ import { releaseFilesHandler, releaseFilesSchema } from './tools/releaseFiles.js
 import { checkFileLocksHandler, checkFileLocksSchema } from './tools/checkFileLocks.js';
 import { reportStatusHandler, reportStatusSchema } from './tools/reportStatus.js';
 import { createJobHandler, createJobSchema } from './tools/createJob.js';
-import { waitForJobsHandler, waitForJobsSchema } from './tools/waitForJobs.js';
+import { waitForJobsHandler, waitForJobsSchema, activeWaits } from './tools/waitForJobs.js';
 import { writeNoteHandler, writeNoteSchema, readNoteHandler, readNoteSchema, listNotesHandler, listNotesSchema } from './tools/notes.js';
 import { watchNotesHandler, watchNotesSchema } from './tools/watchNotes.js';
 
@@ -64,7 +64,12 @@ export function createMcpApp(): express.Application {
           const sid = transport!.sessionId;
           if (sid) transportMap!.delete(sid);
           if (transportMap!.size === 0) agentTransports.delete(agentId);
-          console.log(`[mcp] session closed: agent ${agentId}`);
+          const waitingOn = activeWaits.get(agentId);
+          if (waitingOn && waitingOn.length > 0) {
+            console.warn(`[mcp] session closed while wait_for_jobs active: agent ${agentId} was waiting on [${waitingOn.join(', ')}]`);
+          } else {
+            console.log(`[mcp] session closed: agent ${agentId}`);
+          }
         };
 
         const server = buildMcpServer(agentId);
@@ -83,7 +88,12 @@ export function createMcpApp(): express.Application {
           const sid = transport!.sessionId;
           if (sid) transportMap!.delete(sid);
           if (transportMap!.size === 0) agentTransports.delete(agentId);
-          console.log(`[mcp] session closed: agent ${agentId}`);
+          const waitingOn = activeWaits.get(agentId);
+          if (waitingOn && waitingOn.length > 0) {
+            console.warn(`[mcp] session closed while wait_for_jobs active: agent ${agentId} was waiting on [${waitingOn.join(', ')}]`);
+          } else {
+            console.log(`[mcp] session closed: agent ${agentId}`);
+          }
         };
 
         const server = buildMcpServer(agentId);
@@ -153,7 +163,7 @@ function buildMcpServer(agentId: string): MCP {
 
   server.tool(
     'lock_files',
-    'Acquire exclusive locks on files before editing them. BLOCKS until locks are available or timeout_ms elapses. On timeout, returns success=false with timed_out=true — release your own locks and retry, or ask_user what to do.',
+    'Acquire exclusive locks on files before editing them. BLOCKS until locks are available or timeout_ms elapses. On timeout, returns success=false with timed_out=true — release your own locks then IMMEDIATELY call lock_files again (do not pause to reason first). The default timeout (660s) exceeds the default TTL (600s), so with defaults you will always eventually get the lock without timing out.',
     { files: lockFilesSchema.shape.files, reason: lockFilesSchema.shape.reason, ttl_ms: lockFilesSchema.shape.ttl_ms, timeout_ms: lockFilesSchema.shape.timeout_ms },
     async (input) => {
       const result = await lockFilesHandler(agentId, input as any);

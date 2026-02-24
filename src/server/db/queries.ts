@@ -517,6 +517,21 @@ export function releaseLocksForAgent(agentId: string): void {
   db.prepare('UPDATE file_locks SET released_at = ? WHERE agent_id = ? AND released_at IS NULL').run(Date.now(), agentId);
 }
 
+// Returns active (not released, not expired) locks held by agents in terminal
+// states (done/failed/cancelled). Used by the watchdog orphan-lock sweep.
+export function getActiveLocksForTerminalAgents(): FileLock[] {
+  const db = getDb();
+  const now = Date.now();
+  const rows = db.prepare(`
+    SELECT fl.* FROM file_locks fl
+    JOIN agents a ON fl.agent_id = a.id
+    WHERE fl.released_at IS NULL
+      AND fl.expires_at > ?
+      AND a.status IN ('done', 'failed', 'cancelled')
+  `).all(now);
+  return rows.map(r => cast<FileLock>(r));
+}
+
 // Returns all unreleased locks for an agent regardless of TTL expiry.
 // Used by releaseAll so that expired-but-unreleased locks still emit lock:released events.
 export function getAllUnreleasedLocksForAgent(agentId: string): FileLock[] {
