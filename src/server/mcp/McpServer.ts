@@ -216,8 +216,18 @@ function buildMcpServer(agentId: string): MCP {
       job_ids: waitForJobsSchema.shape.job_ids,
       timeout_ms: waitForJobsSchema.shape.timeout_ms,
     },
-    async (input) => {
-      const result = await waitForJobsHandler(agentId, input as any);
+    async (input, extra: any) => {
+      // Keepalive: send a periodic MCP notification so the SSE stream has data
+      // flowing through it. Without this, Node.js keepAliveTimeout (5 s default)
+      // closes the idle SSE connection before the handler returns, silently
+      // dropping the tool result and leaving the agent stuck forever.
+      const keepalive = async () => {
+        await extra.sendNotification({
+          method: 'notifications/message',
+          params: { level: 'debug', logger: 'orchestrator', data: 'wait_for_jobs: keepalive' },
+        });
+      };
+      const result = await waitForJobsHandler(agentId, input as any, keepalive);
       return { content: [{ type: 'text', text: result }] };
     }
   );

@@ -11,7 +11,18 @@ export const waitForJobsSchema = z.object({
 const TERMINAL: JobStatus[] = ['done', 'failed', 'cancelled'];
 const POLL_MS = 2000;
 
-export async function waitForJobsHandler(agentId: string, input: z.infer<typeof waitForJobsSchema>): Promise<string> {
+// Called periodically to keep the MCP SSE stream alive during long waits.
+// Without this, Node.js's keepAliveTimeout (5s default) closes the idle SSE
+// connection before the tool returns, silently dropping the result.
+type Keepalive = () => Promise<void>;
+
+const KEEPALIVE_INTERVAL_MS = 20_000;
+
+export async function waitForJobsHandler(
+  agentId: string,
+  input: z.infer<typeof waitForJobsSchema>,
+  keepalive?: Keepalive,
+): Promise<string> {
   const { job_ids, timeout_ms = 1800000 } = input;
 
   if (job_ids.length === 0) {
@@ -29,6 +40,8 @@ export async function waitForJobsHandler(agentId: string, input: z.infer<typeof 
   };
 
   updateStatus(job_ids.length);
+  let lastReportedPending = job_ids.length;
+  let lastKeepalive = Date.now();
 
   while (Date.now() < deadline) {
     const jobs = job_ids.map(id => queries.getJobById(id));
@@ -61,7 +74,21 @@ export async function waitForJobsHandler(agentId: string, input: z.infer<typeof 
       return JSON.stringify(results);
     }
 
-    updateStatus(pending.length);
+    // Only emit a status update when the pending count changes — avoids hammering
+    // SQLite + Socket.IO on every 2-second tick when nothing has changed.
+    if (pending.length !== lastReportedPending) {
+      updateStatus(pending.length);
+      lastReportedPending = pending.length;
+    }
+
+    // Periodically send a keepalive notification to prevent Node.js's
+    // keepAliveTimeout from closing the idle SSE connection before we return.
+    const now = Date.now();
+    if (keepalive && now - lastKeepalive >= KEEPALIVE_INTERVAL_MS) {
+      await keepalive().catch(() => {/* ignore — connection may have closed */});
+      lastKeepalive = now;
+    }
+
     await new Promise(resolve => setTimeout(resolve, POLL_MS));
   }
 
