@@ -192,6 +192,52 @@ router.post('/:id/cancel', (req, res) => {
   res.json(updated);
 });
 
+router.post('/:id/requeue', (req, res) => {
+  const agent = queries.getAgentById(req.params.id);
+  if (!agent) { res.status(404).json({ error: 'not found' }); return; }
+
+  const requeueable: string[] = ['starting', 'running', 'waiting_user'];
+  if (!requeueable.includes(agent.status)) {
+    res.status(400).json({ error: 'Agent is not running' }); return;
+  }
+
+  // Mark cancelled before killing so handleAgentExit won't overwrite the status
+  cancelledAgents.add(agent.id);
+
+  if (agent.pid) {
+    try {
+      process.kill(-agent.pid, 'SIGTERM');
+    } catch (err: any) {
+      if (err.code !== 'ESRCH') {
+        cancelledAgents.delete(agent.id);
+        res.status(500).json({ error: 'Failed to kill process' }); return;
+      }
+      // ESRCH = process already gone — still requeue
+    }
+  }
+
+  // Mark agent cancelled, but set job back to queued so WorkQueueManager re-dispatches it
+  queries.updateAgent(agent.id, { status: 'cancelled', finished_at: Date.now() });
+  queries.updateJobStatus(agent.job_id, 'queued');
+  getFileLockRegistry().releaseAll(agent.id);
+
+  const updated = queries.getAgentWithJob(agent.id)!;
+  socket.emitAgentUpdate(updated);
+  const updatedJob = queries.getJobById(agent.job_id);
+  if (updatedJob) socket.emitJobUpdate(updatedJob);
+
+  res.json(updated);
+});
+
+router.post('/:id/dismiss-warnings', (req, res) => {
+  const agent = queries.getAgentById(req.params.id);
+  if (!agent) { res.status(404).json({ error: 'not found' }); return; }
+  queries.dismissWarningsForAgent(req.params.id);
+  const updated = queries.getAgentWithJob(req.params.id);
+  if (updated) socket.emitAgentUpdate(updated);
+  res.json({ dismissed: true });
+});
+
 router.delete('/:id/disconnect', (req, res) => {
   const agent = queries.getAgentById(req.params.id);
   if (!agent) { res.status(404).json({ error: 'not found' }); return; }

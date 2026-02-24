@@ -57,6 +57,16 @@ export function AgentCard({ agent, onClick, onSelectParent, templateName, isSele
     fetch(`/api/jobs/${agent.job.id}/flag`, { method: 'POST' });
   }
 
+  function handleRequeue(e: React.MouseEvent) {
+    e.stopPropagation();
+    fetch(`/api/agents/${agent.id}/requeue`, { method: 'POST' });
+  }
+
+  function handleDismissWarnings(e: React.MouseEvent) {
+    e.stopPropagation();
+    fetch(`/api/agents/${agent.id}/dismiss-warnings`, { method: 'POST' });
+  }
+
   function handleGoToParent(e: React.MouseEvent) {
     e.stopPropagation();
     if (agent.parent_agent_id && onSelectParent) {
@@ -90,6 +100,15 @@ export function AgentCard({ agent, onClick, onSelectParent, templateName, isSele
         >
           ⚑
         </button>
+        {['starting', 'running', 'waiting_user'].includes(agent.status) && (
+          <button
+            className="requeue-btn"
+            onClick={handleRequeue}
+            title="Kill agent and requeue job"
+          >
+            ↺
+          </button>
+        )}
         <span className={`agent-status-badge status-${agent.status}`}>
           {agent.status}
         </span>
@@ -110,6 +129,19 @@ export function AgentCard({ agent, onClick, onSelectParent, templateName, isSele
       {agent.job.debate_id && (
         <div className="agent-debate-badge" title={`Debate round ${agent.job.debate_round}, ${agent.job.debate_role} side`}>
           R{agent.job.debate_round} {agent.job.debate_role === 'claude' ? 'Claude' : 'Codex'}
+        </div>
+      )}
+
+      {agent.job.original_job_id && (
+        <div className="agent-retry-badge" title={`Retry ${agent.job.retry_count}/${agent.job.max_retries}`}>
+          Retry {agent.job.retry_count}/{agent.job.max_retries}
+        </div>
+      )}
+
+      {agent.warnings && agent.warnings.length > 0 && (
+        <div className="agent-warning-badge" onClick={handleDismissWarnings} title="Click to dismiss warnings">
+          <span className="warning-icon">!</span>
+          {agent.warnings.map(w => w.message).join('; ')}
         </div>
       )}
 
