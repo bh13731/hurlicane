@@ -26,7 +26,7 @@ function _onJobCompleted(job: Job): void {
   if (job.debate_role === 'post_action') {
     if (job.status === 'done' && debate.post_action_verification) {
       const agentId = getAgentIdForJob(job.id);
-      const postActionResult = agentId ? queries.getAgentResultText(agentId) : null;
+      const postActionResult = getAgentResultOrDiff(agentId);
       spawnVerificationReview(debate, postActionResult);
     }
     return;
@@ -38,7 +38,7 @@ function _onJobCompleted(job: Job): void {
       const reviewAgentId = getAgentIdForJob(job.id);
       const reviewResult = reviewAgentId ? queries.getAgentResultText(reviewAgentId) : null;
       const postActionAgentId = debate.post_action_job_id ? getAgentIdForJob(debate.post_action_job_id) : null;
-      const postActionResult = postActionAgentId ? queries.getAgentResultText(postActionAgentId) : null;
+      const postActionResult = getAgentResultOrDiff(postActionAgentId);
       spawnVerificationResponse(debate, reviewResult, postActionResult);
     }
     return;
@@ -114,6 +114,16 @@ function getAgentIdForJob(jobId: string): string | null {
   const agents = queries.getAgentsWithJobByJobId(jobId);
   // Return the last agent for this job (most recent attempt)
   return agents.length > 0 ? agents[0].id : null;
+}
+
+function getAgentResultOrDiff(agentId: string | null): string | null {
+  if (!agentId) return null;
+  const text = queries.getAgentResultText(agentId);
+  if (text) return text;
+  // Fallback: use the diff if the agent hit max_turns or produced no result text
+  const agent = queries.getAgentById(agentId);
+  if (agent?.diff) return `(Agent reached max turns without producing a summary. Here is the diff of changes made)\n\n\`\`\`diff\n${agent.diff}\n\`\`\``;
+  return null;
 }
 
 function createDiscussionRound(
