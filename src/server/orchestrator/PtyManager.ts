@@ -366,11 +366,16 @@ function buildInteractivePrompt(job: Job): string {
   if (templateId) {
     const template = queries.getTemplateById(templateId);
     if (template) {
-      prompt += `## Guidelines\n\n${template.content}\n\n## Task Description\n\n`;
+      prompt += `## Guidelines\n\n${template.content}`;
+      if (job.description.trim()) {
+        prompt += `\n\n## Task Description\n\n`;
+      }
     }
   }
 
-  prompt += job.description;
+  if (job.description.trim()) {
+    prompt += job.description;
+  }
 
   if (job.context) {
     try {

@@ -162,6 +162,21 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!jobCols.includes('repeat_interval_ms')) {
     db.exec('ALTER TABLE jobs ADD COLUMN repeat_interval_ms INTEGER');
   }
+  if (!jobCols.includes('retry_policy')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN retry_policy TEXT NOT NULL DEFAULT 'none'");
+  }
+  if (!jobCols.includes('max_retries')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!jobCols.includes('retry_count')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!jobCols.includes('original_job_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN original_job_id TEXT');
+  }
+  if (!jobCols.includes('completion_checks')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN completion_checks TEXT');
+  }
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_debate ON jobs(debate_id, debate_round)');
 
   // Post-debate action columns
@@ -183,6 +198,97 @@ export function initDb(dbPath: string): DatabaseSync {
   }
   if (!debateCols.includes('verification_response_job_id')) {
     db.exec('ALTER TABLE debates ADD COLUMN verification_response_job_id TEXT');
+  }
+
+  // ── Feature 6: Agent Health Monitoring ──────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_warnings (
+      id         TEXT PRIMARY KEY,
+      agent_id   TEXT NOT NULL,
+      type       TEXT NOT NULL,
+      message    TEXT NOT NULL,
+      dismissed  INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agent_warnings_agent ON agent_warnings(agent_id, dismissed)');
+
+  // ── Feature 4: Worktree Cleanup ───────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worktrees (
+      id         TEXT PRIMARY KEY,
+      agent_id   TEXT NOT NULL,
+      job_id     TEXT NOT NULL,
+      path       TEXT NOT NULL,
+      branch     TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      cleaned_at INTEGER
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_worktrees_job ON worktrees(job_id)');
+
+  // ── Feature 1: Mid-Task Nudge ─────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS nudges (
+      id           TEXT PRIMARY KEY,
+      agent_id     TEXT NOT NULL,
+      message      TEXT NOT NULL,
+      delivered    INTEGER NOT NULL DEFAULT 0,
+      created_at   INTEGER NOT NULL,
+      delivered_at INTEGER
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_nudges_agent ON nudges(agent_id, delivered)');
+
+  // ── Feature 5: Knowledge Base ─────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS knowledge_base (
+      id         TEXT PRIMARY KEY,
+      title      TEXT NOT NULL,
+      content    TEXT NOT NULL,
+      tags       TEXT,
+      source     TEXT,
+      agent_id   TEXT,
+      project_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS kb_fts USING fts5(
+      title,
+      content,
+      kb_id UNINDEXED
+    )
+  `);
+
+  // ── Feature 3: Multi-Model Review Pipeline ────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reviews (
+      id              TEXT PRIMARY KEY,
+      parent_job_id   TEXT NOT NULL,
+      reviewer_job_id TEXT,
+      model           TEXT NOT NULL,
+      verdict         TEXT,
+      summary         TEXT,
+      created_at      INTEGER NOT NULL,
+      completed_at    INTEGER
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_reviews_parent ON reviews(parent_job_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_reviews_reviewer ON reviews(reviewer_job_id)');
+
+  if (!jobCols.includes('review_config')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN review_config TEXT');
+  }
+  if (!jobCols.includes('review_status')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN review_status TEXT');
+  }
+  if (!jobCols.includes('review_parent_job_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN review_parent_job_id TEXT');
+  }
+  if (!jobCols.includes('archived_at')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN archived_at INTEGER');
   }
 
   _db = db;

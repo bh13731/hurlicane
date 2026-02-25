@@ -5,8 +5,20 @@ interface AgentCardProps {
   agent: AgentWithJob;
   onClick: (agent: AgentWithJob) => void;
   onSelectParent?: (parentId: string) => void;
+  onArchiveJob?: () => void;
   templateName?: string;
   isSelected?: boolean;
+}
+
+function ArchiveIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1" y="2" width="14" height="3" rx="0.75"/>
+      <path d="M2.5 5v8.5a.5.5 0 00.5.5h10a.5.5 0 00.5-.5V5"/>
+      <line x1="8" y1="7.5" x2="8" y2="11.5"/>
+      <polyline points="6,9.5 8,11.5 10,9.5"/>
+    </svg>
+  );
 }
 
 function getBorderColor(agent: AgentWithJob): string {
@@ -48,7 +60,7 @@ function getStatusLabel(agent: AgentWithJob): React.ReactNode {
   }
 }
 
-export function AgentCard({ agent, onClick, onSelectParent, templateName, isSelected }: AgentCardProps) {
+export function AgentCard({ agent, onClick, onSelectParent, onArchiveJob, templateName, isSelected }: AgentCardProps) {
   const borderColor = getBorderColor(agent);
   const isWaiting = agent.status === 'waiting_user';
 
@@ -100,6 +112,16 @@ export function AgentCard({ agent, onClick, onSelectParent, templateName, isSele
         >
           ⚑
         </button>
+        {onArchiveJob && ['done', 'failed', 'cancelled'].includes(agent.status) && (
+          <button
+            className="archive-btn"
+            onClick={e => { e.stopPropagation(); onArchiveJob(); }}
+            title="Archive job"
+            aria-label="Archive job"
+          >
+            <ArchiveIcon />
+          </button>
+        )}
         {['starting', 'running', 'waiting_user'].includes(agent.status) && (
           <button
             className="requeue-btn"

@@ -32,6 +32,28 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     }
   }
 
+  // If the calling agent's job was spawned by the retry system (has original_job_id),
+  // inherit retry settings so the new job continues the retry chain
+  let retryPolicy: 'none' | 'same' | 'analyze' = 'none';
+  let maxRetries = 0;
+  let retryCount = 0;
+  let originalJobId: string | null = null;
+  let completionChecks: string | null = null;
+  if (agent) {
+    const parentJob = queries.getJobById(agent.job_id);
+    if (parentJob?.original_job_id) {
+      // This agent is an analysis agent — look up the original job to get retry settings
+      const origJob = queries.getJobById(parentJob.original_job_id);
+      if (origJob) {
+        retryPolicy = origJob.retry_policy ?? 'none';
+        maxRetries = origJob.max_retries ?? 0;
+        retryCount = origJob.retry_count + 1; // increment since the original already failed once
+        originalJobId = origJob.original_job_id ?? origJob.id;
+        completionChecks = origJob.completion_checks ?? null;
+      }
+    }
+  }
+
   const job = queries.insertJob({
     id: randomUUID(),
     title: title?.trim() || description.split('\n')[0].slice(0, 60),
@@ -46,6 +68,11 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     use_worktree: use_worktree ? 1 : 0,
     project_id: inheritedProjectId,
     repeat_interval_ms: repeat_interval_ms ?? null,
+    retry_policy: retryPolicy,
+    max_retries: maxRetries,
+    retry_count: retryCount,
+    original_job_id: originalJobId,
+    completion_checks: completionChecks,
   });
 
   socket.emitJobNew(job);

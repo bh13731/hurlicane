@@ -37,18 +37,23 @@ async function generateSmartTitle(description: string): Promise<string> {
 
 router.post('/', async (req, res) => {
   const body = req.body as CreateJobRequest;
-  if (!body.description) {
-    res.status(400).json({ error: 'description is required' });
+  if (!body.description && !body.templateId) {
+    res.status(400).json({ error: 'description is required (or select a template)' });
     return;
   }
 
   const explicitTitle = body.title?.trim();
-  const title = explicitTitle || await generateSmartTitle(body.description);
+  let titleSource = body.description;
+  if (!titleSource && body.templateId) {
+    const tpl = queries.getTemplateById(body.templateId);
+    titleSource = tpl?.content ?? '';
+  }
+  const title = explicitTitle || (titleSource ? await generateSmartTitle(titleSource) : 'Untitled');
 
   const job = queries.insertJob({
     id: randomUUID(),
     title,
-    description: body.description,
+    description: body.description ?? '',
     context: body.context ? JSON.stringify(body.context) : null,
     priority: body.priority ?? 0,
     work_dir: body.workDir ?? null,
@@ -61,6 +66,11 @@ router.post('/', async (req, res) => {
     project_id: body.projectId ?? null,
     scheduled_at: body.scheduledAt ?? null,
     repeat_interval_ms: body.repeatIntervalMs ?? null,
+    retry_policy: body.retryPolicy ?? 'none',
+    max_retries: body.maxRetries ?? 0,
+    retry_count: 0,
+    original_job_id: null,
+    completion_checks: body.completionChecks?.length ? JSON.stringify(body.completionChecks) : null,
   });
 
   socket.emitJobNew(job);
@@ -68,6 +78,10 @@ router.post('/', async (req, res) => {
 });
 
 router.get('/', (req, res) => {
+  if (req.query.archived === '1' || req.query.archived === 'true') {
+    res.json(queries.listArchivedJobs());
+    return;
+  }
   const status = req.query.status as string | undefined;
   const jobs = queries.listJobs(status as any);
   res.json(jobs);
@@ -116,6 +130,19 @@ router.post('/:id/run-now', (req, res) => {
     return;
   }
   queries.updateJobScheduledAt(job.id, null);
+  const updated = queries.getJobById(job.id)!;
+  socket.emitJobUpdate(updated);
+  res.json(updated);
+});
+
+router.post('/:id/archive', (req, res) => {
+  const job = queries.getJobById(req.params.id);
+  if (!job) { res.status(404).json({ error: 'not found' }); return; }
+  if (!['done', 'failed', 'cancelled'].includes(job.status)) {
+    res.status(400).json({ error: 'Can only archive finished jobs (done, failed, cancelled)' });
+    return;
+  }
+  queries.archiveJob(job.id);
   const updated = queries.getJobById(job.id)!;
   socket.emitJobUpdate(updated);
   res.json(updated);

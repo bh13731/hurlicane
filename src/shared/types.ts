@@ -5,6 +5,9 @@ export type AgentStatus = 'starting' | 'running' | 'waiting_user' | 'done' | 'fa
 export type QuestionStatus = 'pending' | 'answered' | 'timeout';
 export type DebateStatus = 'running' | 'consensus' | 'disagreement' | 'failed' | 'cancelled';
 export type DebateRole = 'claude' | 'codex' | 'post_action' | 'verification_review' | 'verification_response';
+export type RetryPolicy = 'none' | 'same' | 'analyze';
+export type WarningType = 'stalled' | 'high_turns' | 'long_running';
+export type ReviewStatus = 'pending_review' | 'approved' | 'needs_revision';
 
 export interface Job {
   id: string;
@@ -25,6 +28,15 @@ export interface Job {
   debate_role: DebateRole | null;
   scheduled_at: number | null;
   repeat_interval_ms: number | null;
+  retry_policy: RetryPolicy;
+  max_retries: number;
+  retry_count: number;
+  original_job_id: string | null;
+  completion_checks: string | null; // JSON array of check names
+  review_config: string | null;         // JSON: ReviewConfig
+  review_status: ReviewStatus | null;
+  review_parent_job_id: string | null;  // for review jobs, links to parent
+  archived_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -87,6 +99,7 @@ export interface AgentWithJob extends Agent {
   pending_question: Question | null;
   active_locks: FileLock[];
   child_agents: ChildAgentSummary[];
+  warnings: AgentWarning[];
 }
 
 export interface Question {
@@ -153,6 +166,7 @@ export interface ServerToClientEvents {
   'pty:closed': (payload: { agent_id: string }) => void;
   'debate:new': (payload: { debate: Debate }) => void;
   'debate:update': (payload: { debate: Debate }) => void;
+  'warning:new': (payload: { warning: AgentWarning }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -243,6 +257,10 @@ export interface CreateJobRequest {
   projectId?: string;
   repeatIntervalMs?: number;
   scheduledAt?: number;
+  retryPolicy?: RetryPolicy;
+  maxRetries?: number;
+  completionChecks?: string[];
+  reviewConfig?: ReviewConfig;
 }
 
 export interface SearchResult {
@@ -372,4 +390,84 @@ export interface CreateDebateResponse {
   debate: Debate;
   project: Project;
   jobs: Job[];
+}
+
+// ─── Agent Warnings (Feature 6) ──────────────────────────────────────────────
+
+export interface AgentWarning {
+  id: string;
+  agent_id: string;
+  type: WarningType;
+  message: string;
+  dismissed: number;
+  created_at: number;
+}
+
+// ─── Worktrees (Feature 4) ──────────────────────────────────────────────────
+
+export interface Worktree {
+  id: string;
+  agent_id: string;
+  job_id: string;
+  path: string;
+  branch: string;
+  created_at: number;
+  cleaned_at: number | null;
+}
+
+// ─── Nudges (Feature 1) ─────────────────────────────────────────────────────
+
+export interface Nudge {
+  id: string;
+  agent_id: string;
+  message: string;
+  delivered: number;
+  created_at: number;
+  delivered_at: number | null;
+}
+
+// ─── Knowledge Base (Feature 5) ──────────────────────────────────────────────
+
+export interface KBEntry {
+  id: string;
+  title: string;
+  content: string;
+  tags: string | null;
+  source: string | null;
+  agent_id: string | null;
+  project_id: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+// ─── Reviews (Feature 3) ────────────────────────────────────────────────────
+
+export interface ReviewConfig {
+  models: string[];
+  auto: boolean;
+}
+
+export interface Review {
+  id: string;
+  parent_job_id: string;
+  reviewer_job_id: string | null;
+  model: string;
+  verdict: string | null;
+  summary: string | null;
+  created_at: number;
+  completed_at: number | null;
+}
+
+// ─── Template Model Stats (Feature 2) ────────────────────────────────────────
+
+export interface TemplateModelStat {
+  template_id: string | null;
+  template_name: string | null;
+  model: string | null;
+  total: number;
+  succeeded: number;
+  success_rate: number;
+  avg_cost: number | null;
+  avg_duration_ms: number | null;
+  avg_turns: number | null;
 }

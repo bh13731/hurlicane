@@ -8,6 +8,9 @@ import { initSocketManager } from './socket/SocketManager.js';
 import apiRouter from './api/router.js';
 import { createMcpApp, closeAllMcpSessions } from './mcp/McpServer.js';
 import { startWorkQueue, stopWorkQueue, setMaxConcurrent } from './orchestrator/WorkQueueManager.js';
+import { startWatchdog, stopWatchdog } from './orchestrator/StuckJobWatchdog.js';
+import { startHealthMonitor, stopHealthMonitor } from './orchestrator/HealthMonitor.js';
+import { startWorktreeCleanup, stopWorktreeCleanup } from './orchestrator/WorktreeCleanup.js';
 import { runRecovery } from './orchestrator/recovery.js';
 import { writeInput, resizePty } from './orchestrator/PtyManager.js';
 import * as queries from './db/queries.js';
@@ -89,8 +92,11 @@ async function main() {
   mcpServer.keepAliveTimeout = 0;
   mcpServer.headersTimeout = 0;
 
-  // 6. Start work queue
+  // 6. Start work queue + stuck-job watchdog
   startWorkQueue();
+  startWatchdog();
+  startHealthMonitor();
+  startWorktreeCleanup();
 
   // Restore persisted settings
   const savedMax = queries.getNote('setting:maxConcurrentAgents');
@@ -116,8 +122,11 @@ async function main() {
     }, 10_000);
     watchdog.unref(); // don't let this alone keep the process alive
 
-    // Stop dispatching new jobs
+    // Stop dispatching new jobs and the watchdog
     stopWorkQueue();
+    stopWatchdog();
+    stopHealthMonitor();
+    stopWorktreeCleanup();
 
     // Stop accepting new HTTP connections; wait for in-flight requests to drain
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));

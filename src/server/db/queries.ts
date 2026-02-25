@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getDb } from './database.js';
-import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, Debate, DebateStatus, DebateRole, JobStatus, AgentStatus, SearchResult } from '../../shared/types.js';
+import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, Debate, DebateStatus, DebateRole, RetryPolicy, JobStatus, AgentStatus, SearchResult, AgentWarning, Worktree, Nudge, KBEntry, Review, TemplateModelStat, ReviewStatus } from '../../shared/types.js';
 
 // node:sqlite returns null-prototype objects; cast them via JSON round-trip helper
 function cast<T>(val: unknown): T {
@@ -29,12 +29,20 @@ export function insertJob(job: {
   debate_role?: DebateRole | null;
   scheduled_at?: number | null;
   repeat_interval_ms?: number | null;
+  retry_policy?: RetryPolicy;
+  max_retries?: number;
+  retry_count?: number;
+  original_job_id?: string | null;
+  completion_checks?: string | null;
+  review_config?: string | null;
+  review_status?: ReviewStatus | null;
+  review_parent_job_id?: string | null;
 }): Job {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_round, debate_role, scheduled_at, repeat_interval_ms, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_round, debate_role, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     job.id, job.title, job.description, job.context,
     job.status ?? 'queued', job.priority,
@@ -50,6 +58,14 @@ export function insertJob(job: {
     job.debate_role ?? null,
     job.scheduled_at ?? null,
     job.repeat_interval_ms ?? null,
+    job.retry_policy ?? 'none',
+    job.max_retries ?? 0,
+    job.retry_count ?? 0,
+    job.original_job_id ?? null,
+    job.completion_checks ?? null,
+    job.review_config ?? null,
+    job.review_status ?? null,
+    job.review_parent_job_id ?? null,
     now, now
   );
   return getJobById(job.id)!;
@@ -65,11 +81,22 @@ export function listJobs(status?: JobStatus): Job[] {
   const db = getDb();
   let rows: unknown[];
   if (status) {
-    rows = db.prepare('SELECT * FROM jobs WHERE status = ? ORDER BY priority DESC, created_at ASC').all(status);
+    rows = db.prepare('SELECT * FROM jobs WHERE status = ? AND archived_at IS NULL ORDER BY priority DESC, created_at ASC').all(status);
   } else {
-    rows = db.prepare('SELECT * FROM jobs ORDER BY priority DESC, created_at ASC').all();
+    rows = db.prepare('SELECT * FROM jobs WHERE archived_at IS NULL ORDER BY priority DESC, created_at ASC').all();
   }
   return rows.map(r => cast<Job>(r));
+}
+
+export function listArchivedJobs(): Job[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM jobs WHERE archived_at IS NOT NULL ORDER BY archived_at DESC').all();
+  return rows.map(r => cast<Job>(r));
+}
+
+export function archiveJob(id: string): void {
+  const db = getDb();
+  db.prepare('UPDATE jobs SET archived_at = ?, updated_at = ? WHERE id = ?').run(Date.now(), Date.now(), id);
 }
 
 export function updateJobStatus(id: string, status: JobStatus): void {
@@ -133,6 +160,11 @@ export function scheduleRepeatJob(job: Job): Job {
     project_id: job.project_id ?? null,
     scheduled_at: Date.now() + repeatIntervalMs,
     repeat_interval_ms: repeatIntervalMs,
+    retry_policy: job.retry_policy ?? 'none',
+    max_retries: job.max_retries ?? 0,
+    retry_count: 0,
+    original_job_id: null,
+    completion_checks: job.completion_checks ?? null,
   });
 }
 
@@ -277,8 +309,8 @@ function enrichAgent(agent: Agent): AgentWithJob {
   const jobRow = db.prepare('SELECT * FROM jobs WHERE id = ?').get(agent.job_id);
   if (!jobRow) {
     // Job was deleted while agent still references it — return a stub
-    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, work_dir: null, max_turns: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_round: null, debate_role: null, scheduled_at: null, repeat_interval_ms: null, created_at: 0, updated_at: 0 };
-    return { ...agent, job: stub, template_name: null, pending_question: null, active_locks: [], child_agents: [] };
+    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, work_dir: null, max_turns: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_round: null, debate_role: null, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, review_config: null, review_status: null, review_parent_job_id: null, archived_at: null, created_at: 0, updated_at: 0 };
+    return { ...agent, job: stub, template_name: null, pending_question: null, active_locks: [], child_agents: [], warnings: [] };
   }
   const job = cast<Job>(jobRow);
   const qRow = db.prepare(`
@@ -290,12 +322,16 @@ function enrichAgent(agent: Agent): AgentWithJob {
   `).all(agent.id);
   const active_locks = lockRows.map(r => cast<FileLock>(r));
   const child_agents = getChildAgentSummaries(agent.id);
+  const warningRows = db.prepare(`
+    SELECT * FROM agent_warnings WHERE agent_id = ? AND dismissed = 0 ORDER BY created_at DESC
+  `).all(agent.id);
+  const warnings = warningRows.map(r => cast<AgentWarning>(r));
   let template_name: string | null = null;
   if (job.template_id) {
     const tRow = db.prepare('SELECT name FROM templates WHERE id = ?').get(job.template_id) as { name: string } | undefined;
     template_name = tRow?.name ?? null;
   }
-  return { ...agent, job, template_name, pending_question, active_locks, child_agents };
+  return { ...agent, job, template_name, pending_question, active_locks, child_agents, warnings };
 }
 
 // ─── Agent Output ─────────────────────────────────────────────────────────────
@@ -799,4 +835,250 @@ export function getAgentResultText(agentId: string): string | null {
     } catch { /* skip */ }
   }
   return null;
+}
+
+// ─── Agent Warnings (Feature 6) ──────────────────────────────────────────────
+
+export function insertWarning(warning: { id: string; agent_id: string; type: string; message: string }): AgentWarning {
+  const db = getDb();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO agent_warnings (id, agent_id, type, message, dismissed, created_at)
+    VALUES (?, ?, ?, ?, 0, ?)
+  `).run(warning.id, warning.agent_id, warning.type, warning.message, now);
+  return cast<AgentWarning>(db.prepare('SELECT * FROM agent_warnings WHERE id = ?').get(warning.id));
+}
+
+export function getActiveWarningsForAgent(agentId: string): AgentWarning[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM agent_warnings WHERE agent_id = ? AND dismissed = 0 ORDER BY created_at DESC').all(agentId);
+  return rows.map(r => cast<AgentWarning>(r));
+}
+
+export function getAllActiveWarnings(): AgentWarning[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM agent_warnings WHERE dismissed = 0 ORDER BY created_at DESC').all();
+  return rows.map(r => cast<AgentWarning>(r));
+}
+
+export function dismissWarningsForAgent(agentId: string): void {
+  const db = getDb();
+  db.prepare('UPDATE agent_warnings SET dismissed = 1 WHERE agent_id = ? AND dismissed = 0').run(agentId);
+}
+
+export function dismissWarningsByType(agentId: string, type: string): void {
+  const db = getDb();
+  db.prepare('UPDATE agent_warnings SET dismissed = 1 WHERE agent_id = ? AND type = ? AND dismissed = 0').run(agentId, type);
+}
+
+export function hasUndismissedWarning(agentId: string, type: string): boolean {
+  const db = getDb();
+  const row = db.prepare('SELECT 1 FROM agent_warnings WHERE agent_id = ? AND type = ? AND dismissed = 0 LIMIT 1').get(agentId, type);
+  return !!row;
+}
+
+// ─── Worktrees (Feature 4) ──────────────────────────────────────────────────
+
+export function insertWorktree(wt: { id: string; agent_id: string; job_id: string; path: string; branch: string }): Worktree {
+  const db = getDb();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO worktrees (id, agent_id, job_id, path, branch, created_at, cleaned_at)
+    VALUES (?, ?, ?, ?, ?, ?, NULL)
+  `).run(wt.id, wt.agent_id, wt.job_id, wt.path, wt.branch, now);
+  return cast<Worktree>(db.prepare('SELECT * FROM worktrees WHERE id = ?').get(wt.id));
+}
+
+export function listActiveWorktrees(): Worktree[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM worktrees WHERE cleaned_at IS NULL ORDER BY created_at DESC').all();
+  return rows.map(r => cast<Worktree>(r));
+}
+
+export function markWorktreeCleaned(id: string): void {
+  const db = getDb();
+  db.prepare('UPDATE worktrees SET cleaned_at = ? WHERE id = ?').run(Date.now(), id);
+}
+
+export function getWorktreeStats(): { active: number; cleaned: number } {
+  const db = getDb();
+  const active = (db.prepare('SELECT COUNT(*) as c FROM worktrees WHERE cleaned_at IS NULL').get() as any).c;
+  const cleaned = (db.prepare('SELECT COUNT(*) as c FROM worktrees WHERE cleaned_at IS NOT NULL').get() as any).c;
+  return { active, cleaned };
+}
+
+// ─── Nudges (Feature 1) ─────────────────────────────────────────────────────
+
+export function insertNudge(nudge: { id: string; agent_id: string; message: string }): Nudge {
+  const db = getDb();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO nudges (id, agent_id, message, delivered, created_at, delivered_at)
+    VALUES (?, ?, ?, 0, ?, NULL)
+  `).run(nudge.id, nudge.agent_id, nudge.message, now);
+  return cast<Nudge>(db.prepare('SELECT * FROM nudges WHERE id = ?').get(nudge.id));
+}
+
+export function getUndeliveredNudges(agentId: string): Nudge[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM nudges WHERE agent_id = ? AND delivered = 0 ORDER BY created_at ASC').all(agentId);
+  return rows.map(r => cast<Nudge>(r));
+}
+
+export function markNudgeDelivered(id: string): void {
+  const db = getDb();
+  db.prepare('UPDATE nudges SET delivered = 1, delivered_at = ? WHERE id = ?').run(Date.now(), id);
+}
+
+// ─── Knowledge Base (Feature 5) ──────────────────────────────────────────────
+
+export function insertKBEntry(entry: { id: string; title: string; content: string; tags?: string | null; source?: string | null; agent_id?: string | null; project_id?: string | null }): KBEntry {
+  const db = getDb();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO knowledge_base (id, title, content, tags, source, agent_id, project_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(entry.id, entry.title, entry.content, entry.tags ?? null, entry.source ?? null, entry.agent_id ?? null, entry.project_id ?? null, now, now);
+  // Index in FTS
+  const row = db.prepare('SELECT rowid FROM knowledge_base WHERE id = ?').get(entry.id) as { rowid: number } | undefined;
+  if (row) {
+    db.prepare('INSERT INTO kb_fts(rowid, title, content, kb_id) VALUES (?, ?, ?, ?)').run(row.rowid, entry.title, entry.content, entry.id);
+  }
+  return getKBEntryById(entry.id)!;
+}
+
+export function getKBEntryById(id: string): KBEntry | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM knowledge_base WHERE id = ?').get(id);
+  return row ? cast<KBEntry>(row) : null;
+}
+
+export function listKBEntries(projectId?: string): KBEntry[] {
+  const db = getDb();
+  let rows: unknown[];
+  if (projectId) {
+    rows = db.prepare('SELECT * FROM knowledge_base WHERE project_id = ? ORDER BY updated_at DESC').all(projectId);
+  } else {
+    rows = db.prepare('SELECT * FROM knowledge_base ORDER BY updated_at DESC').all();
+  }
+  return rows.map(r => cast<KBEntry>(r));
+}
+
+export function searchKB(query: string, projectId?: string, limit = 20): Array<KBEntry & { excerpt: string }> {
+  const db = getDb();
+  const sql = `
+    SELECT kb.*, snippet(kb_fts, 1, '<mark>', '</mark>', '…', 30) as excerpt
+    FROM kb_fts f
+    JOIN knowledge_base kb ON kb.id = f.kb_id
+    WHERE kb_fts MATCH ?
+    ${projectId ? 'AND kb.project_id = ?' : ''}
+    ORDER BY rank
+    LIMIT ?
+  `;
+  try {
+    const args = projectId ? [query, projectId, limit] : [query, limit];
+    const rows = db.prepare(sql).all(...args) as any[];
+    return rows.map(r => cast<KBEntry & { excerpt: string }>(r));
+  } catch {
+    try {
+      const escaped = `"${query.replace(/"/g, '""')}"`;
+      const args = projectId ? [escaped, projectId, limit] : [escaped, limit];
+      const rows = db.prepare(sql).all(...args) as any[];
+      return rows.map(r => cast<KBEntry & { excerpt: string }>(r));
+    } catch { return []; }
+  }
+}
+
+export function updateKBEntry(id: string, fields: Partial<Pick<KBEntry, 'title' | 'content' | 'tags'>>): KBEntry | null {
+  const db = getDb();
+  const sets: string[] = ['updated_at = ?'];
+  const values: unknown[] = [Date.now()];
+  for (const [k, v] of Object.entries(fields)) {
+    sets.push(`${k} = ?`);
+    values.push(v);
+  }
+  values.push(id);
+  db.prepare(`UPDATE knowledge_base SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+  // Update FTS
+  const entry = getKBEntryById(id);
+  if (entry) {
+    const row = db.prepare('SELECT rowid FROM knowledge_base WHERE id = ?').get(id) as { rowid: number } | undefined;
+    if (row) {
+      db.prepare('DELETE FROM kb_fts WHERE rowid = ?').run(row.rowid);
+      db.prepare('INSERT INTO kb_fts(rowid, title, content, kb_id) VALUES (?, ?, ?, ?)').run(row.rowid, entry.title, entry.content, entry.id);
+    }
+  }
+  return entry;
+}
+
+export function deleteKBEntry(id: string): void {
+  const db = getDb();
+  const row = db.prepare('SELECT rowid FROM knowledge_base WHERE id = ?').get(id) as { rowid: number } | undefined;
+  if (row) {
+    db.prepare('DELETE FROM kb_fts WHERE rowid = ?').run(row.rowid);
+  }
+  db.prepare('DELETE FROM knowledge_base WHERE id = ?').run(id);
+}
+
+// ─── Reviews (Feature 3) ────────────────────────────────────────────────────
+
+export function insertReview(review: { id: string; parent_job_id: string; model: string; reviewer_job_id?: string | null }): Review {
+  const db = getDb();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO reviews (id, parent_job_id, reviewer_job_id, model, verdict, summary, created_at, completed_at)
+    VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL)
+  `).run(review.id, review.parent_job_id, review.reviewer_job_id ?? null, review.model, now);
+  return cast<Review>(db.prepare('SELECT * FROM reviews WHERE id = ?').get(review.id));
+}
+
+export function getReviewsForJob(parentJobId: string): Review[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM reviews WHERE parent_job_id = ? ORDER BY created_at ASC').all(parentJobId);
+  return rows.map(r => cast<Review>(r));
+}
+
+export function updateReview(id: string, fields: Partial<Pick<Review, 'reviewer_job_id' | 'verdict' | 'summary' | 'completed_at'>>): void {
+  const db = getDb();
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    sets.push(`${k} = ?`);
+    values.push(v);
+  }
+  values.push(id);
+  db.prepare(`UPDATE reviews SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+}
+
+export function getReviewByReviewerJob(reviewerJobId: string): Review | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM reviews WHERE reviewer_job_id = ?').get(reviewerJobId);
+  return row ? cast<Review>(row) : null;
+}
+
+export function updateJobReviewStatus(id: string, reviewStatus: ReviewStatus | null): void {
+  const db = getDb();
+  db.prepare('UPDATE jobs SET review_status = ?, updated_at = ? WHERE id = ?').run(reviewStatus, Date.now(), id);
+}
+
+// ─── Template Model Stats (Feature 2) ────────────────────────────────────────
+
+export function getTemplateModelStats(): TemplateModelStat[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT j.template_id, t.name as template_name, j.model,
+      COUNT(*) as total,
+      SUM(CASE WHEN j.status='done' THEN 1 ELSE 0 END) as succeeded,
+      CAST(SUM(CASE WHEN j.status='done' THEN 1 ELSE 0 END) AS REAL) /
+        NULLIF(COUNT(*), 0) as success_rate,
+      AVG(a.cost_usd) as avg_cost,
+      AVG(a.duration_ms) as avg_duration_ms,
+      AVG(a.num_turns) as avg_turns
+    FROM jobs j
+    LEFT JOIN templates t ON t.id = j.template_id
+    LEFT JOIN agents a ON a.job_id = j.id AND a.status IN ('done','failed')
+    WHERE j.status IN ('done','failed') AND j.debate_id IS NULL AND j.original_job_id IS NULL AND j.review_parent_job_id IS NULL
+    GROUP BY j.template_id, j.model HAVING total >= 1
+  `).all();
+  return rows.map(r => cast<TemplateModelStat>(r));
 }

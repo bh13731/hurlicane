@@ -66,6 +66,15 @@ export function ProjectSelector({ projects, activeProjectId, onSelect, onCreate,
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>all unscoped jobs</span>
           </div>
 
+          {/* Archived pseudo-project */}
+          <div
+            className={`project-item ${activeProjectId === '__archived__' ? 'project-item-active' : ''}`}
+            onClick={() => { onSelect('__archived__'); onClose(); }}
+          >
+            <span>Archived</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>archived jobs</span>
+          </div>
+
           {/* Project list */}
           {projects.map(p => (
             <div

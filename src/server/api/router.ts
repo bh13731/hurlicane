@@ -10,6 +10,9 @@ import searchRouter from './search.js';
 import batchTemplatesRouter from './batchTemplates.js';
 import settingsRouter from './settings.js';
 import debatesRouter from './debates.js';
+import worktreesRouter from './worktrees.js';
+import statsRouter from './stats.js';
+import knowledgeBaseRouter from './knowledgeBase.js';
 
 const router = Router();
 
@@ -24,5 +27,8 @@ router.use('/search', searchRouter);
 router.use('/batch-templates', batchTemplatesRouter);
 router.use('/settings', settingsRouter);
 router.use('/debates', debatesRouter);
+router.use('/worktrees', worktreesRouter);
+router.use('/stats', statsRouter);
+router.use('/knowledge-base', knowledgeBaseRouter);
 
 export default router;

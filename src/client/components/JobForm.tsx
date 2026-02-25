@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import type { CreateJobRequest, Job, Template } from '@shared/types';
+import type { CreateJobRequest, Job, Template, RetryPolicy, ReviewConfig } from '@shared/types';
+import { TemplateModelStats } from './TemplateModelStats';
 
 interface JobFormProps {
   onSubmit: (job: CreateJobRequest) => Promise<void>;
@@ -17,9 +18,17 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [templateId, setTemplateId] = useState('');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [dependsOn, setDependsOn] = useState<string[]>([]);
-  const [interactive, setInteractive] = useState(false);
+  const [interactive, setInteractive] = useState(true);
   const [useWorktree, setUseWorktree] = useState(false);
   const [repeatSeconds, setRepeatSeconds] = useState<number | ''>('');
+  const [retryPolicy, setRetryPolicy] = useState<RetryPolicy>('none');
+  const [maxRetries, setMaxRetries] = useState(3);
+  const [checkDiffNotEmpty, setCheckDiffNotEmpty] = useState(false);
+  const [checkNoErrors, setCheckNoErrors] = useState(false);
+  const [customCheckCmd, setCustomCheckCmd] = useState('');
+  const [reviewEnabled, setReviewEnabled] = useState(false);
+  const [reviewModels, setReviewModels] = useState<string[]>([]);
+  const [reviewAuto, setReviewAuto] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,10 +59,19 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!description.trim()) return;
+    if (!description.trim() && !templateId) return;
     setLoading(true);
     setError(null);
     try {
+      const completionChecks: string[] = [];
+      if (checkDiffNotEmpty) completionChecks.push('diff_not_empty');
+      if (checkNoErrors) completionChecks.push('no_error_in_output');
+      if (customCheckCmd.trim()) completionChecks.push(`custom_command:${customCheckCmd.trim()}`);
+
+      const reviewConfig: ReviewConfig | undefined = reviewEnabled && reviewModels.length > 0
+        ? { models: reviewModels, auto: reviewAuto }
+        : undefined;
+
       await onSubmit({
         title: title.trim() || undefined,
         description: description.trim(),
@@ -66,6 +84,10 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         interactive: interactive || undefined,
         useWorktree: useWorktree || undefined,
         repeatIntervalMs: repeatSeconds ? (repeatSeconds as number) * 1000 : undefined,
+        retryPolicy: retryPolicy !== 'none' ? retryPolicy : undefined,
+        maxRetries: retryPolicy !== 'none' ? maxRetries : undefined,
+        completionChecks: completionChecks.length > 0 ? completionChecks : undefined,
+        reviewConfig,
       });
       onClose();
     } catch (err) {
@@ -117,14 +139,17 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
           </div>
 
           <div className="form-group">
-            <label htmlFor="description">Task Description</label>
+            <label htmlFor="description">
+              Task Description
+              {templateId && <span className="form-label-hint"> (optional — template is the task)</span>}
+            </label>
             <textarea
               id="description"
               value={description}
               onChange={e => setDescription(e.target.value)}
-              placeholder="Detailed instructions for the agent..."
+              placeholder={templateId ? "Additional instructions (optional)..." : "Detailed instructions for the agent..."}
               rows={6}
-              required
+              required={!templateId}
             />
           </div>
 
@@ -189,6 +214,8 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
             </select>
           </div>
 
+          <TemplateModelStats templateId={templateId} model={model} />
+
           {pendingJobs.length > 0 && (
             <div className="form-group">
               <label>
@@ -251,6 +278,113 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               <span className="repeat-unit">seconds</span>
             </div>
           </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label htmlFor="retryPolicy">
+                On Failure
+                <span className="tooltip-icon" data-tip="What to do when the agent fails. 'Retry same' re-queues the identical task. 'Analyze & retry' spawns a lightweight agent to diagnose the failure and create a refined retry.">?</span>
+              </label>
+              <select
+                id="retryPolicy"
+                value={retryPolicy}
+                onChange={e => setRetryPolicy(e.target.value as RetryPolicy)}
+              >
+                <option value="none">No retry</option>
+                <option value="same">Retry same</option>
+                <option value="analyze">Analyze & retry</option>
+              </select>
+            </div>
+            {retryPolicy !== 'none' && (
+              <div className="form-group form-group-sm">
+                <label htmlFor="maxRetries">Max Retries</label>
+                <input
+                  id="maxRetries"
+                  type="number"
+                  value={maxRetries}
+                  onChange={e => setMaxRetries(Number(e.target.value))}
+                  min={1}
+                  max={10}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="form-group">
+            <label>
+              Completion Checks
+              <span className="tooltip-icon" data-tip="Validate agent output before accepting 'done'. Failed checks convert the job to 'failed' and can trigger retry.">?</span>
+            </label>
+            <div className="completion-checks-list">
+              <label className="form-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={checkDiffNotEmpty}
+                  onChange={e => setCheckDiffNotEmpty(e.target.checked)}
+                />
+                Diff not empty
+              </label>
+              <label className="form-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={checkNoErrors}
+                  onChange={e => setCheckNoErrors(e.target.checked)}
+                />
+                No errors in output
+              </label>
+            </div>
+            <input
+              type="text"
+              value={customCheckCmd}
+              onChange={e => setCustomCheckCmd(e.target.value)}
+              placeholder="Custom check command (exit 0 = pass)"
+              style={{ marginTop: 6 }}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-checkbox-label">
+              <input
+                type="checkbox"
+                checked={reviewEnabled}
+                onChange={e => setReviewEnabled(e.target.checked)}
+              />
+              Review on completion
+              <span className="tooltip-icon" data-tip="After job completes, spawn review agents to validate the work. Job is marked approved only if reviews pass.">?</span>
+            </label>
+          </div>
+
+          {reviewEnabled && (
+            <div className="form-group" style={{ paddingLeft: 20 }}>
+              <label>Review Models</label>
+              <div className="completion-checks-list">
+                {[
+                  { value: 'claude-haiku-4-5-20251001', label: 'Haiku' },
+                  { value: 'claude-sonnet-4-6[1m]', label: 'Sonnet' },
+                  { value: 'claude-opus-4-6[1m]', label: 'Opus' },
+                ].map(m => (
+                  <label key={m.value} className="form-checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={reviewModels.includes(m.value)}
+                      onChange={e => setReviewModels(prev =>
+                        e.target.checked ? [...prev, m.value] : prev.filter(x => x !== m.value)
+                      )}
+                    />
+                    {m.label}
+                  </label>
+                ))}
+              </div>
+              <label className="form-checkbox-label" style={{ marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={reviewAuto}
+                  onChange={e => setReviewAuto(e.target.checked)}
+                />
+                Auto-trigger reviews
+              </label>
+            </div>
+          )}
 
           {error && <div className="form-error">{error}</div>}
 

@@ -6,6 +6,8 @@ interface AgentGridProps {
   agents: AgentWithJob[];
   queuedJobs?: Job[];
   onSelectAgent: (agent: AgentWithJob) => void;
+  onArchiveJob?: (job: Job) => void;
+  onArchiveAll?: (jobs: Job[]) => void;
   templates?: unknown;
   selectedAgentId?: string | null;
 }
@@ -29,7 +31,7 @@ function tilePriority(agent: AgentWithJob): number {
   return 4;
 }
 
-export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, selectedAgentId }: AgentGridProps) {
+export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, onArchiveJob, onArchiveAll, selectedAgentId }: AgentGridProps) {
   const [activeFilters, setActiveFilters] = useState<Set<AgentStatus>>(new Set());
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const [customOrder, setCustomOrder] = useState<string[]>([]);
@@ -190,6 +192,20 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, selectedAgen
               Disconnect All
             </button>
           )}
+          {onArchiveAll && (() => {
+            const finishedJobs = agents
+              .filter(a => a.status === 'done' || a.status === 'failed' || a.status === 'cancelled')
+              .map(a => a.job);
+            return finishedJobs.length > 0 ? (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => onArchiveAll(finishedJobs)}
+              >
+                Archive All Finished
+                <span className="agent-filter-count">{finishedJobs.length}</span>
+              </button>
+            ) : null;
+          })()}
         </div>
       )}
 
@@ -221,6 +237,7 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, selectedAgen
                   const parent = agents.find(a => a.id === parentId);
                   if (parent) onSelectAgent(parent);
                 }}
+                onArchiveJob={onArchiveJob ? () => onArchiveJob(agent.job) : undefined}
                 templateName={agent.template_name ?? undefined}
                 isSelected={selectedAgentId === agent.id}
               />

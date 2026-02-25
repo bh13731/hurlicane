@@ -118,6 +118,17 @@ function createWorktree(job: Job, agentId: string): Job {
     timeout: 30000,
   });
 
+  // Record worktree in DB for cleanup tracking
+  try {
+    queries.insertWorktree({
+      id: randomUUID(),
+      agent_id: agentId,
+      job_id: job.id,
+      path: worktreeDir,
+      branch: branchName,
+    });
+  } catch (err) { console.warn('[queue] failed to record worktree:', err); }
+
   // Return a copy of the job with the overridden work_dir
   return { ...job, work_dir: worktreeDir } as any;
 }

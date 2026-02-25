@@ -1,12 +1,24 @@
 import React from 'react';
 import type { Job, Project } from '@shared/types';
 
+function ArchiveIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1" y="2" width="14" height="3" rx="0.75"/>
+      <path d="M2.5 5v8.5a.5.5 0 00.5.5h10a.5.5 0 00.5-.5V5"/>
+      <line x1="8" y1="7.5" x2="8" y2="11.5"/>
+      <polyline points="6,9.5 8,11.5 10,9.5"/>
+    </svg>
+  );
+}
+
 interface WorkQueueSidebarProps {
   jobs: Job[];
   projects?: Project[];
   onSelectJob?: (job: Job) => void;
   onCancelJob?: (job: Job) => void;
   onRunJobNow?: (job: Job) => void;
+  onArchiveJob?: (job: Job) => void;
 }
 
 function formatInterval(ms: number): string {
@@ -25,12 +37,13 @@ function formatTimeUntil(ts: number): string {
   return `${Math.round(diff / 86_400_000)}d`;
 }
 
-export function WorkQueueSidebar({ jobs, projects = [], onSelectJob, onCancelJob, onRunJobNow }: WorkQueueSidebarProps) {
+export function WorkQueueSidebar({ jobs, projects = [], onSelectJob, onCancelJob, onRunJobNow, onArchiveJob }: WorkQueueSidebarProps) {
   const projectMap = Object.fromEntries(projects.map(p => [p.id, p.name]));
 
-  const queued = jobs.filter(j => j.status === 'queued');
-  const active = jobs.filter(j => j.status === 'assigned' || j.status === 'running');
-  const done = jobs
+  const visibleJobs = jobs.filter(j => !j.archived_at);
+  const queued = visibleJobs.filter(j => j.status === 'queued');
+  const active = visibleJobs.filter(j => j.status === 'assigned' || j.status === 'running');
+  const done = visibleJobs
     .filter(j => j.status === 'done' || j.status === 'failed' || j.status === 'cancelled')
     .sort((a, b) => b.updated_at - a.updated_at);
 
@@ -43,6 +56,13 @@ export function WorkQueueSidebar({ jobs, projects = [], onSelectJob, onCancelJob
     job.repeat_interval_ms ? (
       <span className="sidebar-job-repeat" title={`Repeats every ${formatInterval(job.repeat_interval_ms)}`}>
         ↻ {formatInterval(job.repeat_interval_ms)}
+      </span>
+    ) : null;
+
+  const RetryBadge = ({ job }: { job: Job }) =>
+    job.original_job_id ? (
+      <span className="sidebar-job-retry" title={`Retry ${job.retry_count}/${job.max_retries}`}>
+        ↺ {job.retry_count}/{job.max_retries}
       </span>
     ) : null;
 
@@ -79,6 +99,7 @@ export function WorkQueueSidebar({ jobs, projects = [], onSelectJob, onCancelJob
               onClick={() => onSelectJob?.(job)}
             >
               <span className="sidebar-job-title">{job.title}</span>
+              <RetryBadge job={job} />
               <RepeatBadge job={job} />
               <ProjectTag job={job} />
             </div>
@@ -94,6 +115,7 @@ export function WorkQueueSidebar({ jobs, projects = [], onSelectJob, onCancelJob
               <span className="sidebar-job-bullet">•</span>
               <span className="sidebar-job-title">{job.title}</span>
               <ScheduledBadge job={job} />
+              <RetryBadge job={job} />
               <RepeatBadge job={job} />
               <ProjectTag job={job} />
               {onCancelJob && (
@@ -121,14 +143,24 @@ export function WorkQueueSidebar({ jobs, projects = [], onSelectJob, onCancelJob
             >
               <span className="sidebar-job-bullet">{job.status === 'done' ? '✓' : job.status === 'failed' ? '✗' : '⊘'}</span>
               <span className="sidebar-job-title">{job.title}</span>
+              <RetryBadge job={job} />
               <RepeatBadge job={job} />
               <ProjectTag job={job} />
+              {onArchiveJob && (
+                <button
+                  className="sidebar-job-cancel"
+                  onClick={e => { e.stopPropagation(); onArchiveJob(job); }}
+                  title="Archive job"
+                >
+                  <ArchiveIcon />
+                </button>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      {jobs.length === 0 && (
+      {visibleJobs.length === 0 && (
         <p className="sidebar-empty">No jobs yet</p>
       )}
     </aside>

@@ -47,6 +47,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showDebateForm, setShowDebateForm] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [archivedJobs, setArchivedJobs] = useState<Job[]>([]);
   const [leftTab, setLeftTab] = useState<'feed' | 'lineage'>('feed');
 
   const [todayClaudeCost, setTodayClaudeCost] = useState<number | null>(null);
@@ -117,11 +118,22 @@ export default function App() {
     return () => clearInterval(id);
   }, [fetchTodayCost]);
 
+  // ─── Load archived jobs when the archived view is active ──────────────────
+  useEffect(() => {
+    if (activeProjectId !== '__archived__') return;
+    fetch('/api/jobs?archived=1')
+      .then(r => r.ok ? r.json() : [])
+      .then((data: Job[]) => setArchivedJobs(data))
+      .catch(() => {});
+  }, [activeProjectId]);
+
   // ─── Project-scoped filtering ──────────────────────────────────────────────
   const filteredJobs = useMemo(() => {
-    if (activeProjectId) return jobs.filter(j => j.project_id === activeProjectId);
-    return jobs.filter(j => !j.project_id);
-  }, [jobs, activeProjectId]);
+    if (activeProjectId === '__archived__') return archivedJobs;
+    const activeJobs = jobs.filter(j => !j.archived_at);
+    if (activeProjectId) return activeJobs.filter(j => j.project_id === activeProjectId);
+    return activeJobs.filter(j => !j.project_id);
+  }, [jobs, activeProjectId, archivedJobs]);
 
   const filteredJobIds = useMemo(() => new Set(filteredJobs.map(j => j.id)), [filteredJobs]);
 
@@ -131,6 +143,7 @@ export default function App() {
 
   const activeProjectName = useMemo(() => {
     if (!activeProjectId) return null;
+    if (activeProjectId === '__archived__') return 'Archived';
     return projects.find(p => p.id === activeProjectId)?.name ?? null;
   }, [projects, activeProjectId]);
 
@@ -232,6 +245,14 @@ export default function App() {
     await fetch(`/api/jobs/${job.id}/run-now`, { method: 'POST' });
   }, []);
 
+  const handleArchiveJob = useCallback(async (job: Job) => {
+    await fetch(`/api/jobs/${job.id}/archive`, { method: 'POST' });
+  }, []);
+
+  const handleArchiveAll = useCallback(async (jobs: Job[]) => {
+    await Promise.all(jobs.map(j => fetch(`/api/jobs/${j.id}/archive`, { method: 'POST' })));
+  }, []);
+
   const handleCloseTerminal = useCallback(() => {
     setSelectedAgent(null);
     setLeftTab('feed');
@@ -262,7 +283,7 @@ export default function App() {
               onSelectAgent={handleSelectAgent}
             />
           ) : (
-            <WorkQueueSidebar jobs={jobs} projects={projects} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} />
+            <WorkQueueSidebar jobs={jobs} projects={projects} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} onArchiveJob={handleArchiveJob} />
           )}
           <RunningJobsPanel
             agents={agents}
@@ -272,7 +293,7 @@ export default function App() {
         </div>
 
         <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
-          <AgentGrid agents={filteredAgents} queuedJobs={filteredJobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} templates={templates} selectedAgentId={selectedAgent?.id ?? null} />
+          <AgentGrid agents={filteredAgents} queuedJobs={filteredJobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} onArchiveJob={handleArchiveJob} onArchiveAll={handleArchiveAll} templates={templates} selectedAgentId={selectedAgent?.id ?? null} />
         </main>
 
         {selectedAgent ? (

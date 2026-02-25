@@ -1,0 +1,363 @@
+{
+  "items": [
+    {
+      "id": 37,
+      "type": "review",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24019,
+      "prTitle": "fix: enforce one active withdrawal per node to close TOCTOU race",
+      "message": "DISMISSED by @mhrheaume: \"# 🧚 Alembic Fairy 🧚\n\nPssst! The main branch has been updated with new alembic …\"",
+      "createdAt": "2026-02-24T19:34:58.424Z"
+    },
+    {
+      "id": 40,
+      "type": "ci_failure",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24075,
+      "prTitle": "feat: Fireblocks integration 5/5 — recovery, reconciliation, and Celery tasks",
+      "message": "CI/CD FAILING: test, required-checks, check-python, check-ent-db, check",
+      "createdAt": "2026-02-24T21:54:56.738Z"
+    },
+    {
+      "id": 41,
+      "type": "ci_failure",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24074,
+      "prTitle": "feat: Fireblocks integration 4/5 — withdrawals, sweeps, and webhooks",
+      "message": "CI/CD FAILING: test, required-checks, check-python, check-ent-db, check",
+      "createdAt": "2026-02-24T21:54:57.708Z"
+    },
+    {
+      "id": 42,
+      "type": "ci_failure",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24073,
+      "prTitle": "feat: Fireblocks integration 3/5 — vault management, ledger, and deposits",
+      "message": "CI/CD FAILING: test, required-checks, check-python, check-ent-db, check",
+      "createdAt": "2026-02-24T21:54:58.719Z"
+    },
+    {
+      "id": 43,
+      "type": "ci_failure",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24072,
+      "prTitle": "feat: Fireblocks integration 2/5 — API client and utilities",
+      "message": "CI/CD FAILING: test, required-checks, check-python, check-ent-db, check",
+      "createdAt": "2026-02-24T21:54:59.974Z"
+    },
+    {
+      "id": 44,
+      "type": "ci_failure",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24071,
+      "prTitle": "feat: Fireblocks integration 1/5 — data models and migrations",
+      "message": "CI/CD FAILING: test, required-checks, check-ent-db",
+      "createdAt": "2026-02-24T21:55:01.107Z"
+    },
+    {
+      "id": 45,
+      "type": "review",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24060,
+      "prTitle": "fix: guard against double gen_claim_payment on concurrent webhook delivery",
+      "message": "CHANGES REQUESTED by @mhrheaume: \"# 🧚 Alembic Fairy 🧚\n\nPssst! The main branch has been updated with new alembic …\"",
+      "createdAt": "2026-02-24T23:34:56.863Z"
+    },
+    {
+      "id": 46,
+      "type": "review",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24019,
+      "prTitle": "fix: enforce one active withdrawal per node to close TOCTOU race",
+      "message": "CHANGES REQUESTED by @mhrheaume: \"# 🧚 Alembic Fairy 🧚\n\nPssst! The main branch has been updated with new alembic …\"",
+      "createdAt": "2026-02-24T23:34:57.872Z"
+    },
+    {
+      "id": 47,
+      "type": "review",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24018,
+      "prTitle": "fix: fix unreachable success logging in keysend payments from sparknode",
+      "message": "APPROVED by @mhrheaume",
+      "createdAt": "2026-02-25T05:14:58.726Z"
+    },
+    {
+      "id": 48,
+      "type": "review",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24015,
+      "prTitle": "fix: validate expires_at in signed requests to prevent replay",
+      "message": "APPROVED by @mhrheaume",
+      "createdAt": "2026-02-25T05:25:01.083Z"
+    },
+    {
+      "id": 49,
+      "type": "review",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24014,
+      "prTitle": "fix: make self-payment atomic to prevent funds-loss window",
+      "message": "APPROVED by @mhrheaume",
+      "createdAt": "2026-02-25T05:35:02.566Z"
+    },
+    {
+      "id": 50,
+      "type": "review",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24019,
+      "prTitle": "fix: enforce one active withdrawal per node to close TOCTOU race",
+      "message": "review comment by @mhrheaume",
+      "createdAt": "2026-02-25T06:34:58.225Z"
+    },
+    {
+      "id": 51,
+      "type": "ci_failure",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24019,
+      "prTitle": "fix: enforce one active withdrawal per node to close TOCTOU race",
+      "message": "CI/CD FAILING: check-ent-db",
+      "createdAt": "2026-02-25T18:34:58.381Z"
+    },
+    {
+      "id": 52,
+      "type": "review",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24018,
+      "prTitle": "fix: fix unreachable success logging in keysend payments from sparknode",
+      "message": "APPROVED by @mhrheaume",
+      "createdAt": "2026-02-25T18:44:59.527Z"
+    }
+  ],
+  "nextId": 53,
+  "seenComments": {
+    "lightsparkdev/webdev#24003#comment#IC_kwDOHaFZpc7rQ7TO": true,
+    "lightsparkdev/webdev#23995#comment#IC_kwDOHaFZpc7rNNpk": true,
+    "lightsparkdev/webdev#23995#comment#IC_kwDOHaFZpc7rOeAB": true,
+    "lightsparkdev/webdev#23994#comment#IC_kwDOHaFZpc7rNJ8S": true,
+    "lightsparkdev/webdev#23994#comment#IC_kwDOHaFZpc7rOd-C": true,
+    "lightsparkdev/webdev#23994#comment#IC_kwDOHaFZpc7rOf2H": true,
+    "lightsparkdev/webdev#23994#comment#IC_kwDOHaFZpc7rOoph": true,
+    "lightsparkdev/webdev#23993#comment#IC_kwDOHaFZpc7rNFi0": true,
+    "lightsparkdev/webdev#23993#comment#IC_kwDOHaFZpc7rOcgD": true,
+    "lightsparkdev/webdev#23993#comment#IC_kwDOHaFZpc7rOoFi": true,
+    "lightsparkdev/webdev#23992#comment#IC_kwDOHaFZpc7rNDzi": true,
+    "lightsparkdev/webdev#23992#comment#IC_kwDOHaFZpc7rNkJX": true,
+    "lightsparkdev/webdev#23992#comment#IC_kwDOHaFZpc7rNkdV": true,
+    "lightsparkdev/webdev#23990#comment#IC_kwDOHaFZpc7rNDiP": true,
+    "lightsparkdev/webdev#23990#comment#IC_kwDOHaFZpc7rNjuw": true,
+    "lightsparkdev/webdev#23978#comment#IC_kwDOHaFZpc7qyMHS": true,
+    "lightsparkdev/webdev#23978#comment#IC_kwDOHaFZpc7q1eB4": true,
+    "lightsparkdev/webdev#23978#comment#IC_kwDOHaFZpc7q1fCY": true,
+    "lightsparkdev/webdev#23978#comment#IC_kwDOHaFZpc7q3A54": true,
+    "lightsparkdev/webdev#23978#comment#IC_kwDOHaFZpc7rP1m0": true,
+    "lightsparkdev/spark#5443#comment#IC_kwDONJHOUs7q-B4u": true,
+    "lightsparkdev/spark#5443#comment#IC_kwDONJHOUs7q--ZK": true,
+    "lightsparkdev/spark#5441#comment#IC_kwDONJHOUs7q9_zC": true,
+    "lightsparkdev/spark#5441#comment#IC_kwDONJHOUs7q_BWs": true,
+    "lightsparkdev/spark#5441#comment#IC_kwDONJHOUs7rQqQl": true,
+    "lightsparkdev/spark#5439#comment#IC_kwDONJHOUs7q9nzk": true,
+    "lightsparkdev/spark#5439#comment#IC_kwDONJHOUs7q9pPk": true,
+    "lightsparkdev/spark#5429#comment#IC_kwDONJHOUs7q8bIz": true,
+    "lightsparkdev/spark#5429#comment#IC_kwDONJHOUs7q8cS-": true,
+    "lightsparkdev/spark#5429#comment#IC_kwDONJHOUs7q9WjE": true,
+    "lightsparkdev/spark#5429#comment#IC_kwDONJHOUs7rTckZ": true,
+    "lightsparkdev/webdev#23978#comment#IC_kwDOHaFZpc7ro0V7": true,
+    "lightsparkdev/spark#5443#comment#IC_kwDONJHOUs7ro9Vx": true,
+    "lightsparkdev/webdev#24003#comment#IC_kwDOHaFZpc7rpecu": true,
+    "lightsparkdev/spark#5443#comment#IC_kwDONJHOUs7rqApC": true,
+    "lightsparkdev/webdev#24019#comment#IC_kwDOHaFZpc7rqmpl": true,
+    "lightsparkdev/webdev#24019#comment#IC_kwDOHaFZpc7rqmyo": true,
+    "lightsparkdev/webdev#24018#comment#IC_kwDOHaFZpc7rqhPK": true,
+    "lightsparkdev/webdev#24016#comment#IC_kwDOHaFZpc7rqqpX": true,
+    "lightsparkdev/webdev#24015#comment#IC_kwDOHaFZpc7rqwYf": true,
+    "lightsparkdev/webdev#24014#comment#IC_kwDOHaFZpc7rrrAZ": true,
+    "lightsparkdev/webdev#24060#comment#IC_kwDOHaFZpc7rsZOH": true,
+    "lightsparkdev/spark#5442#comment#IC_kwDONJHOUs7q-ANX": true,
+    "lightsparkdev/spark#5442#comment#IC_kwDONJHOUs7rs3y9": true,
+    "lightsparkdev/webdev#24075#comment#IC_kwDOHaFZpc7ru6hE": true,
+    "lightsparkdev/webdev#24074#comment#IC_kwDOHaFZpc7ru5bq": true,
+    "lightsparkdev/webdev#24073#comment#IC_kwDOHaFZpc7ru5JB": true,
+    "lightsparkdev/webdev#24072#comment#IC_kwDOHaFZpc7ru7A0": true,
+    "lightsparkdev/webdev#24071#comment#IC_kwDOHaFZpc7ru5R4": true
+  },
+  "seenReviews": {
+    "lightsparkdev/webdev#23994#review#PRR_kwDOHaFZpc7lCyu4": true,
+    "lightsparkdev/webdev#23994#review#PRR_kwDOHaFZpc7lC0dp": true,
+    "lightsparkdev/webdev#23993#review#PRR_kwDOHaFZpc7lCxWW": true,
+    "lightsparkdev/webdev#23992#review#PRR_kwDOHaFZpc7lCBWw": true,
+    "lightsparkdev/webdev#23992#review#PRR_kwDOHaFZpc7lC70C": true,
+    "lightsparkdev/webdev#23978#review#PRR_kwDOHaFZpc7lDY11": true,
+    "lightsparkdev/spark#5443#review#PRR_kwDONJHOUs7k35Ac": true,
+    "lightsparkdev/spark#5443#review#PRR_kwDONJHOUs7lCLwq": true,
+    "lightsparkdev/spark#5441#review#PRR_kwDONJHOUs7k3Qsw": true,
+    "lightsparkdev/spark#5429#review#PRR_kwDONJHOUs7kzBDM": true,
+    "lightsparkdev/spark#5439#review#PRR_kwDONJHOUs7lGaTg": true,
+    "lightsparkdev/spark#5439#review#PRR_kwDONJHOUs7lGbr1": true,
+    "lightsparkdev/spark#5439#review#PRR_kwDONJHOUs7lGc_Q": true,
+    "lightsparkdev/webdev#24003#review#PRR_kwDOHaFZpc7lGpYY": true,
+    "lightsparkdev/spark#5439#review#PRR_kwDONJHOUs7lGqAh": true,
+    "lightsparkdev/spark#5439#review#PRR_kwDONJHOUs7lGqGy": true,
+    "lightsparkdev/webdev#23978#review#PRR_kwDOHaFZpc7lG_rb": true,
+    "lightsparkdev/webdev#23978#review#PRR_kwDOHaFZpc7lGKkx": true,
+    "lightsparkdev/spark#5439#review#PRR_kwDONJHOUs7lG-4Y": true,
+    "lightsparkdev/webdev#24003#review#PRR_kwDOHaFZpc7lHMaF": true,
+    "lightsparkdev/webdev#23978#review#PRR_kwDOHaFZpc7lHEvd": true,
+    "lightsparkdev/spark#5429#review#PRR_kwDONJHOUs7lHUPX": true,
+    "lightsparkdev/spark#5443#review#PRR_kwDONJHOUs7lDi5m": true,
+    "lightsparkdev/webdev#23978#review#PRR_kwDOHaFZpc7lIM7s": true,
+    "lightsparkdev/webdev#24003#review#PRR_kwDOHaFZpc7lKx-d": true,
+    "lightsparkdev/webdev#23992#review#PRR_kwDOHaFZpc7lNXzE": true,
+    "lightsparkdev/webdev#23992#review#PRR_kwDOHaFZpc7lNYaF": true,
+    "lightsparkdev/webdev#23990#review#PRR_kwDOHaFZpc7lNY8b": true,
+    "lightsparkdev/webdev#23978#review#PRR_kwDOHaFZpc7lNqWZ": true,
+    "lightsparkdev/spark#5443#review#PRR_kwDONJHOUs7lbo2t": true,
+    "lightsparkdev/spark#5443#review#PRR_kwDONJHOUs7lcHS1": true,
+    "lightsparkdev/webdev#24019#review#PRR_kwDOHaFZpc7lG_YK": true,
+    "lightsparkdev/webdev#24019#review#PRR_kwDOHaFZpc7lINIg": true,
+    "lightsparkdev/webdev#24019#review#PRR_kwDOHaFZpc7ldY3F": true,
+    "lightsparkdev/webdev#24018#review#PRR_kwDOHaFZpc7lG_bJ": true,
+    "lightsparkdev/webdev#24018#review#PRR_kwDOHaFZpc7lINfE": true,
+    "lightsparkdev/webdev#24016#review#PRR_kwDOHaFZpc7lG_iF": true,
+    "lightsparkdev/webdev#24016#review#PRR_kwDOHaFZpc7lINWx": true,
+    "lightsparkdev/webdev#24015#review#PRR_kwDOHaFZpc7lG_lV": true,
+    "lightsparkdev/webdev#24015#review#PRR_kwDOHaFZpc7lINBc": true,
+    "lightsparkdev/webdev#24015#review#PRR_kwDOHaFZpc7ldieP": true,
+    "lightsparkdev/webdev#24014#review#PRR_kwDOHaFZpc7lG_oZ": true,
+    "lightsparkdev/webdev#24014#review#PRR_kwDOHaFZpc7lINSO": true,
+    "lightsparkdev/webdev#24014#review#PRR_kwDOHaFZpc7leZe0": true,
+    "lightsparkdev/webdev#24014#review#PRR_kwDOHaFZpc7ledOr": true,
+    "lightsparkdev/spark#5443#review#PRR_kwDONJHOUs7lexbF": true,
+    "lightsparkdev/webdev#24019#review#PRR_kwDOHaFZpc7le43o": true,
+    "lightsparkdev/webdev#23978#review#PRR_kwDOHaFZpc7le4-d": true,
+    "lightsparkdev/webdev#24075#review#PRR_kwDOHaFZpc7lhaXf": true,
+    "lightsparkdev/webdev#24074#review#PRR_kwDOHaFZpc7lhZTh": true,
+    "lightsparkdev/webdev#24073#review#PRR_kwDOHaFZpc7lhZAt": true,
+    "lightsparkdev/webdev#24072#review#PRR_kwDOHaFZpc7lha1W": true,
+    "lightsparkdev/webdev#24060#review#PRR_kwDOHaFZpc7likiQ": true,
+    "lightsparkdev/webdev#24019#review#PRR_kwDOHaFZpc7likkJ": true,
+    "lightsparkdev/webdev#24018#review#PRR_kwDOHaFZpc7ll3HT": true,
+    "lightsparkdev/webdev#24015#review#PRR_kwDOHaFZpc7ll5Ut": true,
+    "lightsparkdev/webdev#24014#review#PRR_kwDOHaFZpc7lmH29": true,
+    "lightsparkdev/webdev#24019#review#PRR_kwDOHaFZpc7lmMAx": true,
+    "lightsparkdev/webdev#24018#review#PRR_kwDOHaFZpc7l17Sg": true
+  },
+  "seenCiStatus": {
+    "lightsparkdev/webdev#24003": "success",
+    "lightsparkdev/webdev#23995": "success",
+    "lightsparkdev/webdev#23994": "success",
+    "lightsparkdev/webdev#23993": "success",
+    "lightsparkdev/webdev#23992": "success",
+    "lightsparkdev/webdev#23990": "success",
+    "lightsparkdev/webdev#23978": "none",
+    "lightsparkdev/spark#5443": "success",
+    "lightsparkdev/spark#5441": "success",
+    "lightsparkdev/spark#5439": "success",
+    "lightsparkdev/spark#5429": "success",
+    "lightsparkdev/webdev#24019": "failure",
+    "lightsparkdev/webdev#24018": "success",
+    "lightsparkdev/webdev#24016": "success",
+    "lightsparkdev/webdev#24015": "success",
+    "lightsparkdev/webdev#24014": "success",
+    "lightsparkdev/webdev#24060": "success",
+    "lightsparkdev/spark#5442": "success",
+    "lightsparkdev/webdev#24075": "failure",
+    "lightsparkdev/webdev#24074": "failure",
+    "lightsparkdev/webdev#24073": "failure",
+    "lightsparkdev/webdev#24072": "failure",
+    "lightsparkdev/webdev#24071": "failure"
+  },
+  "knownPRs": {
+    "lightsparkdev/webdev#24003": {
+      "title": "Fix PAYMENT_PREIMAGE_RECOVERED fail path and assert in production code",
+      "updatedAt": "2026-02-24T17:10:47Z"
+    },
+    "lightsparkdev/webdev#23995": {
+      "title": "fix: add compensation path for Grid lightning payment failures",
+      "updatedAt": "2026-02-23T18:08:54Z"
+    },
+    "lightsparkdev/webdev#23994": {
+      "title": "fix: add idempotency guard to gen_update_internal_transfer_action",
+      "updatedAt": "2026-02-23T19:03:36Z"
+    },
+    "lightsparkdev/webdev#23993": {
+      "title": "fix: enforce quote expiry on LSP payment retry path",
+      "updatedAt": "2026-02-23T18:20:53Z"
+    },
+    "lightsparkdev/webdev#23992": {
+      "title": "fix: use Decimal for USDC amount conversion to avoid float truncation",
+      "updatedAt": "2026-02-24T06:37:07Z"
+    },
+    "lightsparkdev/webdev#23990": {
+      "title": "fix: use constant-time comparison for Alchemy HMAC signature",
+      "updatedAt": "2026-02-24T16:55:03Z"
+    },
+    "lightsparkdev/webdev#23978": {
+      "title": "Add Fireblocks custodial crypto integration to paycore/Grid",
+      "updatedAt": "2026-02-24T21:27:26Z"
+    },
+    "lightsparkdev/spark#5443": {
+      "title": "Check REVEALED/FINALIZED status before expiry in pre-emption filter",
+      "updatedAt": "2026-02-24T19:18:25Z"
+    },
+    "lightsparkdev/spark#5441": {
+      "title": "Cancel pre-empted token transactions instead of just logging",
+      "updatedAt": "2026-02-23T20:03:00Z"
+    },
+    "lightsparkdev/spark#5439": {
+      "title": "Fix two correctness bugs in token transaction prepare path",
+      "updatedAt": "2026-02-23T22:30:15Z"
+    },
+    "lightsparkdev/spark#5429": {
+      "title": "Fix L1 announcer validation: name limit and bounds checks",
+      "updatedAt": "2026-02-23T22:40:46Z"
+    },
+    "lightsparkdev/webdev#24019": {
+      "title": "fix: enforce one active withdrawal per node to close TOCTOU race",
+      "updatedAt": "2026-02-25T18:34:57Z"
+    },
+    "lightsparkdev/webdev#24018": {
+      "title": "fix: fix unreachable success logging in keysend payments from sparknode",
+      "updatedAt": "2026-02-25T18:40:27Z"
+    },
+    "lightsparkdev/webdev#24016": {
+      "title": "fix: block stuck-transfer return when outgoing payment is IN_FLIGHT",
+      "updatedAt": "2026-02-24T18:06:58Z"
+    },
+    "lightsparkdev/webdev#24015": {
+      "title": "fix: validate expires_at in signed requests to prevent replay",
+      "updatedAt": "2026-02-25T05:17:38Z"
+    },
+    "lightsparkdev/webdev#24014": {
+      "title": "fix: make self-payment atomic to prevent funds-loss window",
+      "updatedAt": "2026-02-25T05:31:32Z"
+    },
+    "lightsparkdev/webdev#24060": {
+      "title": "fix: guard against double gen_claim_payment on concurrent webhook delivery",
+      "updatedAt": "2026-02-24T23:28:15Z"
+    },
+    "lightsparkdev/spark#5442": {
+      "title": "Fix JIT finalization to support mint and create parent transactions",
+      "updatedAt": "2026-02-24T19:58:27Z"
+    },
+    "lightsparkdev/webdev#24075": {
+      "title": "feat: Fireblocks integration 5/5 — recovery, reconciliation, and Celery tasks",
+      "updatedAt": "2026-02-24T21:54:14Z"
+    },
+    "lightsparkdev/webdev#24074": {
+      "title": "feat: Fireblocks integration 4/5 — withdrawals, sweeps, and webhooks",
+      "updatedAt": "2026-02-24T21:53:05Z"
+    },
+    "lightsparkdev/webdev#24073": {
+      "title": "feat: Fireblocks integration 3/5 — vault management, ledger, and deposits",
+      "updatedAt": "2026-02-24T21:52:48Z"
+    },
+    "lightsparkdev/webdev#24072": {
+      "title": "feat: Fireblocks integration 2/5 — API client and utilities",
+      "updatedAt": "2026-02-24T21:54:45Z"
+    },
+    "lightsparkdev/webdev#24071": {
+      "title": "feat: Fireblocks integration 1/5 — data models and migrations",
+      "updatedAt": "2026-02-24T21:52:52Z"
+    }
+  },
+  "lastCheck": "2026-02-25T18:55:10.272Z"
+}
