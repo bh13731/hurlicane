@@ -234,7 +234,10 @@ export default function App() {
 
   const handleSelectJob = useCallback((job: Job) => {
     const agent = agents.find(a => a.job_id === job.id);
-    if (agent) setSelectedAgent(agent);
+    if (agent) {
+      setSelectedAgent(agent);
+      setActiveProjectId(agent.job.project_id ?? null);
+    }
   }, [agents]);
 
   const handleCancelJob = useCallback(async (job: Job) => {
