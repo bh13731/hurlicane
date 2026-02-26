@@ -10,51 +10,6 @@
       "createdAt": "2026-02-24T19:34:58.424Z"
     },
     {
-      "id": 40,
-      "type": "ci_failure",
-      "repo": "lightsparkdev/webdev",
-      "prNum": 24075,
-      "prTitle": "feat: Fireblocks integration 5/5 — recovery, reconciliation, and Celery tasks",
-      "message": "CI/CD FAILING: test, required-checks, check-python, check-ent-db, check",
-      "createdAt": "2026-02-24T21:54:56.738Z"
-    },
-    {
-      "id": 41,
-      "type": "ci_failure",
-      "repo": "lightsparkdev/webdev",
-      "prNum": 24074,
-      "prTitle": "feat: Fireblocks integration 4/5 — withdrawals, sweeps, and webhooks",
-      "message": "CI/CD FAILING: test, required-checks, check-python, check-ent-db, check",
-      "createdAt": "2026-02-24T21:54:57.708Z"
-    },
-    {
-      "id": 42,
-      "type": "ci_failure",
-      "repo": "lightsparkdev/webdev",
-      "prNum": 24073,
-      "prTitle": "feat: Fireblocks integration 3/5 — vault management, ledger, and deposits",
-      "message": "CI/CD FAILING: test, required-checks, check-python, check-ent-db, check",
-      "createdAt": "2026-02-24T21:54:58.719Z"
-    },
-    {
-      "id": 43,
-      "type": "ci_failure",
-      "repo": "lightsparkdev/webdev",
-      "prNum": 24072,
-      "prTitle": "feat: Fireblocks integration 2/5 — API client and utilities",
-      "message": "CI/CD FAILING: test, required-checks, check-python, check-ent-db, check",
-      "createdAt": "2026-02-24T21:54:59.974Z"
-    },
-    {
-      "id": 44,
-      "type": "ci_failure",
-      "repo": "lightsparkdev/webdev",
-      "prNum": 24071,
-      "prTitle": "feat: Fireblocks integration 1/5 — data models and migrations",
-      "message": "CI/CD FAILING: test, required-checks, check-ent-db",
-      "createdAt": "2026-02-24T21:55:01.107Z"
-    },
-    {
       "id": 45,
       "type": "review",
       "repo": "lightsparkdev/webdev",
@@ -71,33 +26,6 @@
       "prTitle": "fix: enforce one active withdrawal per node to close TOCTOU race",
       "message": "CHANGES REQUESTED by @mhrheaume: \"# 🧚 Alembic Fairy 🧚\n\nPssst! The main branch has been updated with new alembic …\"",
       "createdAt": "2026-02-24T23:34:57.872Z"
-    },
-    {
-      "id": 47,
-      "type": "review",
-      "repo": "lightsparkdev/webdev",
-      "prNum": 24018,
-      "prTitle": "fix: fix unreachable success logging in keysend payments from sparknode",
-      "message": "APPROVED by @mhrheaume",
-      "createdAt": "2026-02-25T05:14:58.726Z"
-    },
-    {
-      "id": 48,
-      "type": "review",
-      "repo": "lightsparkdev/webdev",
-      "prNum": 24015,
-      "prTitle": "fix: validate expires_at in signed requests to prevent replay",
-      "message": "APPROVED by @mhrheaume",
-      "createdAt": "2026-02-25T05:25:01.083Z"
-    },
-    {
-      "id": 49,
-      "type": "review",
-      "repo": "lightsparkdev/webdev",
-      "prNum": 24014,
-      "prTitle": "fix: make self-payment atomic to prevent funds-loss window",
-      "message": "APPROVED by @mhrheaume",
-      "createdAt": "2026-02-25T05:35:02.566Z"
     },
     {
       "id": 50,
@@ -118,16 +46,25 @@
       "createdAt": "2026-02-25T18:34:58.381Z"
     },
     {
-      "id": 52,
+      "id": 55,
       "type": "review",
       "repo": "lightsparkdev/webdev",
-      "prNum": 24018,
-      "prTitle": "fix: fix unreachable success logging in keysend payments from sparknode",
-      "message": "APPROVED by @mhrheaume",
-      "createdAt": "2026-02-25T18:44:59.527Z"
+      "prNum": 24060,
+      "prTitle": "fix: guard against double gen_claim_payment on concurrent webhook delivery",
+      "message": "CHANGES REQUESTED by @mhrheaume: \"# 🧚 Alembic Fairy 🧚\n\nPssst! The main branch has been updated with new alembic …\"",
+      "createdAt": "2026-02-26T02:09:49.741Z"
+    },
+    {
+      "id": 56,
+      "type": "review",
+      "repo": "lightsparkdev/webdev",
+      "prNum": 24019,
+      "prTitle": "fix: enforce one active withdrawal per node to close TOCTOU race",
+      "message": "CHANGES REQUESTED by @mhrheaume: \"# 🧚 Alembic Fairy 🧚\n\nPssst! The main branch has been updated with new alembic …\"",
+      "createdAt": "2026-02-26T02:09:50.530Z"
     }
   ],
-  "nextId": 53,
+  "nextId": 57,
   "seenComments": {
     "lightsparkdev/webdev#24003#comment#IC_kwDOHaFZpc7rQ7TO": true,
     "lightsparkdev/webdev#23995#comment#IC_kwDOHaFZpc7rNNpk": true,
@@ -177,7 +114,10 @@
     "lightsparkdev/webdev#24074#comment#IC_kwDOHaFZpc7ru5bq": true,
     "lightsparkdev/webdev#24073#comment#IC_kwDOHaFZpc7ru5JB": true,
     "lightsparkdev/webdev#24072#comment#IC_kwDOHaFZpc7ru7A0": true,
-    "lightsparkdev/webdev#24071#comment#IC_kwDOHaFZpc7ru5R4": true
+    "lightsparkdev/webdev#24071#comment#IC_kwDOHaFZpc7ru5R4": true,
+    "lightsparkdev/spark#5496#comment#IC_kwDONJHOUs7sL6gb": true,
+    "lightsparkdev/spark#5496#comment#IC_kwDONJHOUs7sM3bd": true,
+    "lightsparkdev/spark#5496#comment#IC_kwDONJHOUs7sM3h5": true
   },
   "seenReviews": {
     "lightsparkdev/webdev#23994#review#PRR_kwDOHaFZpc7lCyu4": true,
@@ -238,7 +178,10 @@
     "lightsparkdev/webdev#24015#review#PRR_kwDOHaFZpc7ll5Ut": true,
     "lightsparkdev/webdev#24014#review#PRR_kwDOHaFZpc7lmH29": true,
     "lightsparkdev/webdev#24019#review#PRR_kwDOHaFZpc7lmMAx": true,
-    "lightsparkdev/webdev#24018#review#PRR_kwDOHaFZpc7l17Sg": true
+    "lightsparkdev/webdev#24018#review#PRR_kwDOHaFZpc7l17Sg": true,
+    "lightsparkdev/spark#5496#review#PRR_kwDONJHOUs7l7Ffe": true,
+    "lightsparkdev/webdev#24060#review#PRR_kwDOHaFZpc7l9EgH": true,
+    "lightsparkdev/webdev#24019#review#PRR_kwDOHaFZpc7l9EGn": true
   },
   "seenCiStatus": {
     "lightsparkdev/webdev#24003": "success",
@@ -252,7 +195,7 @@
     "lightsparkdev/spark#5441": "success",
     "lightsparkdev/spark#5439": "success",
     "lightsparkdev/spark#5429": "success",
-    "lightsparkdev/webdev#24019": "failure",
+    "lightsparkdev/webdev#24019": "success",
     "lightsparkdev/webdev#24018": "success",
     "lightsparkdev/webdev#24016": "success",
     "lightsparkdev/webdev#24015": "success",
@@ -263,7 +206,8 @@
     "lightsparkdev/webdev#24074": "failure",
     "lightsparkdev/webdev#24073": "failure",
     "lightsparkdev/webdev#24072": "failure",
-    "lightsparkdev/webdev#24071": "failure"
+    "lightsparkdev/webdev#24071": "failure",
+    "lightsparkdev/spark#5496": "success"
   },
   "knownPRs": {
     "lightsparkdev/webdev#24003": {
@@ -312,7 +256,7 @@
     },
     "lightsparkdev/webdev#24019": {
       "title": "fix: enforce one active withdrawal per node to close TOCTOU race",
-      "updatedAt": "2026-02-25T18:34:57Z"
+      "updatedAt": "2026-02-26T02:05:12Z"
     },
     "lightsparkdev/webdev#24018": {
       "title": "fix: fix unreachable success logging in keysend payments from sparknode",
@@ -332,7 +276,7 @@
     },
     "lightsparkdev/webdev#24060": {
       "title": "fix: guard against double gen_claim_payment on concurrent webhook delivery",
-      "updatedAt": "2026-02-24T23:28:15Z"
+      "updatedAt": "2026-02-26T02:05:41Z"
     },
     "lightsparkdev/spark#5442": {
       "title": "Fix JIT finalization to support mint and create parent transactions",
@@ -357,7 +301,11 @@
     "lightsparkdev/webdev#24071": {
       "title": "feat: Fireblocks integration 1/5 — data models and migrations",
       "updatedAt": "2026-02-24T21:52:52Z"
+    },
+    "lightsparkdev/spark#5496": {
+      "title": "fix: skip RETURNED rows in QueryPreimage",
+      "updatedAt": "2026-02-25T23:13:50Z"
     }
   },
-  "lastCheck": "2026-02-25T18:55:10.272Z"
+  "lastCheck": "2026-02-26T15:57:22.865Z"
 }

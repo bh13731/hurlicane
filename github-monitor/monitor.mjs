@@ -47,6 +47,14 @@ function gh(args) {
   }
 }
 
+function ghRaw(args) {
+  try {
+    return execSync(`gh ${args} 2>/dev/null`, { encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
+}
+
 function addItem(state, type, repo, prNum, prTitle, message) {
   const id = state.nextId++;
   state.items.push({ id, type, repo, prNum, prTitle, message, createdAt: new Date().toISOString() });
@@ -128,6 +136,26 @@ async function checkRepo(repo, state) {
   }
 }
 
+function purgeMergedAndClosed(state) {
+  // Collect unique PR keys from current items
+  const prKeys = [...new Set(state.items.map(i => `${i.repo}#${i.prNum}`))];
+  const removedKeys = [];
+
+  for (const key of prKeys) {
+    const [repo, numStr] = key.split('#');
+    const stateStr = ghRaw(`pr view ${numStr} --repo "${repo}" --json state --jq '.state'`);
+    if (stateStr === 'MERGED' || stateStr === 'CLOSED') {
+      removedKeys.push(key);
+    }
+  }
+
+  if (removedKeys.length > 0) {
+    const before = state.items.length;
+    state.items = state.items.filter(i => !removedKeys.includes(`${i.repo}#${i.prNum}`));
+    console.log(`[PURGE] Removed ${before - state.items.length} item(s) for ${removedKeys.length} merged/closed PR(s): ${removedKeys.join(', ')}`);
+  }
+}
+
 async function poll() {
   const state = loadState();
   console.log(`\n[${new Date().toISOString()}] Polling ${REPOS.length} repos...`);
@@ -138,6 +166,13 @@ async function poll() {
     } catch (e) {
       console.error(`Error checking ${repo}:`, e.message);
     }
+  }
+
+  // Purge items for PRs that have been merged or closed since last poll
+  try {
+    purgeMergedAndClosed(state);
+  } catch (e) {
+    console.error('Error purging merged/closed PRs:', e.message);
   }
 
   state.lastCheck = new Date().toISOString();

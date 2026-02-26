@@ -1541,8 +1541,19 @@ body {
   font-family: inherit;
 }
 
-.continue-form input:focus {
+.continue-form input[type="text"]:focus {
   border-color: var(--accent);
+}
+
+.continue-interactive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 /* ─── Agent Error Banner ───────────────────────────────────────────────────── */

@@ -90,9 +90,10 @@ export interface StartInteractiveOptions {
   job: Job;
   cols?: number;
   rows?: number;
+  resumeSessionId?: string;
 }
 
-export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: StartInteractiveOptions): void {
+export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, resumeSessionId }: StartInteractiveOptions): void {
   const workDir = (job as any).work_dir ?? process.cwd();
   const model: string | null = (job as any).model ?? null;
   const mcpPort = Number(MCP_PORT);
@@ -130,7 +131,8 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50 }: S
     execLine = `exec ${JSON.stringify(CODEX)} --dangerously-bypass-approvals-and-sandbox -C ${JSON.stringify(workDir)} -c 'mcp_servers.orchestrator.url="${mcpUrl}"'${modelFlag}`;
   } else {
     const printFlag = isDebateStage ? ' --print --output-format stream-json --verbose' : '';
-    execLine = `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''}${printFlag} "$(cat ${JSON.stringify(pFile)})"`;
+    const resumeFlag = resumeSessionId ? ` --resume ${JSON.stringify(resumeSessionId)}` : '';
+    execLine = `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''}${printFlag}${resumeFlag} "$(cat ${JSON.stringify(pFile)})"`;
   }
 
   const scriptLines = [

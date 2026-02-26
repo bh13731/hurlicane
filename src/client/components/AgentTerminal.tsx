@@ -106,12 +106,17 @@ function renderAnyEvent(raw: string): string {
 
 function RetryButton({ agentId, onRetried }: { agentId: string; onRetried: (a: AgentWithJob) => void }) {
   const [loading, setLoading] = useState(false);
+  const [interactive, setInteractive] = useState(false);
 
   const handleRetry = async () => {
     if (loading) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/agents/${agentId}/retry`, { method: 'POST' });
+      const res = await fetch(`/api/agents/${agentId}/retry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interactive }),
+      });
       if (res.ok) {
         const newAgent: AgentWithJob = await res.json();
         onRetried(newAgent);
@@ -125,6 +130,10 @@ function RetryButton({ agentId, onRetried }: { agentId: string; onRetried: (a: A
     <div className="continue-area">
       <div className="continue-form">
         <span className="continue-label">No session to resume.</span>
+        <label className="continue-interactive-toggle" title="Open as interactive tmux session">
+          <input type="checkbox" checked={interactive} onChange={e => setInteractive(e.target.checked)} />
+          Interactive
+        </label>
         <button className="btn btn-secondary btn-sm" onClick={handleRetry} disabled={loading}>
           {loading ? '…' : '↺ Retry'}
         </button>
@@ -157,6 +166,7 @@ function CancelButton({ agentId, onCancelled }: { agentId: string; onCancelled: 
 function ContinueInput({ agentId, onContinued }: { agentId: string; onContinued: (a: AgentWithJob) => void }) {
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const [interactive, setInteractive] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -166,7 +176,7 @@ function ContinueInput({ agentId, onContinued }: { agentId: string; onContinued:
       const res = await fetch(`/api/agents/${agentId}/continue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg.trim() }),
+        body: JSON.stringify({ message: msg.trim(), interactive }),
       });
       if (res.ok) {
         const newAgent: AgentWithJob = await res.json();
@@ -189,6 +199,10 @@ function ContinueInput({ agentId, onContinued }: { agentId: string; onContinued:
           disabled={loading}
           autoFocus
         />
+        <label className="continue-interactive-toggle" title="Open as interactive tmux session">
+          <input type="checkbox" checked={interactive} onChange={e => setInteractive(e.target.checked)} />
+          Interactive
+        </label>
         <button type="submit" className="btn btn-primary btn-sm" disabled={loading || !msg.trim()}>
           {loading ? '…' : 'Send'}
         </button>
