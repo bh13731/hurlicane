@@ -660,6 +660,11 @@ export function listNotes(prefix?: string): Note[] {
   return rows.map(r => cast<Note>(r));
 }
 
+export function deleteNote(key: string): void {
+  const db = getDb();
+  db.prepare('DELETE FROM notes WHERE key = ?').run(key);
+}
+
 // ─── Projects ─────────────────────────────────────────────────────────────────
 
 export function insertProject(project: Project): Project {
@@ -1018,6 +1023,29 @@ export function deleteKBEntry(id: string): void {
     db.prepare('DELETE FROM kb_fts WHERE rowid = ?').run(row.rowid);
   }
   db.prepare('DELETE FROM knowledge_base WHERE id = ?').run(id);
+}
+
+export function getMemoryForJob(projectId: string | null, limit = 10): KBEntry[] {
+  const db = getDb();
+  if (projectId) {
+    // Project-scoped first, then global, ordered by recency within each group
+    const rows = db.prepare(`
+      SELECT *, CASE WHEN project_id = ? THEN 0 ELSE 1 END AS sort_group
+      FROM knowledge_base
+      WHERE project_id = ? OR project_id IS NULL
+      ORDER BY sort_group ASC, updated_at DESC
+      LIMIT ?
+    `).all(projectId, projectId, limit);
+    return rows.map(r => cast<KBEntry>(r));
+  }
+  // No project — only global entries
+  const rows = db.prepare(`
+    SELECT * FROM knowledge_base
+    WHERE project_id IS NULL
+    ORDER BY updated_at DESC
+    LIMIT ?
+  `).all(limit);
+  return rows.map(r => cast<KBEntry>(r));
 }
 
 // ─── Reviews (Feature 3) ────────────────────────────────────────────────────

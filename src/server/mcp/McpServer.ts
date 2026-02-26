@@ -12,6 +12,8 @@ import { createJobHandler, createJobSchema } from './tools/createJob.js';
 import { waitForJobsHandler, waitForJobsSchema, activeWaits } from './tools/waitForJobs.js';
 import { writeNoteHandler, writeNoteSchema, readNoteHandler, readNoteSchema, listNotesHandler, listNotesSchema } from './tools/notes.js';
 import { watchNotesHandler, watchNotesSchema } from './tools/watchNotes.js';
+import { searchKBHandler, searchKBSchema } from './tools/knowledgeBase.js';
+import { reportLearningsHandler, reportLearningsSchema } from './tools/reportLearnings.js';
 
 // agentId → { sessionId → transport }
 const agentTransports: Map<string, Map<string, StreamableHTTPServerTransport>> = new Map();
@@ -276,6 +278,31 @@ function buildMcpServer(agentId: string): MCP {
     },
     async (input) => {
       const result = await watchNotesHandler(agentId, input as any);
+      return { content: [{ type: 'text', text: result }] };
+    }
+  );
+
+  server.tool(
+    'search_kb',
+    'Search the knowledge base for relevant memories, patterns, and past learnings. Use at the start of a task to benefit from previous agent experiences.',
+    {
+      query: searchKBSchema.shape.query,
+      project_id: searchKBSchema.shape.project_id,
+    },
+    async (input) => {
+      const result = await searchKBHandler(agentId, input as any);
+      return { content: [{ type: 'text', text: result }] };
+    }
+  );
+
+  server.tool(
+    'report_learnings',
+    'Report what you learned during this task — project conventions, build quirks, useful patterns, debugging insights. Call this near the end of your work. Max 5 learnings per call.',
+    {
+      learnings: reportLearningsSchema.shape.learnings,
+    },
+    async (input) => {
+      const result = await reportLearningsHandler(agentId, input as any);
       return { content: [{ type: 'text', text: result }] };
     }
   );

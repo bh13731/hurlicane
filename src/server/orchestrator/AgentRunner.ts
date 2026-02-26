@@ -8,6 +8,7 @@ import { getFileLockRegistry } from './FileLockRegistry.js';
 import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
 import { runCompletionChecks } from './CompletionChecks.js';
 import { handleRetry } from './RetryManager.js';
+import { triageLearnings } from './MemoryTriager.js';
 import type { Job, ClaudeStreamEvent, CodexStreamEvent } from '../../shared/types.js';
 import { isCodexModel, codexModelName } from '../../shared/types.js';
 
@@ -62,10 +63,19 @@ SHARED SCRATCHPAD (coordinate data between agents):
       If until_value is set, matched notes must have that exact value.
       Use this to wait for data from other agents instead of polling read_note.
 
+KNOWLEDGE BASE (persistent memory across jobs):
+  - search_kb(query, project_id?): Search for relevant past learnings, patterns, and conventions.
+  - report_learnings(learnings): Report what you learned during this task. Each learning has a
+      title, content, optional tags, and optional scope ("project" or "global").
+      Call this near the end of your work with up to 5 learnings.
+
 IMPORTANT RULES:
 - Always call lock_files BEFORE modifying any file. It will wait for you automatically.
 - Always call release_files as soon as you finish with each file — don't hold locks longer than needed.
 - Use report_status regularly to let the human know what you are doing.
+- At the START of a task, call search_kb with relevant keywords to check for existing knowledge.
+- Before FINISHING a task, call report_learnings with anything useful you discovered
+  (build commands, gotchas, conventions, patterns, debugging tips).
 
 ORCHESTRATION PATTERN (for decomposing large tasks):
   1. Call report_status to describe your plan.
@@ -523,6 +533,13 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
   queries.updateJobStatus(job.id, finalStatus);
   getFileLockRegistry().releaseAll(agentId);
 
+  // Triage any learnings the agent reported
+  if (finalStatus === 'done') {
+    triageLearnings(agentId, job).catch(err =>
+      console.error(`[agent ${agentId}] memory triage error:`, err)
+    );
+  }
+
   const updated = queries.getAgentWithJob(agentId);
   if (updated) socket.emitAgentUpdate(updated);
   const updatedJob = queries.getJobById(job.id);
@@ -606,5 +623,18 @@ function buildPrompt(job: Job): string {
       }
     } catch { /* ignore */ }
   }
+
+  // Inject relevant memories from knowledge base
+  const projectId: string | null = (job as any).project_id ?? null;
+  const memories = queries.getMemoryForJob(projectId);
+  if (memories.length > 0) {
+    prompt += '\n\n## Memory\nRelevant learnings from previous tasks:\n';
+    for (const m of memories) {
+      const truncated = m.content.length > 300 ? m.content.slice(0, 300) + '...' : m.content;
+      const scope = m.project_id ? 'project' : 'global';
+      prompt += `\n### ${m.title} [${scope}]\n${truncated}\n`;
+    }
+  }
+
   return prompt;
 }

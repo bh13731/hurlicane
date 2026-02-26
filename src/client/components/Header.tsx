@@ -11,6 +11,7 @@ interface HeaderProps {
   onProjects: () => void;
   onSettings: () => void;
   onDebate: () => void;
+  onKnowledgeBase: () => void;
   onHome: () => void;
   currentProjectName?: string | null;
   onClearProject?: () => void;
@@ -43,7 +44,7 @@ function HurlicaLogo() {
   );
 }
 
-export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost }: HeaderProps) {
+export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onKnowledgeBase, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost }: HeaderProps) {
   const hasCost = (todayClaudeCost != null && todayClaudeCost > 0) || (todayCodexCost != null && todayCodexCost > 0);
   return (
     <header className="header">
@@ -93,6 +94,7 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
           <button className="header-btn" onClick={onTemplates}>Templates</button>
           <button className="header-btn" onClick={onBatchTemplates}>Batches</button>
           <button className="header-btn" onClick={onDebate}>Debate</button>
+          <button className="header-btn" onClick={onKnowledgeBase}>Memory</button>
         </div>
         <span className="header-divider" />
         <button className="btn-icon" onClick={onSettings} title="Settings" aria-label="Settings">

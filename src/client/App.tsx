@@ -16,6 +16,7 @@ import { RunningJobsPanel } from './components/RunningJobsPanel';
 import { ProjectSelector } from './components/ProjectSelector';
 import { SettingsModal } from './components/SettingsModal';
 import { DebateForm } from './components/DebateForm';
+import { KnowledgeBaseModal } from './components/KnowledgeBaseModal';
 import { useSocket } from './hooks/useSocket';
 import { useAgents } from './hooks/useAgents';
 import { useJobs } from './hooks/useJobs';
@@ -46,6 +47,7 @@ export default function App() {
   const [showBatchTemplates, setShowBatchTemplates] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showDebateForm, setShowDebateForm] = useState(false);
+  const [showKnowledgeBase, setShowKnowledgeBase] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [archivedJobs, setArchivedJobs] = useState<Job[]>([]);
   const [leftTab, setLeftTab] = useState<'feed' | 'lineage'>('feed');
@@ -263,7 +265,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} />
+      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} />
 
       <div className="main-layout">
         <div className={`left-sidebar-stack ${leftTab === 'lineage' && selectedAgent ? '' : 'left-sidebar-stack--narrow'}`}>
@@ -382,6 +384,10 @@ export default function App() {
           onSubmit={handleSubmitDebate}
           onClose={() => setShowDebateForm(false)}
         />
+      )}
+
+      {showKnowledgeBase && (
+        <KnowledgeBaseModal onClose={() => setShowKnowledgeBase(false)} />
       )}
 
       {showProjects && (
