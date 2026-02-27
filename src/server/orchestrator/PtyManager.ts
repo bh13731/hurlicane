@@ -1,12 +1,11 @@
 import { spawn as ptySpawn } from 'node-pty';
 import type { IPty } from 'node-pty';
-import { execFileSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import { SYSTEM_PROMPT, HOOK_SETTINGS } from './AgentRunner.js';
-import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
+import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents } from './AgentRunner.js';
 import type { Job } from '../../shared/types.js';
 import { isCodexModel, codexModelName } from '../../shared/types.js';
 
@@ -91,9 +90,11 @@ export interface StartInteractiveOptions {
   cols?: number;
   rows?: number;
   resumeSessionId?: string;
+  /** When true, appends finish_job instruction to prompt and treats session exit as completion */
+  autoFinish?: boolean;
 }
 
-export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, resumeSessionId }: StartInteractiveOptions): void {
+export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, resumeSessionId, autoFinish = false }: StartInteractiveOptions): void {
   const workDir = (job as any).work_dir ?? process.cwd();
   const model: string | null = (job as any).model ?? null;
   const mcpPort = Number(MCP_PORT);
@@ -110,7 +111,17 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
   // Write the prompt to a file so the launcher can pass it as a CLI arg without quoting issues
   fs.mkdirSync(SCRIPTS_DIR, { recursive: true });
   const pFile = promptPath(agentId);
-  fs.writeFileSync(pFile, buildInteractivePrompt(job), 'utf8');
+  let promptText = buildInteractivePrompt(job);
+  if (autoFinish) {
+    promptText += '\n\nIMPORTANT: When you have completed this task, call the finish_job MCP tool with a summary of what was accomplished.';
+  }
+  fs.writeFileSync(pFile, promptText, 'utf8');
+
+  // Capture the current git HEAD SHA so we can diff after the agent finishes
+  try {
+    const sha = execSync('git rev-parse HEAD', { cwd: workDir, timeout: 5000 }).toString().trim();
+    queries.updateAgent(agentId, { base_sha: sha });
+  } catch { /* not a git repo or git not available */ }
 
   // Write a launcher script — receives the prompt as a positional arg (pre-fills input)
   const script = scriptPath(agentId);
@@ -294,16 +305,30 @@ export function attachPty(agentId: string, job: Job, cols = 220, rows = 50): voi
       socket.emitPtyClosed(agentId);
 
       if (!isTmuxSessionAlive(agentId)) {
-        queries.updateAgent(agentId, { status: 'done', finished_at: Date.now() });
-        queries.updateJobStatus(job.id, 'done');
-        const updated = queries.getAgentWithJob(agentId);
-        if (updated) socket.emitAgentUpdate(updated);
-        const updatedJob = queries.getJobById(job.id);
-        if (updatedJob) {
-          socket.emitJobUpdate(updatedJob);
-          // If this job is part of a debate, trigger the next stage (e.g. verification)
-          try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[pty ${agentId}] debateOnJobCompleted error:`, err); }
+        // If finish_job already ran, the agent is already in a terminal state — don't double-process
+        const agentRec = queries.getAgentById(agentId);
+        const TERMINAL = ['done', 'failed', 'cancelled'];
+        if (agentRec && TERMINAL.includes(agentRec.status)) return;
+
+        // If cancelled, the cancel endpoint already handled cleanup
+        if (cancelledAgents.has(agentId)) {
+          cancelledAgents.delete(agentId);
+          return;
         }
+
+        // For interactive agents: user ended the session = done
+        // For debate-stage jobs: --print mode exits naturally = done
+        // For other non-interactive agents: tmux exit without finish_job = failed
+        const isDebateStage = !!(job as any).debate_role;
+        const status = (job.is_interactive || isDebateStage) ? 'done' : 'failed';
+        const errorMsg = (job.is_interactive || isDebateStage) ? null : 'Agent session ended without calling finish_job.';
+
+        const updateFields: Parameters<typeof queries.updateAgent>[1] = { status, finished_at: Date.now() };
+        if (errorMsg) updateFields.error_message = errorMsg;
+        queries.updateAgent(agentId, updateFields);
+        handleJobCompletion(agentId, job, status).catch(err =>
+          console.error(`[pty ${agentId}] handleJobCompletion error:`, err)
+        );
       }
     } catch (err) {
       console.error(`[pty ${agentId}] onExit error:`, err);

@@ -1,27 +1,28 @@
 /**
  * StuckJobWatchdog — periodic runtime monitor for stuck/inconsistent agent state.
  *
- * Runs every 30 seconds and handles two failure modes:
+ * Runs every 30 seconds and handles three failure modes:
  *
- * 1. Dead PIDs: an agent's process has died but the DB still shows it as
- *    running. This can happen if the server's child close-event doesn't fire
- *    (rare edge case) or for reattached agents whose poll interval has a bug.
- *    Action: same recovery as startup recovery.ts — read log to determine
- *    done/failed, update DB, release locks.
+ * 1. Dead agents: an agent's tmux session (or legacy PID) has died but the DB
+ *    still shows it as running. Mark done/failed and release locks.
  *
- * 2. Job/agent inconsistency: a job is marked 'failed' (e.g. by recovery at
- *    restart) but an agent row is still in 'running' state. The old process
- *    from the previous server run is gone; the stale row just needs cleanup.
- *    Action: mark agent failed, emit socket update.
+ * 2. Orphaned waits: agent MCP connection dropped while wait_for_jobs was active,
+ *    and all waited jobs have since finished. Kill session and re-queue.
+ *
+ * 3. Job/agent inconsistency: a job is marked terminal but an agent row still
+ *    shows 'running'. Clean up the stale row.
  */
 
 import * as fs from 'fs';
+import { execFileSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { runAgent, getLogPath } from './AgentRunner.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
-import { isTmuxSessionAlive } from './PtyManager.js';
+import { isTmuxSessionAlive, startInteractiveAgent } from './PtyManager.js';
+import { orphanedWaits, hasActiveTransport } from '../mcp/McpServer.js';
+import { isCodexModel } from '../../shared/types.js';
 
 const WATCHDOG_INTERVAL_MS = 30_000;
 
@@ -86,68 +87,68 @@ function findLastWaitForJobsIds(agentId: string): string[] | null {
 function check(): void {
   const TERMINAL = ['done', 'failed', 'cancelled'];
 
-  // ── Check 1: Dead PIDs ──────────────────────────────────────────────────────
-  // Find agents still marked running/starting whose process has died.
-  for (const status of ['starting', 'running', 'waiting_user'] as const) {
-    for (const agent of queries.listBatchAgents(status)) {
-      if (agent.pid != null && isPidAlive(agent.pid)) continue;
+  // ── Check 1: Dead agents ────────────────────────────────────────────────────
+  // For all running agents, check if tmux session (or legacy PID) is alive.
+  // Agents with pid = legacy stream-json path (Codex batch); without = tmux path.
+  for (const agent of queries.listAllRunningAgents()) {
+    const tmuxAlive = isTmuxSessionAlive(agent.id);
+    const pidAlive = agent.pid != null && isPidAlive(agent.pid);
 
-      // PID is dead (or was never set). Determine final status from log.
+    if (tmuxAlive || pidAlive) continue; // still alive
+
+    const job = queries.getJobById(agent.job_id);
+
+    // For legacy PID-based agents (Codex batch): check log and attempt auto-resume
+    if (agent.pid != null) {
       const logStatus = statusFromLog(agent.id);
 
-      // Before marking failed, check if agent was stuck in wait_for_jobs
-      // with all deps done — if so, auto-resume instead of failing.
       if (!logStatus || logStatus === 'failed') {
         const waitedIds = findLastWaitForJobsIds(agent.id);
         if (waitedIds && waitedIds.length > 0) {
           const waitedJobs = waitedIds.map(id => queries.getJobById(id));
           const allDone = waitedJobs.every(j => j && j.status === 'done');
-          if (allDone) {
-            const job = queries.getJobById(agent.job_id);
-            if (job && !TERMINAL.includes(job.status)) {
-              console.log(`[watchdog] agent ${agent.id} died in wait_for_jobs with all deps done — auto-resuming job ${job.id}`);
-              queries.updateAgent(agent.id, {
-                status: 'failed',
-                error_message: 'Process died during wait_for_jobs; watchdog auto-resumed.',
-                finished_at: Date.now(),
+          if (allDone && job && !TERMINAL.includes(job.status)) {
+            console.log(`[watchdog] agent ${agent.id} died in wait_for_jobs with all deps done — auto-resuming job ${job.id}`);
+            queries.updateAgent(agent.id, {
+              status: 'failed',
+              error_message: 'Process died during wait_for_jobs; watchdog auto-resumed.',
+              finished_at: Date.now(),
+            });
+            getFileLockRegistry().releaseAll(agent.id);
+
+            const pendingQ = queries.getPendingQuestion(agent.id);
+            if (pendingQ) {
+              queries.updateQuestion(pendingQ.id, {
+                status: 'timeout',
+                answer: '[TIMEOUT] Agent process died; watchdog re-queued.',
+                answered_at: Date.now(),
               });
-              getFileLockRegistry().releaseAll(agent.id);
-
-              const pendingQ = queries.getPendingQuestion(agent.id);
-              if (pendingQ) {
-                queries.updateQuestion(pendingQ.id, {
-                  status: 'timeout',
-                  answer: '[TIMEOUT] Agent process died; watchdog re-queued.',
-                  answered_at: Date.now(),
-                });
-              }
-
-              const newAgentId = randomUUID();
-              queries.insertAgent({ id: newAgentId, job_id: job.id, status: 'starting' });
-              queries.updateJobStatus(job.id, 'assigned');
-
-              const newAgentWithJob = queries.getAgentWithJob(newAgentId);
-              if (newAgentWithJob) socket.emitAgentNew(newAgentWithJob);
-              const updatedJob = queries.getJobById(job.id);
-              if (updatedJob) socket.emitJobUpdate(updatedJob);
-
-              runAgent({ agentId: newAgentId, job, resumeSessionId: agent.session_id ?? undefined });
-              console.log(`[watchdog] re-spawned agent ${newAgentId} for job ${job.id} with resume session ${agent.session_id ?? '(none)'}`);
-              continue;
             }
-          } else {
+
+            const newAgentId = randomUUID();
+            queries.insertAgent({ id: newAgentId, job_id: job.id, status: 'starting' });
+            queries.updateJobStatus(job.id, 'assigned');
+
+            const newAgentWithJob = queries.getAgentWithJob(newAgentId);
+            if (newAgentWithJob) socket.emitAgentNew(newAgentWithJob);
+            const updatedJob = queries.getJobById(job.id);
+            if (updatedJob) socket.emitJobUpdate(updatedJob);
+
+            runAgent({ agentId: newAgentId, job, resumeSessionId: agent.session_id ?? undefined });
+            console.log(`[watchdog] re-spawned agent ${newAgentId} for job ${job.id} with resume session ${agent.session_id ?? '(none)'}`);
+            continue;
+          } else if (!allDone) {
             const stillPending = waitedJobs
               .filter(j => j && !TERMINAL.includes(j.status))
               .map(j => j!.id);
-            console.log(`[watchdog] agent ${agent.id} (${status}) dead in wait_for_jobs, ${stillPending.length} deps still pending: [${stillPending.join(', ')}]`);
+            console.log(`[watchdog] agent ${agent.id} dead in wait_for_jobs, ${stillPending.length} deps still pending: [${stillPending.join(', ')}]`);
           }
         }
       }
 
-      // Normal dead-agent recovery
       const finalStatus = logStatus ?? 'failed';
       console.log(
-        `[watchdog] agent ${agent.id} (${status}) — PID ${agent.pid ?? 'none'} dead, ` +
+        `[watchdog] agent ${agent.id} (pid-based) — PID ${agent.pid} dead, ` +
         `marking ${finalStatus}${logStatus ? ' (from log)' : ' (no result in log)'}`
       );
 
@@ -157,42 +158,30 @@ function check(): void {
         finished_at: Date.now(),
       });
       queries.updateJobStatus(agent.job_id, finalStatus);
-      getFileLockRegistry().releaseAll(agent.id);
+    } else {
+      // Tmux-based agent: session ended without finish_job being called.
+      // Interactive or debate-stage → done; other non-interactive → failed.
+      const isDebateStage = !!(job as any)?.debate_role;
+      const finalStatus = (job?.is_interactive || isDebateStage) ? 'done' : 'failed';
+      console.log(
+        `[watchdog] agent ${agent.id} (tmux-based) — session gone, marking ${finalStatus}`
+      );
 
-      const pendingQ = queries.getPendingQuestion(agent.id);
-      if (pendingQ) {
-        queries.updateQuestion(pendingQ.id, {
-          status: 'timeout',
-          answer: '[TIMEOUT] Agent process died.',
-          answered_at: Date.now(),
-        });
-      }
-
-      const updatedAgent = queries.getAgentWithJob(agent.id);
-      if (updatedAgent) socket.emitAgentUpdate(updatedAgent);
+      queries.updateAgent(agent.id, {
+        status: finalStatus,
+        error_message: finalStatus === 'failed' ? 'Agent session ended without calling finish_job.' : null,
+        finished_at: Date.now(),
+      });
+      queries.updateJobStatus(agent.job_id, finalStatus);
     }
-  }
 
-  // ── Check 2: Interactive agents with dead tmux sessions ────────────────────
-  // listBatchAgents() excludes interactive jobs, so the dead-PID check above
-  // never sees them.  Mirror what recovery.ts does: for each interactive agent
-  // whose tmux session is gone, mark it done so the job is unblocked.
-  for (const agent of queries.listRunningInteractiveAgents()) {
-    if (isTmuxSessionAlive(agent.id)) continue;
-
-    console.warn(
-      `[watchdog] interactive agent ${agent.id} — tmux session gone, marking done`
-    );
-
-    queries.updateAgent(agent.id, { status: 'done', finished_at: Date.now() });
-    queries.updateJobStatus(agent.job_id, 'done');
     getFileLockRegistry().releaseAll(agent.id);
 
     const pendingQ = queries.getPendingQuestion(agent.id);
     if (pendingQ) {
       queries.updateQuestion(pendingQ.id, {
         status: 'timeout',
-        answer: '[TIMEOUT] Interactive session ended.',
+        answer: '[TIMEOUT] Agent session ended.',
         answered_at: Date.now(),
       });
     }
@@ -201,12 +190,94 @@ function check(): void {
     if (updatedAgent) socket.emitAgentUpdate(updatedAgent);
   }
 
+  // ── Check 2: Orphaned waits after MCP disconnect ────────────────────────────
+  // When an MCP session closes while wait_for_jobs is active, McpServer registers
+  // an orphaned wait entry. Once all waited jobs are terminal AND the agent hasn't
+  // reconnected, we kill the stuck tmux session and re-queue the job.
+  for (const [agentId, orphan] of orphanedWaits) {
+    // Give the agent a moment to reconnect before acting
+    if (Date.now() - orphan.disconnected_at < 60_000) continue;
+
+    // Agent has reconnected? Clear and skip
+    if (hasActiveTransport(agentId)) {
+      orphanedWaits.delete(agentId);
+      continue;
+    }
+
+    const agent = queries.getAgentById(agentId);
+    if (!agent || agent.status !== 'running') {
+      orphanedWaits.delete(agentId);
+      continue;
+    }
+
+    const job = queries.getJobById(agent.job_id);
+    if (!job || TERMINAL.includes(job.status)) {
+      orphanedWaits.delete(agentId);
+      continue;
+    }
+
+    // Only act once all the waited jobs have reached a terminal state
+    const waitedJobs = orphan.job_ids.map(id => queries.getJobById(id));
+    const allTerminal = waitedJobs.every(j => j && TERMINAL.includes(j.status));
+    if (!allTerminal) {
+      const stillPending = waitedJobs.filter(j => j && !TERMINAL.includes(j.status)).map(j => j!.id);
+      console.log(`[watchdog] orphaned wait for agent ${agentId}: ${stillPending.length} job(s) still pending [${stillPending.join(', ')}]`);
+      continue;
+    }
+
+    const stuckMs = Date.now() - orphan.disconnected_at;
+    console.warn(`[watchdog] agent ${agentId} stuck after MCP disconnect (${stuckMs}ms), all sub-jobs terminal — restarting job ${job.id}`);
+    orphanedWaits.delete(agentId);
+
+    // Kill the stuck tmux session (if still alive)
+    if (isTmuxSessionAlive(agentId)) {
+      try {
+        execFileSync('tmux', ['kill-session', '-t', `orchestrator-${agentId}`], { stdio: 'pipe' });
+      } catch { /* already gone */ }
+    }
+
+    // Mark old agent failed
+    queries.updateAgent(agent.id, {
+      status: 'failed',
+      error_message: `MCP connection dropped during wait_for_jobs; watchdog restarted after ${Math.round(stuckMs / 1000)}s.`,
+      finished_at: Date.now(),
+    });
+    getFileLockRegistry().releaseAll(agent.id);
+
+    const pendingQ = queries.getPendingQuestion(agent.id);
+    if (pendingQ) {
+      queries.updateQuestion(pendingQ.id, {
+        status: 'timeout',
+        answer: '[TIMEOUT] MCP connection dropped; watchdog restarted agent.',
+        answered_at: Date.now(),
+      });
+    }
+
+    const updatedAgent = queries.getAgentWithJob(agent.id);
+    if (updatedAgent) socket.emitAgentUpdate(updatedAgent);
+
+    // Re-queue with a new agent
+    const newAgentId = randomUUID();
+    queries.insertAgent({ id: newAgentId, job_id: job.id, status: 'starting' });
+    queries.updateJobStatus(job.id, 'assigned');
+
+    const newAgentWithJob = queries.getAgentWithJob(newAgentId);
+    if (newAgentWithJob) socket.emitAgentNew(newAgentWithJob);
+    const updatedJob = queries.getJobById(job.id);
+    if (updatedJob) socket.emitJobUpdate(updatedJob);
+
+    // Codex batch still uses runAgent; all others use startInteractiveAgent
+    if (isCodexModel((job as any).model ?? null) && !job.is_interactive) {
+      runAgent({ agentId: newAgentId, job, resumeSessionId: agent.session_id ?? undefined });
+    } else {
+      startInteractiveAgent({ agentId: newAgentId, job, autoFinish: !job.is_interactive });
+    }
+    console.log(`[watchdog] re-spawned agent ${newAgentId} for job ${job.id}`);
+  }
+
   // ── Check 3: Job/agent inconsistency ───────────────────────────────────────
   // A job is in a terminal state but an agent row still shows 'running'.
-  // This happens when the server restarts: recovery marks the job failed/done
-  // but the new server session has no knowledge of whether an old process is
-  // still lurking. Clean up the stale agent row.
-  for (const agent of queries.listBatchAgents('running')) {
+  for (const agent of queries.listAllRunningAgents()) {
     const job = queries.getJobById(agent.job_id);
     if (!job || !TERMINAL.includes(job.status)) continue;
 
@@ -228,10 +299,6 @@ function check(): void {
   }
 
   // ── Check 4: Orphaned locks from terminal agents ────────────────────────────
-  // Active locks (not released, not expired) held by agents that are already in
-  // a terminal state. Happens when an agent is killed between watchdog ticks:
-  // the previous tick marks it terminal, subsequent ticks skip it, but any locks
-  // acquired after the terminal marking are never released.
   const orphaned = queries.getActiveLocksForTerminalAgents();
   if (orphaned.length > 0) {
     const agentIds = [...new Set(orphaned.map(l => l.agent_id))];

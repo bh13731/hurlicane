@@ -4,6 +4,7 @@ import { reattachAgent, getLogPath } from './AgentRunner.js';
 import { isTmuxSessionAlive, attachPty } from './PtyManager.js';
 import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
 import type { ClaudeStreamEvent } from '../../shared/types.js';
+import { isCodexModel } from '../../shared/types.js';
 
 function isPidAlive(pid: number): boolean {
   try {
@@ -16,8 +17,7 @@ function isPidAlive(pid: number): boolean {
 
 /**
  * Read the agent's log file to determine the actual exit status.
- * Mirrors the logic in AgentRunner.handleAgentExit so a completed agent
- * isn't incorrectly marked failed just because the server restarted.
+ * Used for legacy stream-json (Codex batch) agents.
  */
 function statusFromLog(agentId: string): 'done' | 'failed' | null {
   try {
@@ -40,86 +40,119 @@ function statusFromLog(agentId: string): 'done' | 'failed' | null {
 }
 
 /**
- * On startup, check each previously-running agent:
- *   - PID still alive → re-attach file tailing and keep monitoring it
- *   - PID gone        → read the log to determine done/failed; default to failed
+ * On startup, check each previously-running agent and recover it:
+ *
+ * - Codex batch (pid-based, stream-json path):
+ *     PID alive → reattach file tailing
+ *     PID dead  → read log to determine done/failed, default to failed
+ *
+ * - All other agents (tmux-based):
+ *     tmux alive → reattach PTY
+ *     tmux dead  → interactive → mark done; batch → mark failed
  */
 export function runRecovery(): void {
   const staleStatuses = ['starting', 'running', 'waiting_user'] as const;
-  let reattached = 0;
-  let recovered = 0;
-  let failed = 0;
+  let codexReattached = 0;
+  let codexRecovered = 0;
+  let codexFailed = 0;
+  let tmuxReattached = 0;
+  let tmuxRecovered = 0;
+  let tmuxFailed = 0;
 
   for (const status of staleStatuses) {
-    for (const agent of queries.listBatchAgents(status)) {
-      const alive = agent.pid != null && isPidAlive(agent.pid);
+    for (const agent of queries.listAllRunningAgents()) {
+      if (agent.status !== status) continue;
 
-      if (alive) {
-        console.log(`[recovery] reattaching live agent ${agent.id} (PID ${agent.pid})`);
-        const agentWithJob = queries.getAgentWithJob(agent.id);
-        if (agentWithJob) {
-          reattachAgent({ agentId: agent.id, job: agentWithJob.job });
-          reattached++;
+      const agentWithJob = queries.getAgentWithJob(agent.id);
+      if (!agentWithJob) continue;
+      const { job } = agentWithJob;
+
+      const isCodexBatch = isCodexModel((job as any).model ?? null) && !job.is_interactive;
+
+      if (isCodexBatch) {
+        // Legacy stream-json path: use PID-based recovery
+        const alive = agent.pid != null && isPidAlive(agent.pid);
+
+        if (alive) {
+          console.log(`[recovery] reattaching live Codex agent ${agent.id} (PID ${agent.pid})`);
+          reattachAgent({ agentId: agent.id, job });
+          codexReattached++;
+        } else {
+          const logStatus = statusFromLog(agent.id);
+          const finalStatus = logStatus ?? 'failed';
+
+          console.log(
+            `[recovery] Codex agent ${agent.id} (${status}) — PID ${agent.pid ?? 'none'} not found, ` +
+            `marking ${finalStatus}${logStatus ? ' (from log)' : ' (no result in log)'}`
+          );
+
+          queries.updateAgent(agent.id, {
+            status: finalStatus,
+            error_message: logStatus ? null : 'Agent process not found on restart.',
+            finished_at: Date.now(),
+          });
+          queries.updateJobStatus(agent.job_id, finalStatus);
+          queries.releaseLocksForAgent(agent.id);
+
+          const pendingQ = queries.getPendingQuestion(agent.id);
+          if (pendingQ) {
+            queries.updateQuestion(pendingQ.id, {
+              status: 'timeout',
+              answer: '[TIMEOUT] Orchestrator restarted.',
+              answered_at: Date.now(),
+            });
+          }
+
+          if (finalStatus === 'done') codexRecovered++;
+          else codexFailed++;
         }
       } else {
-        const logStatus = statusFromLog(agent.id);
-        const finalStatus = logStatus ?? 'failed';
+        // Tmux-based path (all Claude agents, interactive or not)
+        if (isTmuxSessionAlive(agent.id)) {
+          console.log(`[recovery] reattaching tmux agent ${agent.id} (session alive)`);
+          attachPty(agent.id, job);
+          tmuxReattached++;
+        } else {
+          // Interactive or debate-stage → done; other non-interactive → failed (no finish_job called)
+          const isDebateStage = !!(job as any).debate_role;
+          const finalStatus = (job.is_interactive || isDebateStage) ? 'done' : 'failed';
+          console.log(`[recovery] tmux agent ${agent.id} — session gone, marking ${finalStatus}`);
 
-        console.log(
-          `[recovery] agent ${agent.id} (${status}) — PID ${agent.pid ?? 'none'} not found, ` +
-          `marking ${finalStatus}${logStatus ? ' (from log)' : ' (no result in log)'}`
-        );
-
-        queries.updateAgent(agent.id, {
-          status: finalStatus,
-          error_message: logStatus ? null : 'Agent process not found on restart.',
-          finished_at: Date.now(),
-        });
-        queries.updateJobStatus(agent.job_id, finalStatus);
-        queries.releaseLocksForAgent(agent.id);
-
-        const pendingQ = queries.getPendingQuestion(agent.id);
-        if (pendingQ) {
-          queries.updateQuestion(pendingQ.id, {
-            status: 'timeout',
-            answer: '[TIMEOUT] Orchestrator restarted.',
-            answered_at: Date.now(),
+          queries.updateAgent(agent.id, {
+            status: finalStatus,
+            error_message: finalStatus === 'failed' ? 'Agent session not found on restart.' : null,
+            finished_at: Date.now(),
           });
+          queries.updateJobStatus(agent.job_id, finalStatus);
+          queries.releaseLocksForAgent(agent.id);
+
+          const pendingQ = queries.getPendingQuestion(agent.id);
+          if (pendingQ) {
+            queries.updateQuestion(pendingQ.id, {
+              status: 'timeout',
+              answer: '[TIMEOUT] Orchestrator restarted.',
+              answered_at: Date.now(),
+            });
+          }
+
+          if (finalStatus === 'done') {
+            const doneJob = queries.getJobById(agent.job_id);
+            if (doneJob) {
+              try { debateOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] debateOnJobCompleted error for agent ${agent.id}:`, err); }
+            }
+            tmuxRecovered++;
+          } else {
+            tmuxFailed++;
+          }
         }
-
-        if (finalStatus === 'done') recovered++;
-        else failed++;
       }
     }
   }
 
-  if (reattached > 0) console.log(`[recovery] reattached ${reattached} live agents`);
-  if (recovered > 0) console.log(`[recovery] recovered ${recovered} completed agents`);
-  if (failed > 0) console.log(`[recovery] failed ${failed} dead agents`);
-
-  // Recovery for interactive agents: reattach if tmux session is still alive
-  let interactiveReattached = 0;
-  let interactiveFailed = 0;
-  for (const agent of queries.listRunningInteractiveAgents()) {
-    const agentWithJob = queries.getAgentWithJob(agent.id);
-    if (!agentWithJob) continue;
-
-    if (isTmuxSessionAlive(agent.id)) {
-      console.log(`[recovery] reattaching interactive agent ${agent.id} (tmux session alive)`);
-      attachPty(agent.id, agentWithJob.job);
-      interactiveReattached++;
-    } else {
-      console.log(`[recovery] interactive agent ${agent.id} — tmux session gone, marking done`);
-      queries.updateAgent(agent.id, { status: 'done', finished_at: Date.now() });
-      queries.updateJobStatus(agent.job_id, 'done');
-      queries.releaseLocksForAgent(agent.id);
-      const doneJob = queries.getJobById(agent.job_id);
-      if (doneJob) {
-        try { debateOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] debateOnJobCompleted error for agent ${agent.id}:`, err); }
-      }
-      interactiveFailed++;
-    }
-  }
-  if (interactiveReattached > 0) console.log(`[recovery] reattached ${interactiveReattached} interactive agents`);
-  if (interactiveFailed > 0) console.log(`[recovery] marked ${interactiveFailed} interactive agents done (session gone)`);
+  if (codexReattached > 0) console.log(`[recovery] reattached ${codexReattached} live Codex agents`);
+  if (codexRecovered > 0) console.log(`[recovery] recovered ${codexRecovered} completed Codex agents`);
+  if (codexFailed > 0) console.log(`[recovery] failed ${codexFailed} dead Codex agents`);
+  if (tmuxReattached > 0) console.log(`[recovery] reattached ${tmuxReattached} tmux agents`);
+  if (tmuxRecovered > 0) console.log(`[recovery] recovered ${tmuxRecovered} completed tmux agents`);
+  if (tmuxFailed > 0) console.log(`[recovery] failed ${tmuxFailed} dead tmux agents`);
 }

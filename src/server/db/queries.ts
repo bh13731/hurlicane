@@ -119,6 +119,11 @@ export function updateJobFlagged(id: string, flagged: number): void {
   db.prepare('UPDATE jobs SET flagged = ?, updated_at = ? WHERE id = ?').run(flagged, Date.now(), id);
 }
 
+export function updateJobInteractive(id: string, interactive: number): void {
+  const db = getDb();
+  db.prepare('UPDATE jobs SET is_interactive = ?, updated_at = ? WHERE id = ?').run(interactive, Date.now(), id);
+}
+
 export function updateJobScheduledAt(id: string, scheduledAt: number | null): void {
   const db = getDb();
   db.prepare('UPDATE jobs SET scheduled_at = ?, updated_at = ? WHERE id = ?').run(scheduledAt, Date.now(), id);
@@ -270,6 +275,16 @@ export function listRunningInteractiveAgents(): Agent[] {
     JOIN jobs j ON j.id = a.job_id
     WHERE j.is_interactive = 1
       AND a.status IN ('starting', 'running', 'waiting_user')
+  `).all();
+  return (rows as unknown[]).map(r => cast<Agent>(r));
+}
+
+/** All running agents regardless of is_interactive flag — used by unified watchdog/recovery. */
+export function listAllRunningAgents(): Agent[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT * FROM agents
+    WHERE status IN ('starting', 'running', 'waiting_user')
   `).all();
   return (rows as unknown[]).map(r => cast<Agent>(r));
 }

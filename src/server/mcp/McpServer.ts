@@ -9,14 +9,26 @@ import { releaseFilesHandler, releaseFilesSchema } from './tools/releaseFiles.js
 import { checkFileLocksHandler, checkFileLocksSchema } from './tools/checkFileLocks.js';
 import { reportStatusHandler, reportStatusSchema } from './tools/reportStatus.js';
 import { createJobHandler, createJobSchema } from './tools/createJob.js';
-import { waitForJobsHandler, waitForJobsSchema, activeWaits } from './tools/waitForJobs.js';
+import { waitForJobsHandler, waitForJobsSchema, activeWaits, abortAgentWait } from './tools/waitForJobs.js';
 import { writeNoteHandler, writeNoteSchema, readNoteHandler, readNoteSchema, listNotesHandler, listNotesSchema } from './tools/notes.js';
 import { watchNotesHandler, watchNotesSchema } from './tools/watchNotes.js';
 import { searchKBHandler, searchKBSchema } from './tools/knowledgeBase.js';
 import { reportLearningsHandler, reportLearningsSchema } from './tools/reportLearnings.js';
+import { finishJobHandler, finishJobSchema } from './tools/finishJob.js';
 
 // agentId → { sessionId → transport }
 const agentTransports: Map<string, Map<string, StreamableHTTPServerTransport>> = new Map();
+
+/**
+ * Agents whose MCP connection dropped while wait_for_jobs was active.
+ * agentId → { job_ids they were waiting on, timestamp of disconnect }
+ * Consumed by StuckJobWatchdog to restart stuck agents once their deps complete.
+ */
+export const orphanedWaits = new Map<string, { job_ids: string[]; disconnected_at: number }>();
+
+export function hasActiveTransport(agentId: string): boolean {
+  return agentTransports.has(agentId);
+}
 
 /**
  * Close all active MCP transport sessions. Call during shutdown so
@@ -31,6 +43,23 @@ export async function closeAllMcpSessions(): Promise<void> {
   }
   await Promise.all(promises);
   agentTransports.clear();
+}
+
+function makeOnClose(agentId: string, transportMap: Map<string, StreamableHTTPServerTransport>, transport: { sessionId?: string }) {
+  return () => {
+    const sid = transport.sessionId;
+    if (sid) transportMap.delete(sid);
+    if (transportMap.size === 0) agentTransports.delete(agentId);
+
+    const waitingOn = activeWaits.get(agentId);
+    if (waitingOn && waitingOn.length > 0) {
+      console.warn(`[mcp] session closed while wait_for_jobs active: agent ${agentId} waiting on [${waitingOn.join(', ')}] — aborting loop, registering orphaned wait`);
+      abortAgentWait(agentId);
+      orphanedWaits.set(agentId, { job_ids: [...waitingOn], disconnected_at: Date.now() });
+    } else {
+      console.log(`[mcp] session closed: agent ${agentId}`);
+    }
+  };
 }
 
 export function createMcpApp(): express.Application {
@@ -55,6 +84,8 @@ export function createMcpApp(): express.Application {
         transport = transportMap.get(sessionId)!;
       } else if (!sessionId && isInitializeRequest(req.body)) {
         console.log(`[mcp] new session: agent ${agentId}`);
+        // Clear any orphaned wait — agent has reconnected
+        orphanedWaits.delete(agentId);
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
@@ -62,23 +93,15 @@ export function createMcpApp(): express.Application {
           },
         });
 
-        transport.onclose = () => {
-          const sid = transport!.sessionId;
-          if (sid) transportMap!.delete(sid);
-          if (transportMap!.size === 0) agentTransports.delete(agentId);
-          const waitingOn = activeWaits.get(agentId);
-          if (waitingOn && waitingOn.length > 0) {
-            console.warn(`[mcp] session closed while wait_for_jobs active: agent ${agentId} was waiting on [${waitingOn.join(', ')}]`);
-          } else {
-            console.log(`[mcp] session closed: agent ${agentId}`);
-          }
-        };
+        transport.onclose = makeOnClose(agentId, transportMap!, transport!);
 
         const server = buildMcpServer(agentId);
         await server.connect(transport);
       } else if (isInitializeRequest(req.body)) {
         // Re-initialization with a stale session ID (e.g. after server restart) — create fresh session
         console.log(`[mcp] re-initialize: agent ${agentId} (stale session)`);
+        // Clear any orphaned wait — agent has reconnected
+        orphanedWaits.delete(agentId);
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
@@ -86,17 +109,7 @@ export function createMcpApp(): express.Application {
           },
         });
 
-        transport.onclose = () => {
-          const sid = transport!.sessionId;
-          if (sid) transportMap!.delete(sid);
-          if (transportMap!.size === 0) agentTransports.delete(agentId);
-          const waitingOn = activeWaits.get(agentId);
-          if (waitingOn && waitingOn.length > 0) {
-            console.warn(`[mcp] session closed while wait_for_jobs active: agent ${agentId} was waiting on [${waitingOn.join(', ')}]`);
-          } else {
-            console.log(`[mcp] session closed: agent ${agentId}`);
-          }
-        };
+        transport.onclose = makeOnClose(agentId, transportMap!, transport!);
 
         const server = buildMcpServer(agentId);
         await server.connect(transport);
@@ -303,6 +316,18 @@ function buildMcpServer(agentId: string): MCP {
     },
     async (input) => {
       const result = await reportLearningsHandler(agentId, input as any);
+      return { content: [{ type: 'text', text: result }] };
+    }
+  );
+
+  server.tool(
+    'finish_job',
+    'Signal task completion and close this session. Call this when your task prompt explicitly tells you to (automated jobs only). Do NOT call in interactive sessions.',
+    {
+      result: finishJobSchema.shape.result,
+    },
+    async (input) => {
+      const result = await finishJobHandler(agentId, input as any);
       return { content: [{ type: 'text', text: result }] };
     }
   );

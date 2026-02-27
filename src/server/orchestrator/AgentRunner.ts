@@ -83,7 +83,11 @@ ORCHESTRATION PATTERN (for decomposing large tasks):
   3. Use depends_on to express ordering if some sub-tasks depend on others.
   4. Call wait_for_jobs(job_ids) to block until all sub-tasks complete.
   5. Read result_text and diff from the results to synthesize a final answer.
-  6. Optionally use write_note/read_note to pass structured data between agents.`;
+  6. Optionally use write_note/read_note to pass structured data between agents.
+
+COMPLETION (automated jobs only):
+  - finish_job(result?): Signal task completion and close this session. Only call this when your
+    task prompt explicitly tells you to. Do NOT call this in interactive sessions.`;
 
 export interface RunOptions {
   agentId: string;
@@ -385,6 +389,84 @@ function findLastWaitForJobsIds(agentId: string): string[] | null {
   return null;
 }
 
+/**
+ * Shared post-processing run after any agent finishes (tmux or stream-json).
+ * Caller is responsible for already having set agent status in the DB.
+ * Handles: git diff, completion checks, job status update, lock release,
+ * memory triage, socket events, debate notification, repeat scheduling, retry.
+ */
+export async function handleJobCompletion(
+  agentId: string,
+  job: Job,
+  status: 'done' | 'failed',
+): Promise<void> {
+  // Capture git diff between base_sha and current HEAD (committed + staged changes)
+  const agentRec = queries.getAgentById(agentId);
+  const workDir = (job as any).work_dir ?? process.cwd();
+  if (agentRec?.base_sha) {
+    try {
+      const committed = execSync(
+        `git log --patch --no-color ${agentRec.base_sha}..HEAD`,
+        { cwd: workDir, timeout: 10000 }
+      ).toString();
+      const uncommitted = execSync(
+        'git diff HEAD --no-color',
+        { cwd: workDir, timeout: 10000 }
+      ).toString();
+      const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
+      if (fullDiff.trim()) {
+        queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
+      }
+    } catch { /* not a git repo, no changes, or git not available */ }
+  }
+
+  // Run completion checks if the agent reported success and checks are configured
+  let finalStatus = status;
+  if (status === 'done' && job.completion_checks) {
+    try {
+      const freshAgent = queries.getAgentById(agentId);
+      if (freshAgent) {
+        const checkFailure = runCompletionChecks(job, freshAgent);
+        if (checkFailure) {
+          console.log(`[agent ${agentId}] completion checks failed: ${checkFailure}`);
+          finalStatus = 'failed';
+          queries.updateAgent(agentId, { status: 'failed', error_message: `Completion check failed: ${checkFailure}` });
+        }
+      }
+    } catch (err) { console.error(`[agent ${agentId}] completion check error:`, err); }
+  }
+
+  queries.updateJobStatus(job.id, finalStatus);
+  getFileLockRegistry().releaseAll(agentId);
+
+  // Triage any learnings the agent reported
+  if (finalStatus === 'done') {
+    triageLearnings(agentId, job).catch(err =>
+      console.error(`[agent ${agentId}] memory triage error:`, err)
+    );
+  }
+
+  const updated = queries.getAgentWithJob(agentId);
+  if (updated) socket.emitAgentUpdate(updated);
+  const updatedJob = queries.getJobById(job.id);
+  if (updatedJob) {
+    try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); }
+    // If this job is part of a debate, check if the round is complete
+    try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] debateOnJobCompleted error:`, err); }
+    // If the job succeeded and has a repeat interval, queue the next run
+    if (updatedJob.status === 'done' && updatedJob.repeat_interval_ms) {
+      try {
+        const nextJob = queries.scheduleRepeatJob(updatedJob);
+        socket.emitJobNew(nextJob);
+      } catch (err) { console.error(`[agent ${agentId}] scheduleRepeatJob error:`, err); }
+    }
+    // If the job failed, attempt retry
+    if (updatedJob.status === 'failed') {
+      try { handleRetry(updatedJob, agentId); } catch (err) { console.error(`[agent ${agentId}] handleRetry error:`, err); }
+    }
+  }
+}
+
 function handleAgentExit(agentId: string, job: Job, exitCode: number | null): void {
   console.log(`[agent ${agentId}] exited (code ${exitCode ?? 'unknown'})`);
 
@@ -454,45 +536,9 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
     finished_at: Date.now(),
   });
 
-  // Capture git diff between base_sha and current HEAD (committed + staged changes)
-  const agentRec = queries.getAgentById(agentId);
-  const workDir2 = (job as any).work_dir ?? process.cwd();
-  if (agentRec?.base_sha) {
-    try {
-      const committed = execSync(
-        `git log --patch --no-color ${agentRec.base_sha}..HEAD`,
-        { cwd: workDir2, timeout: 10000 }
-      ).toString();
-      const uncommitted = execSync(
-        'git diff HEAD --no-color',
-        { cwd: workDir2, timeout: 10000 }
-      ).toString();
-      const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
-      if (fullDiff.trim()) {
-        queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
-      }
-    } catch { /* not a git repo, no changes, or git not available */ }
-  }
-
-  // Run completion checks if the agent reported success and checks are configured
-  let finalStatus = status;
-  if (status === 'done' && job.completion_checks) {
-    try {
-      const freshAgent = queries.getAgentById(agentId);
-      if (freshAgent) {
-        const checkFailure = runCompletionChecks(job, freshAgent);
-        if (checkFailure) {
-          console.log(`[agent ${agentId}] completion checks failed: ${checkFailure}`);
-          finalStatus = 'failed';
-          queries.updateAgent(agentId, { status: 'failed', error_message: `Completion check failed: ${checkFailure}` });
-        }
-      }
-    } catch (err) { console.error(`[agent ${agentId}] completion check error:`, err); }
-  }
-
   // Auto-resume: if the agent died while stuck in wait_for_jobs and all the
   // awaited jobs are now done, re-spawn with --resume rather than failing.
-  if (finalStatus === 'failed') {
+  if (status === 'failed') {
     const waitedIds = findLastWaitForJobsIds(agentId);
     if (waitedIds && waitedIds.length > 0) {
       const TERMINAL_S = ['done', 'failed', 'cancelled'];
@@ -500,8 +546,8 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
       const allDone = waitedJobs.every(j => j && j.status === 'done');
       if (allDone) {
         console.log(`[agent ${agentId}] died in wait_for_jobs with all deps done — auto-resuming job ${job.id}`);
-        const agentRec = queries.getAgentById(agentId);
-        const sessionId = agentRec?.session_id ?? null;
+        const agentRec2 = queries.getAgentById(agentId);
+        const sessionId = agentRec2?.session_id ?? null;
 
         queries.updateAgent(agentId, {
           status: 'failed',
@@ -530,35 +576,10 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
     }
   }
 
-  queries.updateJobStatus(job.id, finalStatus);
-  getFileLockRegistry().releaseAll(agentId);
-
-  // Triage any learnings the agent reported
-  if (finalStatus === 'done') {
-    triageLearnings(agentId, job).catch(err =>
-      console.error(`[agent ${agentId}] memory triage error:`, err)
-    );
-  }
-
-  const updated = queries.getAgentWithJob(agentId);
-  if (updated) socket.emitAgentUpdate(updated);
-  const updatedJob = queries.getJobById(job.id);
-  if (updatedJob) {
-    try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); }
-    // If this job is part of a debate, check if the round is complete
-    try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] debateOnJobCompleted error:`, err); }
-    // If the job succeeded and has a repeat interval, queue the next run
-    if (updatedJob.status === 'done' && updatedJob.repeat_interval_ms) {
-      try {
-        const nextJob = queries.scheduleRepeatJob(updatedJob);
-        socket.emitJobNew(nextJob);
-      } catch (err) { console.error(`[agent ${agentId}] scheduleRepeatJob error:`, err); }
-    }
-    // If the job failed, attempt retry
-    if (updatedJob.status === 'failed') {
-      try { handleRetry(updatedJob, agentId); } catch (err) { console.error(`[agent ${agentId}] handleRetry error:`, err); }
-    }
-  }
+  // Shared post-processing (git diff, completion checks, learnings, debate, retry, etc.)
+  handleJobCompletion(agentId, job, status).catch(err =>
+    console.error(`[agent ${agentId}] handleJobCompletion error:`, err)
+  );
 }
 
 function handleStreamEvent(agentId: string, event: ClaudeStreamEvent | CodexStreamEvent, raw: string, seq: number): void {
