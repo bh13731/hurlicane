@@ -10,6 +10,7 @@ interface AgentGridProps {
   onArchiveAll?: (jobs: Job[]) => void;
   templates?: unknown;
   selectedAgentId?: string | null;
+  ptyIdleAgentIds?: Set<string>;
 }
 
 const ALL_STATUSES: AgentStatus[] = ['starting', 'running', 'waiting_user', 'done', 'failed', 'cancelled'];
@@ -31,7 +32,7 @@ function tilePriority(agent: AgentWithJob): number {
   return 4;
 }
 
-export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, onArchiveJob, onArchiveAll, selectedAgentId }: AgentGridProps) {
+export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, onArchiveJob, onArchiveAll, selectedAgentId, ptyIdleAgentIds }: AgentGridProps) {
   const [activeFilters, setActiveFilters] = useState<Set<AgentStatus>>(new Set());
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const [customOrder, setCustomOrder] = useState<string[]>([]);
@@ -240,6 +241,7 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, onArchiveJob
                 onArchiveJob={onArchiveJob ? () => onArchiveJob(agent.job) : undefined}
                 templateName={agent.template_name ?? undefined}
                 isSelected={selectedAgentId === agent.id}
+                isPtyIdle={ptyIdleAgentIds?.has(agent.id)}
               />
             </div>
           ))}
@@ -248,6 +250,25 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, onArchiveJob
               <div className="agent-card agent-card-queued">
                 <div className="agent-card-header">
                   <span className="agent-status-badge agent-status-queued">Queued</span>
+                  <label
+                    className={`interactive-toggle${job.is_interactive ? ' interactive-toggle-active' : ''}`}
+                    title={job.is_interactive ? 'Interactive (click to disable)' : 'Make interactive'}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!job.is_interactive}
+                      onChange={e => {
+                        fetch(`/api/jobs/${job.id}/interactive`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ interactive: e.target.checked }),
+                        });
+                      }}
+                      style={{ display: 'none' }}
+                    />
+                    ⌨
+                  </label>
                 </div>
                 <div className="agent-card-title">{job.title}</div>
                 <div className="agent-card-queued-hint">Waiting for an available agent slot</div>

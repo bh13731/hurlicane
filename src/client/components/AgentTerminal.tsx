@@ -149,8 +149,10 @@ function CancelButton({ agentId, onCancelled }: { agentId: string; onCancelled: 
     if (loading) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/agents/${agentId}/cancel`, { method: 'POST' });
-      if (res.ok) onCancelled();
+      await fetch(`/api/agents/${agentId}/cancel`, { method: 'POST' });
+      // Always close the panel — if cancel fails (e.g. agent already stopped due to
+      // a race with the watchdog), the user still wants to see the updated state.
+      onCancelled();
     } finally {
       setLoading(false);
     }

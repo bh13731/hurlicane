@@ -18,6 +18,17 @@ const POLL_MS = 2000;
  */
 export const activeWaits = new Map<string, string[]>();
 
+/** AbortControllers for in-flight wait_for_jobs loops, keyed by agentId. */
+const activeWaitAborts = new Map<string, AbortController>();
+
+/**
+ * Abort the wait_for_jobs loop for the given agent (e.g. when MCP session closes).
+ * No-op if the agent has no active wait.
+ */
+export function abortAgentWait(agentId: string): void {
+  activeWaitAborts.get(agentId)?.abort();
+}
+
 export async function waitForJobsHandler(
   agentId: string,
   input: z.infer<typeof waitForJobsSchema>,
@@ -32,6 +43,8 @@ export async function waitForJobsHandler(
   activeWaits.set(agentId, job_ids);
 
   const deadline = Date.now() + timeout_ms;
+  const abortCtrl = new AbortController();
+  activeWaitAborts.set(agentId, abortCtrl);
 
   // Update status message while waiting
   const updateStatus = (pending: number) => {
@@ -45,7 +58,7 @@ export async function waitForJobsHandler(
   let lastReportedPending = job_ids.length;
 
   try {
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && !abortCtrl.signal.aborted) {
       const jobs = job_ids.map(id => queries.getJobById(id));
       const missing = job_ids.filter((_, i) => !jobs[i]);
       if (missing.length > 0) {
@@ -89,6 +102,12 @@ export async function waitForJobsHandler(
       await new Promise(resolve => setTimeout(resolve, POLL_MS));
     }
 
+    // Aborted (MCP connection closed) — exit silently; McpServer will track for recovery
+    if (abortCtrl.signal.aborted) {
+      console.log(`[wait_for_jobs] agent ${agentId} — aborted (MCP connection closed)`);
+      return JSON.stringify({ error: 'MCP connection closed while waiting' });
+    }
+
     // Timed out
     queries.updateAgent(agentId, { status_message: null });
     const agentWithJob = queries.getAgentWithJob(agentId);
@@ -106,5 +125,6 @@ export async function waitForJobsHandler(
     });
   } finally {
     activeWaits.delete(agentId);
+    activeWaitAborts.delete(agentId);
   }
 }

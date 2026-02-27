@@ -135,6 +135,20 @@ router.post('/:id/run-now', (req, res) => {
   res.json(updated);
 });
 
+router.patch('/:id/interactive', (req, res) => {
+  const job = queries.getJobById(req.params.id);
+  if (!job) { res.status(404).json({ error: 'not found' }); return; }
+  const interactive = req.body?.interactive ? 1 : 0;
+  queries.updateJobInteractive(job.id, interactive);
+  const updated = queries.getJobById(job.id)!;
+  socket.emitJobUpdate(updated);
+  const agents = queries.getAgentsWithJobByJobId(job.id);
+  for (const agent of agents) {
+    socket.emitAgentUpdate(agent);
+  }
+  res.json(updated);
+});
+
 router.post('/:id/archive', (req, res) => {
   const job = queries.getJobById(req.params.id);
   if (!job) { res.status(404).json({ error: 'not found' }); return; }

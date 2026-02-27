@@ -25,6 +25,7 @@ import { useProjects } from './hooks/useProjects';
 import { useDebates } from './hooks/useDebates';
 import { useToasts } from './hooks/useToasts';
 import { ToastFeed } from './components/ToastFeed';
+import socket from './socket';
 import type { AgentWithJob, AgentOutput, CreateJobRequest, CreateDebateRequest, Job, Template, BatchTemplate } from '@shared/types';
 
 export default function App() {
@@ -55,6 +56,40 @@ export default function App() {
   const [todayClaudeCost, setTodayClaudeCost] = useState<number | null>(null);
   const [todayCodexCost, setTodayCodexCost] = useState<number | null>(null);
   const fetchingCost = useRef(false);
+
+  // Track when PTY data was last received per agent (for idle detection)
+  const lastPtyActivity = useRef<Map<string, number>>(new Map());
+  const [ptyIdleAgents, setPtyIdleAgents] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const handlePtyData = ({ agent_id }: { agent_id: string }) => {
+      lastPtyActivity.current.set(agent_id, Date.now());
+    };
+    socket.on('pty:data', handlePtyData);
+    return () => { socket.off('pty:data', handlePtyData); };
+  }, []);
+
+  // Poll every second to compute which interactive running agents are idle (no pty output for 3s)
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = Date.now();
+      const idleSet = new Set<string>();
+      for (const agent of agents) {
+        if (agent.status === 'running' && agent.job.is_interactive) {
+          const last = lastPtyActivity.current.get(agent.id);
+          if (last !== undefined && now - last > 3000) {
+            idleSet.add(agent.id);
+          }
+        }
+      }
+      setPtyIdleAgents(prev => {
+        // Only update if the set contents changed
+        if (prev.size === idleSet.size && [...idleSet].every(id => prev.has(id))) return prev;
+        return idleSet;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [agents]);
 
   const fetchTodayCost = useCallback(async () => {
     if (fetchingCost.current) return;
@@ -294,11 +329,12 @@ export default function App() {
             agents={agents}
             projects={projects}
             onSelectAgent={handleSelectAgent}
+            ptyIdleAgentIds={ptyIdleAgents}
           />
         </div>
 
         <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
-          <AgentGrid agents={filteredAgents} queuedJobs={filteredJobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} onArchiveJob={handleArchiveJob} onArchiveAll={handleArchiveAll} templates={templates} selectedAgentId={selectedAgent?.id ?? null} />
+          <AgentGrid agents={filteredAgents} queuedJobs={filteredJobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} onArchiveJob={handleArchiveJob} onArchiveAll={handleArchiveAll} templates={templates} selectedAgentId={selectedAgent?.id ?? null} ptyIdleAgentIds={ptyIdleAgents} />
         </main>
 
         {selectedAgent ? (

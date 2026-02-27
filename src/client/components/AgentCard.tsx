@@ -6,8 +6,10 @@ interface AgentCardProps {
   onClick: (agent: AgentWithJob) => void;
   onSelectParent?: (parentId: string) => void;
   onArchiveJob?: () => void;
+  onInteractiveChange?: (jobId: string, interactive: boolean) => void;
   templateName?: string;
   isSelected?: boolean;
+  isPtyIdle?: boolean;
 }
 
 function ArchiveIcon() {
@@ -21,7 +23,8 @@ function ArchiveIcon() {
   );
 }
 
-function getBorderColor(agent: AgentWithJob): string {
+function getBorderColor(agent: AgentWithJob, isPtyIdle?: boolean): string {
+  if (isPtyIdle && agent.status === 'running') return '#3b82f6';
   switch (agent.status) {
     case 'starting':
     case 'running':
@@ -39,11 +42,13 @@ function getBorderColor(agent: AgentWithJob): string {
   }
 }
 
-function getStatusLabel(agent: AgentWithJob): React.ReactNode {
+function getStatusLabel(agent: AgentWithJob, isPtyIdle?: boolean): React.ReactNode {
   switch (agent.status) {
     case 'starting': return 'Starting...';
     case 'running': return agent.status_message ?? (agent.job.is_interactive
-      ? <>'Running' <span style={{ color: '#ef4444' }}>(interactive)</span></>
+      ? (isPtyIdle
+          ? <>'Running' <span style={{ color: '#3b82f6' }}>(waiting for input)</span></>
+          : <>'Running' <span style={{ color: '#ef4444' }}>(interactive)</span></>)
       : 'Running');
     case 'waiting_user': return 'Waiting for answer';
     case 'done': return agent.output_read ? 'Done (read)' : 'Done';
@@ -60,13 +65,24 @@ function getStatusLabel(agent: AgentWithJob): React.ReactNode {
   }
 }
 
-export function AgentCard({ agent, onClick, onSelectParent, onArchiveJob, templateName, isSelected }: AgentCardProps) {
-  const borderColor = getBorderColor(agent);
+export function AgentCard({ agent, onClick, onSelectParent, onArchiveJob, onInteractiveChange, templateName, isSelected, isPtyIdle }: AgentCardProps) {
+  const borderColor = getBorderColor(agent, isPtyIdle);
   const isWaiting = agent.status === 'waiting_user';
 
   function handleFlag(e: React.MouseEvent) {
     e.stopPropagation();
     fetch(`/api/jobs/${agent.job.id}/flag`, { method: 'POST' });
+  }
+
+  function handleInteractiveChange(e: React.ChangeEvent<HTMLInputElement>) {
+    e.stopPropagation();
+    const newValue = e.target.checked;
+    fetch(`/api/jobs/${agent.job.id}/interactive`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ interactive: newValue }),
+    });
+    if (onInteractiveChange) onInteractiveChange(agent.job.id, newValue);
   }
 
   function handleRequeue(e: React.MouseEvent) {
@@ -112,6 +128,19 @@ export function AgentCard({ agent, onClick, onSelectParent, onArchiveJob, templa
         >
           ⚑
         </button>
+        <label
+          className={`interactive-toggle${agent.job.is_interactive ? ' interactive-toggle-active' : ''}`}
+          title={agent.job.is_interactive ? 'Interactive (click to disable)' : 'Make interactive'}
+          onClick={e => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={!!agent.job.is_interactive}
+            onChange={handleInteractiveChange}
+            style={{ display: 'none' }}
+          />
+          ⌨
+        </label>
         {onArchiveJob && ['done', 'failed', 'cancelled'].includes(agent.status) && (
           <button
             className="archive-btn"
@@ -131,12 +160,12 @@ export function AgentCard({ agent, onClick, onSelectParent, onArchiveJob, templa
             ↺
           </button>
         )}
-        <span className={`agent-status-badge status-${agent.status}`}>
+        <span className={`agent-status-badge status-${agent.status}${isPtyIdle && agent.status === 'running' ? ' status-pty-idle' : ''}`}>
           {agent.status}
         </span>
       </div>
       <div className="agent-job-title">{agent.job.title}</div>
-      <div className="agent-status-msg">{getStatusLabel(agent)}</div>
+      <div className="agent-status-msg">{getStatusLabel(agent, isPtyIdle)}</div>
       {templateName && (
         <div className="agent-template" title={templateName}>
           {templateName}

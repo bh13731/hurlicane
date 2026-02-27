@@ -6,6 +6,7 @@ interface Props {
   agents: AgentWithJob[];
   projects: Project[];
   onSelectAgent: (agent: AgentWithJob) => void;
+  ptyIdleAgentIds?: Set<string>;
 }
 
 const STATUS_DOT_COLOR: Partial<Record<string, string>> = {
@@ -14,7 +15,7 @@ const STATUS_DOT_COLOR: Partial<Record<string, string>> = {
   waiting_user: '#ef4444',
 };
 
-export function RunningJobsPanel({ agents, projects, onSelectAgent }: Props) {
+export function RunningJobsPanel({ agents, projects, onSelectAgent, ptyIdleAgentIds }: Props) {
   const projectMap = new Map(projects.map(p => [p.id, p.name]));
 
   const activeAgents = agents.filter(
@@ -35,7 +36,8 @@ export function RunningJobsPanel({ agents, projects, onSelectAgent }: Props) {
         <div className="running-jobs-list">
           {activeAgents.map(agent => {
             const projectName = agent.job.project_id ? projectMap.get(agent.job.project_id) : null;
-            const dotColor = STATUS_DOT_COLOR[agent.status] ?? '#6e7681';
+            const isIdle = ptyIdleAgentIds?.has(agent.id) && agent.status === 'running';
+            const dotColor = isIdle ? '#3b82f6' : (STATUS_DOT_COLOR[agent.status] ?? '#6e7681');
             return (
               <div
                 key={agent.id}

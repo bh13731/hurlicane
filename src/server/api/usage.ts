@@ -38,7 +38,7 @@ function applyCodexFallbackPricing(codex: any): any {
 
 async function runCcusage(args: string[]): Promise<{ stdout: string; stderr: string }> {
   try {
-    return await execFileAsync('npx', args, { timeout: 30_000 });
+    return await execFileAsync('npx', ['--yes', ...args], { timeout: 60_000 });
   } catch (err: any) {
     return { stdout: err.stdout ?? '', stderr: err.stderr ?? '' };
   }
