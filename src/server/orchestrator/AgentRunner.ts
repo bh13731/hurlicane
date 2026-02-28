@@ -225,7 +225,7 @@ export function reattachAgent(options: RunOptions): void {
   startTailing(agentId, job, logPath, skipLines, null, agent?.pid);
 }
 
-function startTailing(
+export function startTailing(
   agentId: string,
   job: Job,
   logPath: string,
@@ -352,7 +352,7 @@ function startTailing(
   }
 }
 
-function stopTailing(agentId: string): void {
+export function stopTailing(agentId: string): void {
   const t = _tailers.get(agentId);
   if (t) {
     t.watcher?.close();

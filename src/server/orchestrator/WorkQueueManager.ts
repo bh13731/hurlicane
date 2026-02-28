@@ -80,7 +80,8 @@ async function tick(): Promise<void> {
       : readyJob;
 
     // Codex batch agents still use runAgent (stream-json path); all others use tmux.
-    // Debate-stage jobs use --print inside tmux and exit naturally — no finish_job needed.
+    // Debate-stage jobs use --print inside tmux (piped through tee to .ndjson for UI display)
+    // and exit naturally — no finish_job needed.
     const useCodexBatch = isCodexModel((dispatchJob as any).model ?? null) && !dispatchJob.is_interactive;
     const isDebateStage = !!(dispatchJob as any).debate_role;
     const autoFinish = !dispatchJob.is_interactive && !isDebateStage;

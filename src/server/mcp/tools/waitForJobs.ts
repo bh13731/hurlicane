@@ -41,6 +41,8 @@ export async function waitForJobsHandler(
 
   console.log(`[wait_for_jobs] agent ${agentId} starting — waiting for ${job_ids.length} jobs: [${job_ids.join(', ')}]`);
   activeWaits.set(agentId, job_ids);
+  // Persist to DB so recovery can re-register the orphaned wait after a server restart
+  queries.updateAgent(agentId, { pending_wait_ids: JSON.stringify(job_ids) });
 
   const deadline = Date.now() + timeout_ms;
   const abortCtrl = new AbortController();
@@ -67,8 +69,8 @@ export async function waitForJobsHandler(
 
       const pending = jobs.filter(j => !TERMINAL.includes(j!.status));
       if (pending.length === 0) {
-        // All done — clear status and build results
-        queries.updateAgent(agentId, { status_message: null });
+        // All done — clear status and pending wait IDs, build results
+        queries.updateAgent(agentId, { status_message: null, pending_wait_ids: null });
         const agentWithJob = queries.getAgentWithJob(agentId);
         if (agentWithJob) socket.emitAgentUpdate(agentWithJob);
 
@@ -105,11 +107,12 @@ export async function waitForJobsHandler(
     // Aborted (MCP connection closed) — exit silently; McpServer will track for recovery
     if (abortCtrl.signal.aborted) {
       console.log(`[wait_for_jobs] agent ${agentId} — aborted (MCP connection closed)`);
+      // Leave pending_wait_ids set so recovery.ts can re-register the orphaned wait
       return JSON.stringify({ error: 'MCP connection closed while waiting' });
     }
 
     // Timed out
-    queries.updateAgent(agentId, { status_message: null });
+    queries.updateAgent(agentId, { status_message: null, pending_wait_ids: null });
     const agentWithJob = queries.getAgentWithJob(agentId);
     if (agentWithJob) socket.emitAgentUpdate(agentWithJob);
 

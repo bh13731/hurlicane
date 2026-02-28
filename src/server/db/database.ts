@@ -84,6 +84,9 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!agentCols.includes('num_turns')) {
     db.exec('ALTER TABLE agents ADD COLUMN num_turns INTEGER');
   }
+  if (!agentCols.includes('pending_wait_ids')) {
+    db.exec('ALTER TABLE agents ADD COLUMN pending_wait_ids TEXT');
+  }
 
   // FTS5 virtual table for full-text search across agent output
   db.exec(`

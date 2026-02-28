@@ -3,6 +3,7 @@ import * as queries from '../db/queries.js';
 import { reattachAgent, getLogPath } from './AgentRunner.js';
 import { isTmuxSessionAlive, attachPty } from './PtyManager.js';
 import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
+import { orphanedWaits } from '../mcp/McpServer.js';
 import type { ClaudeStreamEvent } from '../../shared/types.js';
 import { isCodexModel } from '../../shared/types.js';
 
@@ -112,6 +113,24 @@ export function runRecovery(): void {
           console.log(`[recovery] reattaching tmux agent ${agent.id} (session alive)`);
           attachPty(agent.id, job);
           tmuxReattached++;
+
+          // If this agent was in the middle of wait_for_jobs when the server restarted,
+          // re-register it as an orphaned wait so the watchdog can restart it once its
+          // child jobs are all terminal. Set disconnected_at in the past to bypass the
+          // 60-second grace period — the server restart already serves as that delay.
+          const pendingWaitIds: string | null = (agent as any).pending_wait_ids ?? null;
+          if (pendingWaitIds) {
+            try {
+              const jobIds: string[] = JSON.parse(pendingWaitIds);
+              if (Array.isArray(jobIds) && jobIds.length > 0) {
+                orphanedWaits.set(agent.id, {
+                  job_ids: jobIds,
+                  disconnected_at: Date.now() - 61_000, // bypass the 60s grace period
+                });
+                console.log(`[recovery] agent ${agent.id} was in wait_for_jobs — registered as orphaned wait for [${jobIds.join(', ')}]`);
+              }
+            } catch { /* malformed JSON — skip */ }
+          }
         } else {
           // Interactive or debate-stage → done; other non-interactive → failed (no finish_job called)
           const isDebateStage = !!(job as any).debate_role;

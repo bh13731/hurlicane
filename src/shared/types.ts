@@ -81,6 +81,7 @@ export interface Agent {
   cost_usd: number | null;    // total_cost_usd from result event
   duration_ms: number | null; // duration_ms from result event
   num_turns: number | null;   // num_turns from result event
+  pending_wait_ids: string | null; // JSON array of job IDs being waited on (cleared when done)
   started_at: number;
   updated_at: number;
   finished_at: number | null;

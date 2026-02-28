@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents } from './AgentRunner.js';
+import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents, startTailing, stopTailing } from './AgentRunner.js';
 import type { Job } from '../../shared/types.js';
 import { isCodexModel, codexModelName } from '../../shared/types.js';
 
@@ -141,9 +141,16 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
     // Note: --skip-git-repo-check is a Claude flag and does NOT exist in Codex.
     execLine = `exec ${JSON.stringify(CODEX)} --dangerously-bypass-approvals-and-sandbox -C ${JSON.stringify(workDir)} -c 'mcp_servers.orchestrator.url="${mcpUrl}"'${modelFlag}`;
   } else {
-    const printFlag = isDebateStage ? ' --print --output-format stream-json --verbose' : '';
     const resumeFlag = resumeSessionId ? ` --resume ${JSON.stringify(resumeSessionId)}` : '';
-    execLine = `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''}${printFlag}${resumeFlag} "$(cat ${JSON.stringify(pFile)})"`;
+    if (isDebateStage) {
+      // Pipe --print output through tee so: (a) you can attach to the tmux session to observe,
+      // and (b) the clean stream-json lands in a .ndjson file the UI can display properly.
+      // Can't use `exec` with a pipe — the shell stays alive until claude + tee both finish.
+      const ndjsonPath = path.join(PTY_LOG_DIR, `${agentId}.ndjson`);
+      execLine = `${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''} --print --output-format stream-json --verbose${resumeFlag} "$(cat ${JSON.stringify(pFile)})" | tee ${JSON.stringify(ndjsonPath)}`;
+    } else {
+      execLine = `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''}${resumeFlag} "$(cat ${JSON.stringify(pFile)})"`;
+    }
   }
 
   const scriptLines = [
@@ -233,8 +240,51 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
   }, 4000);
 }
 
+/**
+ * Flush any lines from the tee'd .ndjson file that the live tailer hasn't stored yet
+ * (small race window between the last interval tick and stopTailing). Also extracts
+ * cost/duration/turns from the result event and updates the agent record.
+ */
+function flushDebateNdjson(agentId: string): void {
+  const ndjsonPath = path.join(PTY_LOG_DIR, `${agentId}.ndjson`);
+  try {
+    const lines = fs.readFileSync(ndjsonPath, 'utf8').split('\n').filter(Boolean);
+    // Only import lines the live tailer hasn't stored yet
+    const nextSeq = queries.getAgentLastSeq(agentId) + 1;
+    let seq = nextSeq;
+    let costUsd: number | null = null;
+    let durationMs: number | null = null;
+    let numTurns: number | null = null;
+    for (const line of lines.slice(nextSeq)) {
+      let eventType = 'raw';
+      try {
+        const event = JSON.parse(line);
+        eventType = typeof event.type === 'string' ? event.type : 'raw';
+        if (event.type === 'result') {
+          costUsd = event.total_cost_usd ?? null;
+          durationMs = event.duration_ms ?? null;
+          numTurns = event.num_turns ?? null;
+        }
+      } catch { /* not valid JSON — store as raw */ }
+      queries.insertAgentOutput({ agent_id: agentId, seq: seq++, event_type: eventType, content: line, created_at: Date.now() });
+    }
+    if (costUsd !== null || durationMs !== null || numTurns !== null) {
+      queries.updateAgent(agentId, { cost_usd: costUsd, duration_ms: durationMs, num_turns: numTurns });
+    }
+    const flushed = seq - nextSeq;
+    if (flushed > 0) console.log(`[pty ${agentId}] flushed ${flushed} late lines from debate ndjson`);
+  } catch { /* no ndjson file or read error — skip silently */ }
+}
+
 export function attachPty(agentId: string, job: Job, cols = 220, rows = 50): void {
   if (_ptys.has(agentId)) return; // already attached
+
+  // For debate-stage agents running --print, start tailing the tee'd .ndjson file so
+  // agent_output is populated live and the UI streams output as it arrives.
+  if (!!(job as any).debate_role) {
+    const ndjsonPath = path.join(PTY_LOG_DIR, `${agentId}.ndjson`);
+    startTailing(agentId, job, ndjsonPath, 0, null);
+  }
 
   // Use dimensions from client resize if received before PTY was attached
   const pendingSize = _pendingResizes.get(agentId);
@@ -322,6 +372,13 @@ export function attachPty(agentId: string, job: Job, cols = 220, rows = 50): voi
         const isDebateStage = !!(job as any).debate_role;
         const status = (job.is_interactive || isDebateStage) ? 'done' : 'failed';
         const errorMsg = (job.is_interactive || isDebateStage) ? null : 'Agent session ended without calling finish_job.';
+
+        // For debate-stage agents, stop the live tailer then flush any lines it missed
+        // in the small race window between the last poll and the PTY exit.
+        if (isDebateStage) {
+          stopTailing(agentId);
+          flushDebateNdjson(agentId);
+        }
 
         const updateFields: Parameters<typeof queries.updateAgent>[1] = { status, finished_at: Date.now() };
         if (errorMsg) updateFields.error_message = errorMsg;
