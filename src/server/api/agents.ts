@@ -61,7 +61,17 @@ router.get('/:id/full-output', (req, res) => {
   const agent = queries.getAgentById(req.params.id);
   if (!agent) { res.status(404).json({ error: 'not found' }); return; }
   const tail = req.query.tail ? parseInt(req.query.tail as string, 10) : undefined;
-  res.json(queries.getAgentFullOutput(req.params.id, tail));
+  // Use slim variant that trims large tool inputs/results for terminal display
+  res.json(queries.getAgentFullOutputSlim(req.params.id, tail));
+});
+
+// Pre-rendered terminal output — server does JSON parse + render so the client
+// just calls term.write() with the result. Much smaller payload, zero client-side parsing.
+router.get('/:id/rendered-output', (req, res) => {
+  const agent = queries.getAgentById(req.params.id);
+  if (!agent) { res.status(404).json({ error: 'not found' }); return; }
+  const tail = req.query.tail ? parseInt(req.query.tail as string, 10) : undefined;
+  res.json(queries.getAgentPrerenderedOutput(req.params.id, tail));
 });
 
 router.get('/:id/pty-history', (req, res) => {
@@ -136,8 +146,6 @@ router.post('/:id/retry', (req, res) => {
 router.post('/:id/continue', (req, res) => {
   const agent = queries.getAgentById(req.params.id);
   if (!agent) { res.status(404).json({ error: 'not found' }); return; }
-  if (!agent.session_id) { res.status(400).json({ error: 'Agent has no session to resume' }); return; }
-
   const { message, interactive } = req.body as { message?: string; interactive?: boolean };
   if (!message?.trim()) { res.status(400).json({ error: 'message is required' }); return; }
 
@@ -167,9 +175,9 @@ router.post('/:id/continue', (req, res) => {
   socket.emitAgentNew(newAgent);
 
   if (interactive) {
-    startInteractiveAgent({ agentId, job: contJob, resumeSessionId: agent.session_id });
+    startInteractiveAgent({ agentId, job: contJob, ...(agent.session_id ? { resumeSessionId: agent.session_id } : {}) });
   } else {
-    runAgent({ agentId, job: contJob, resumeSessionId: agent.session_id });
+    runAgent({ agentId, job: contJob, ...(agent.session_id ? { resumeSessionId: agent.session_id } : {}) });
   }
 
   res.status(201).json(queries.getAgentWithJob(agentId));

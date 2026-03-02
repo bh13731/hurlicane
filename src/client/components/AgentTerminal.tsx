@@ -505,12 +505,11 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
         setIsTruncated(false);
         term.clear();
         term.write('\x1b[2mLoading full history…\x1b[0m');
-        fetch(`/api/agents/${agent.id}/full-output`)
+        fetch(`/api/agents/${agent.id}/rendered-output`)
           .then(r => r.json())
-          .then((segments: AgentOutputSegment[]) => {
+          .then((result: { text: string; truncated: boolean }) => {
             term.clear();
-            if (!Array.isArray(segments)) return;
-            writeSegments(segments);
+            if (result.text) term.write(result.text);
             term.scrollToTop();
           })
           .catch(console.error);
@@ -521,19 +520,18 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
         if (position < 50) loadFullHistoryRef.current();
       });
 
-      // Load historical output, capped at TAIL lines
+      // Load historical output using pre-rendered endpoint (server does JSON
+      // parse + ANSI rendering so we just term.write the result — much faster)
       term.write('\x1b[2mLoading output…\x1b[0m');
-      fetch(`/api/agents/${agent.id}/full-output?tail=${TAIL}`)
+      fetch(`/api/agents/${agent.id}/rendered-output?tail=${TAIL}`)
         .then(r => r.json())
-        .then((segments: AgentOutputSegment[]) => {
+        .then((result: { text: string; truncated: boolean }) => {
           term.clear();
-          if (!Array.isArray(segments)) return;
-          const anyTruncated = segments.some(s => s.truncated);
-          if (anyTruncated) {
+          if (result.truncated) {
             term.write(`\x1b[2m[showing last ${TAIL} lines — scroll to top to load more]\x1b[0m\r\n`);
           }
-          writeSegments(segments);
-          setIsTruncated(anyTruncated);
+          if (result.text) term.write(result.text);
+          setIsTruncated(result.truncated);
         })
         .catch(console.error);
 
@@ -768,7 +766,7 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
         <RetryButton agentId={agent.id} onRetried={onContinued} />
       )}
 
-      {(agent.status === 'done' || agent.status === 'failed') && agent.session_id && onContinued && (
+      {(agent.status === 'done' || (agent.status === 'failed' && agent.session_id)) && onContinued && (
         <ContinueInput agentId={agent.id} onContinued={onContinued} />
       )}
     </div>

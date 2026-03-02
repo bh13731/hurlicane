@@ -2,9 +2,11 @@ import { randomUUID } from 'crypto';
 import { getDb } from './database.js';
 import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, Debate, DebateStatus, DebateRole, RetryPolicy, JobStatus, AgentStatus, SearchResult, AgentWarning, Worktree, Nudge, KBEntry, Review, TemplateModelStat, ReviewStatus } from '../../shared/types.js';
 
-// node:sqlite returns null-prototype objects; cast them via JSON round-trip helper
+// node:sqlite returns null-prototype objects; shallow-copy to a regular object.
+// SQLite rows are always flat scalars so a shallow copy is sufficient and far
+// cheaper than the JSON round-trip previously used here.
 function cast<T>(val: unknown): T {
-  return JSON.parse(JSON.stringify(val)) as T;
+  return Object.assign({} as T, val as object);
 }
 
 // ─── Jobs ─────────────────────────────────────────────────────────────────────
@@ -479,6 +481,204 @@ export function getAgentFullOutput(agentId: string, tailLines?: number): AgentOu
     }
     return { agent_id: agent.id, job_title: job?.title ?? '(unknown)', job_description: job?.description ?? '', output, truncated };
   });
+}
+
+/**
+ * Trim a raw stream-json content string for terminal display.
+ * The terminal renderer only displays: assistant text blocks, tool names
+ * (with a 120-char input preview), system/result/error messages.
+ * Everything else (user/tool_result events, large tool inputs) is invisible
+ * but can account for 90%+ of the payload. Strip it server-side.
+ */
+function trimContentForDisplay(content: string): string {
+  // Fast path: short strings never need trimming
+  if (content.length < 512) return content;
+  try {
+    const ev = JSON.parse(content);
+    // 'user' events render to empty string in the terminal — gut them entirely.
+    // Keep just the type so the client's JSON.parse still works.
+    if (ev.type === 'user') {
+      return '{"type":"user"}';
+    }
+    if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
+      let changed = false;
+      for (const block of ev.message.content) {
+        if (block.type === 'tool_use' && block.input != null) {
+          const str = typeof block.input === 'string' ? block.input : JSON.stringify(block.input);
+          if (str.length > 200) {
+            block.input = str.slice(0, 200);
+            changed = true;
+          }
+        }
+        if (block.type === 'tool_result') {
+          if (typeof block.content === 'string' && block.content.length > 200) {
+            block.content = block.content.slice(0, 200) + '…';
+            changed = true;
+          } else if (Array.isArray(block.content)) {
+            block.content = [{ type: 'text', text: '(trimmed)' }];
+            changed = true;
+          }
+        }
+        // Extended thinking blocks are not rendered in the terminal.
+        // Strip the large cryptographic signature and trim the thinking text.
+        if (block.type === 'thinking') {
+          if (block.signature) { delete block.signature; changed = true; }
+          if (typeof block.thinking === 'string' && block.thinking.length > 100) {
+            block.thinking = block.thinking.slice(0, 100) + '…';
+            changed = true;
+          }
+        }
+      }
+      if (changed) return JSON.stringify(ev);
+    }
+    if (ev.type === 'result' && typeof ev.result === 'string' && ev.result.length > 2000) {
+      ev.result = ev.result.slice(0, 2000) + '…';
+      return JSON.stringify(ev);
+    }
+    // Codex: item.completed with command_execution — client caps aggregated_output at 500 chars
+    if (ev.type === 'item.completed' && ev.item) {
+      let changed = false;
+      if (ev.item.type === 'command_execution' && typeof ev.item.aggregated_output === 'string' && ev.item.aggregated_output.length > 600) {
+        ev.item.aggregated_output = ev.item.aggregated_output.slice(0, 600);
+        changed = true;
+      }
+      if (changed) return JSON.stringify(ev);
+    }
+    // Codex: item.started events can be large but render nothing
+    if (ev.type === 'item.started' && ev.item) {
+      return JSON.stringify({ type: ev.type, item: { type: ev.item.type, id: ev.item.id } });
+    }
+    return content;
+  } catch {
+    return content;
+  }
+}
+
+/** Like getAgentFullOutput but trims content payloads for terminal display. */
+export function getAgentFullOutputSlim(agentId: string, tailLines?: number): AgentOutputSegment[] {
+  const segments = getAgentFullOutput(agentId, tailLines);
+  for (const seg of segments) {
+    for (const row of seg.output) {
+      row.content = trimContentForDisplay(row.content);
+    }
+  }
+  return segments;
+}
+
+// ── Server-side terminal rendering ────────────────────────────────────────────
+// Mirrors the client's renderEvent/renderCodexEvent logic so the client can
+// just term.write() a single string instead of JSON.parse-ing each row.
+
+function renderEventServer(content: string): string {
+  try {
+    const ev = JSON.parse(content);
+    // Codex events have dotted type names
+    if (typeof ev.type === 'string' && ev.type.includes('.')) {
+      return renderCodexEventServer(ev);
+    }
+    return renderClaudeEventServer(ev);
+  } catch {
+    return content + '\r\n';
+  }
+}
+
+function renderClaudeEventServer(ev: any): string {
+  switch (ev.type) {
+    case 'system': {
+      const modelInfo = ev.model ? ` | ${ev.model}` : '';
+      return `\x1b[36m[${ev.subtype ?? 'system'}${modelInfo}]\x1b[0m\r\n`;
+    }
+    case 'assistant': {
+      const blocks = ev.message?.content ?? [];
+      let out = '';
+      for (const block of blocks) {
+        if (block.type === 'text' && block.text) {
+          out += `\r\n${block.text}\r\n`;
+        } else if (block.type === 'tool_use' && block.name) {
+          const inputStr = block.input ? (typeof block.input === 'string' ? block.input : JSON.stringify(block.input)) : '';
+          const preview = inputStr.length > 120 ? inputStr.slice(0, 120) + '…' : inputStr;
+          out += `\r\n\x1b[2m⚙ ${block.name}`;
+          if (preview && preview !== '{}') out += `(${preview})`;
+          out += `\x1b[0m\r\n`;
+        }
+      }
+      return out;
+    }
+    case 'result': {
+      if (ev.is_error) {
+        return `\r\n\x1b[31m✗ ${ev.result || 'error'}\x1b[0m\r\n`;
+      }
+      return `\r\n\x1b[32m✓ Done\x1b[0m\r\n`;
+    }
+    case 'error':
+      return `\x1b[31m✗ ${ev.error?.message ?? 'error'}\x1b[0m\r\n`;
+    default:
+      return '';
+  }
+}
+
+function renderCodexEventServer(ev: any): string {
+  switch (ev.type) {
+    case 'thread.started':
+      return `\x1b[36m[codex thread ${ev.thread_id ?? ''}]\x1b[0m\r\n`;
+    case 'item.completed': {
+      const item = ev.item;
+      if (!item) return '';
+      if (item.type === 'reasoning' && item.text) {
+        return `\r\n\x1b[2m\x1b[3m${item.text}\x1b[0m\r\n`;
+      }
+      if (item.type === 'agent_message' && item.text) {
+        return `\r\n${item.text}\r\n`;
+      }
+      if (item.type === 'command_execution') {
+        let out = `\r\n\x1b[2m⚙ ${item.command ?? 'command'}\x1b[0m\r\n`;
+        if (item.aggregated_output) {
+          const preview = item.aggregated_output.length > 500
+            ? item.aggregated_output.slice(0, 500) + '…'
+            : item.aggregated_output;
+          out += `\x1b[2m${preview}\x1b[0m\r\n`;
+        }
+        if (item.exit_code != null && item.exit_code !== 0) {
+          out += `\x1b[31m(exit ${item.exit_code})\x1b[0m\r\n`;
+        }
+        return out;
+      }
+      return '';
+    }
+    case 'turn.completed':
+      return `\r\n\x1b[32m✓ Done\x1b[0m\r\n`;
+    case 'turn.failed':
+      return `\r\n\x1b[31m✗ Turn failed${ev.message ? ': ' + ev.message : ''}\x1b[0m\r\n`;
+    case 'error':
+      return `\x1b[31m✗ ${ev.error?.message ?? ev.message ?? 'error'}\x1b[0m\r\n`;
+    default:
+      return '';
+  }
+}
+
+export interface PrerenderedOutput {
+  text: string;
+  truncated: boolean;
+}
+
+/** Pre-render agent output to terminal ANSI text server-side. */
+export function getAgentPrerenderedOutput(agentId: string, tailLines?: number): PrerenderedOutput {
+  const segments = getAgentFullOutput(agentId, tailLines);
+  let text = '';
+  let truncated = false;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (seg.truncated) truncated = true;
+    if (i > 0) {
+      text += `\r\n\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n`;
+      text += `\x1b[2m↩ ${seg.job_description}\x1b[0m\r\n`;
+      text += `\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n\r\n`;
+    }
+    for (const row of seg.output) {
+      text += renderEventServer(row.content);
+    }
+  }
+  return { text, truncated };
 }
 
 export function getAgentLastSeq(agentId: string): number {
@@ -1013,13 +1213,17 @@ export function searchKB(query: string, projectId?: string, limit = 20): Array<K
   try {
     const args = projectId ? [query, projectId, limit] : [query, limit];
     const rows = db.prepare(sql).all(...args) as any[];
-    return rows.map(r => cast<KBEntry & { excerpt: string }>(r));
+    const results = rows.map(r => cast<KBEntry & { excerpt: string }>(r));
+    if (results.length > 0) touchKBEntries(results.map(r => r.id));
+    return results;
   } catch {
     try {
       const escaped = `"${query.replace(/"/g, '""')}"`;
       const args = projectId ? [escaped, projectId, limit] : [escaped, limit];
       const rows = db.prepare(sql).all(...args) as any[];
-      return rows.map(r => cast<KBEntry & { excerpt: string }>(r));
+      const results = rows.map(r => cast<KBEntry & { excerpt: string }>(r));
+      if (results.length > 0) touchKBEntries(results.map(r => r.id));
+      return results;
     } catch { return []; }
   }
 }
@@ -1055,10 +1259,115 @@ export function deleteKBEntry(id: string): void {
   db.prepare('DELETE FROM knowledge_base WHERE id = ?').run(id);
 }
 
-export function getMemoryForJob(projectId: string | null, limit = 10): KBEntry[] {
+/** Update last_hit_at timestamp for entries that were matched/used. */
+export function touchKBEntries(ids: string[]): void {
+  if (ids.length === 0) return;
+  const db = getDb();
+  const now = Date.now();
+  const placeholders = ids.map(() => '?').join(',');
+  db.prepare(`UPDATE knowledge_base SET last_hit_at = ? WHERE id IN (${placeholders})`).run(now, ...ids);
+}
+
+const STOPWORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall',
+  'should', 'may', 'might', 'must', 'can', 'could', 'to', 'of', 'in',
+  'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through',
+  'during', 'before', 'after', 'above', 'below', 'between', 'under',
+  'and', 'but', 'or', 'nor', 'not', 'so', 'yet', 'both', 'either',
+  'neither', 'each', 'every', 'all', 'any', 'few', 'more', 'most',
+  'other', 'some', 'such', 'no', 'only', 'own', 'same', 'than',
+  'too', 'very', 'just', 'also', 'it', 'its', 'this', 'that', 'these',
+  'those', 'i', 'you', 'he', 'she', 'we', 'they', 'me', 'him', 'her',
+  'us', 'them', 'my', 'your', 'his', 'our', 'their', 'what', 'which',
+  'who', 'when', 'where', 'how', 'why', 'if', 'then', 'else', 'about',
+  'up', 'out', 'use', 'using', 'used', 'make', 'made', 'new', 'get',
+  'set', 'add', 'run', 'file', 'code', 'task', 'job', 'agent', 'work',
+]);
+
+/** Extract keywords from text, skip stopwords, return top N words. */
+function extractKeywords(text: string, maxWords = 8): string[] {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s_-]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 3 && !STOPWORDS.has(w));
+  // Deduplicate while preserving order
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const w of words) {
+    if (!seen.has(w)) { seen.add(w); unique.push(w); }
+  }
+  return unique.slice(0, maxWords);
+}
+
+/**
+ * Search KB using keywords extracted from a query string.
+ * Builds an OR query from extracted keywords, handles FTS syntax errors with fallback.
+ */
+export function searchKBForMemory(query: string, projectId: string | null, limit = 10): KBEntry[] {
+  const db = getDb();
+  const keywords = extractKeywords(query);
+  if (keywords.length === 0) return [];
+
+  // Build FTS5 OR query from keywords
+  const ftsQuery = keywords.join(' OR ');
+
+  // Project-scoped entries ranked first via sort_group
+  const sql = projectId
+    ? `SELECT kb.*, CASE WHEN kb.project_id = ? THEN 0 ELSE 1 END AS sort_group
+       FROM kb_fts f
+       JOIN knowledge_base kb ON kb.id = f.kb_id
+       WHERE kb_fts MATCH ?
+         AND (kb.project_id = ? OR kb.project_id IS NULL)
+       ORDER BY sort_group ASC, rank
+       LIMIT ?`
+    : `SELECT kb.*
+       FROM kb_fts f
+       JOIN knowledge_base kb ON kb.id = f.kb_id
+       WHERE kb_fts MATCH ?
+         AND kb.project_id IS NULL
+       ORDER BY rank
+       LIMIT ?`;
+
+  try {
+    const args = projectId
+      ? [projectId, ftsQuery, projectId, limit]
+      : [ftsQuery, limit];
+    const rows = db.prepare(sql).all(...args) as any[];
+    const results = rows.map(r => cast<KBEntry>(r));
+    if (results.length > 0) touchKBEntries(results.map(r => r.id));
+    return results;
+  } catch {
+    // FTS syntax error — try as quoted phrase of the first keyword
+    try {
+      const escaped = `"${keywords[0]}"`;
+      const args = projectId
+        ? [projectId, escaped, projectId, limit]
+        : [escaped, limit];
+      const rows = db.prepare(sql).all(...args) as any[];
+      const results = rows.map(r => cast<KBEntry>(r));
+      if (results.length > 0) touchKBEntries(results.map(r => r.id));
+      return results;
+    } catch { return []; }
+  }
+}
+
+/**
+ * Get relevant KB entries for a job based on its title and description.
+ * Uses FTS keyword search for relevance, falls back to recency if FTS returns nothing.
+ */
+export function getMemoryForJob(projectId: string | null, jobTitle?: string, jobDescription?: string, limit = 10): KBEntry[] {
+  // Try relevance-based search first
+  const searchText = [jobTitle, jobDescription].filter(Boolean).join(' ');
+  if (searchText.trim()) {
+    const results = searchKBForMemory(searchText, projectId, limit);
+    if (results.length > 0) return results;
+  }
+
+  // Fallback: recency-based (original behavior)
   const db = getDb();
   if (projectId) {
-    // Project-scoped first, then global, ordered by recency within each group
     const rows = db.prepare(`
       SELECT *, CASE WHEN project_id = ? THEN 0 ELSE 1 END AS sort_group
       FROM knowledge_base
@@ -1066,15 +1375,45 @@ export function getMemoryForJob(projectId: string | null, limit = 10): KBEntry[]
       ORDER BY sort_group ASC, updated_at DESC
       LIMIT ?
     `).all(projectId, projectId, limit);
-    return rows.map(r => cast<KBEntry>(r));
+    const results = rows.map(r => cast<KBEntry>(r));
+    if (results.length > 0) touchKBEntries(results.map(r => r.id));
+    return results;
   }
-  // No project — only global entries
   const rows = db.prepare(`
     SELECT * FROM knowledge_base
     WHERE project_id IS NULL
     ORDER BY updated_at DESC
     LIMIT ?
   `).all(limit);
+  const results = rows.map(r => cast<KBEntry>(r));
+  if (results.length > 0) touchKBEntries(results.map(r => r.id));
+  return results;
+}
+
+/** Delete stale KB entries older than maxAge that have never been hit. */
+export function pruneStaleKBEntries(maxAgeMs: number): number {
+  const db = getDb();
+  const cutoff = Date.now() - maxAgeMs;
+  // Get IDs to delete so we can clean up FTS
+  const rows = db.prepare(`
+    SELECT id, rowid FROM knowledge_base
+    WHERE last_hit_at IS NULL AND created_at < ?
+  `).all(cutoff) as Array<{ id: string; rowid: number }>;
+  for (const row of rows) {
+    db.prepare('DELETE FROM kb_fts WHERE rowid = ?').run(row.rowid);
+    db.prepare('DELETE FROM knowledge_base WHERE id = ?').run(row.id);
+  }
+  return rows.length;
+}
+
+/** List KB entries for a project grouped by FTS similarity for consolidation. */
+export function getKBEntriesForProject(projectId: string | null): KBEntry[] {
+  const db = getDb();
+  if (projectId) {
+    const rows = db.prepare('SELECT * FROM knowledge_base WHERE project_id = ? ORDER BY updated_at DESC').all(projectId);
+    return rows.map(r => cast<KBEntry>(r));
+  }
+  const rows = db.prepare('SELECT * FROM knowledge_base WHERE project_id IS NULL ORDER BY updated_at DESC').all();
   return rows.map(r => cast<KBEntry>(r));
 }
 

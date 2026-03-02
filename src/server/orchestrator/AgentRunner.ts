@@ -696,17 +696,33 @@ function buildPrompt(job: Job): string {
     }
   }
 
-  // Inject relevant memories from knowledge base
-  const projectId: string | null = (job as any).project_id ?? null;
-  const memories = queries.getMemoryForJob(projectId);
-  if (memories.length > 0) {
-    prompt += '\n\n## Memory\nRelevant learnings from previous tasks:\n';
-    for (const m of memories) {
-      const truncated = m.content.length > 300 ? m.content.slice(0, 300) + '...' : m.content;
-      const scope = m.project_id ? 'project' : 'global';
-      prompt += `\n### ${m.title} [${scope}]\n${truncated}\n`;
-    }
-  }
+  // Inject relevant memories from knowledge base (2000-char budget)
+  prompt += buildMemorySection(job);
 
   return prompt;
+}
+
+export const MEMORY_BUDGET = 2000;
+
+export function buildMemorySection(job: Job): string {
+  const projectId: string | null = (job as any).project_id ?? null;
+  const memories = queries.getMemoryForJob(projectId, job.title, job.description);
+  if (memories.length === 0) return '';
+
+  let section = '\n\n## Memory\nRelevant learnings from previous tasks:\n';
+  let budget = MEMORY_BUDGET - section.length;
+
+  for (const m of memories) {
+    const scope = m.project_id ? 'project' : 'global';
+    const header = `\n### ${m.title} [${scope}]\n`;
+    const remaining = budget - header.length - 5; // 5 for "...\n"
+    if (remaining <= 0) break;
+    const content = m.content.length > remaining ? m.content.slice(0, remaining) + '...' : m.content;
+    const entry = header + content + '\n';
+    budget -= entry.length;
+    section += entry;
+    if (budget <= 0) break;
+  }
+
+  return section;
 }

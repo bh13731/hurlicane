@@ -11,6 +11,7 @@ import { startWorkQueue, stopWorkQueue, setMaxConcurrent } from './orchestrator/
 import { startWatchdog, stopWatchdog } from './orchestrator/StuckJobWatchdog.js';
 import { startHealthMonitor, stopHealthMonitor } from './orchestrator/HealthMonitor.js';
 import { startWorktreeCleanup, stopWorktreeCleanup } from './orchestrator/WorktreeCleanup.js';
+import { startKBConsolidator, stopKBConsolidator } from './orchestrator/KBConsolidator.js';
 import { runRecovery } from './orchestrator/recovery.js';
 import { writeInput, resizePty } from './orchestrator/PtyManager.js';
 import * as queries from './db/queries.js';
@@ -104,6 +105,7 @@ async function main() {
   startWatchdog();
   startHealthMonitor();
   startWorktreeCleanup();
+  startKBConsolidator();
 
   // Restore persisted settings
   const savedMax = queries.getNote('setting:maxConcurrentAgents');
@@ -134,6 +136,7 @@ async function main() {
     stopWatchdog();
     stopHealthMonitor();
     stopWorktreeCleanup();
+    stopKBConsolidator();
 
     // Stop accepting new HTTP connections; wait for in-flight requests to drain
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));

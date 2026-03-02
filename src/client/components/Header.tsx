@@ -17,6 +17,8 @@ interface HeaderProps {
   onClearProject?: () => void;
   todayClaudeCost?: number;
   todayCodexCost?: number;
+  costAutoUpdate?: boolean;
+  onToggleCostAutoUpdate?: () => void;
 }
 
 function HurlicaLogo() {
@@ -44,7 +46,7 @@ function HurlicaLogo() {
   );
 }
 
-export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onKnowledgeBase, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost }: HeaderProps) {
+export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onKnowledgeBase, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate }: HeaderProps) {
   const hasCost = (todayClaudeCost != null && todayClaudeCost > 0) || (todayCodexCost != null && todayCodexCost > 0);
   return (
     <header className="header">
@@ -71,6 +73,12 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
               <span title="Codex cost today" style={{ color: 'var(--codex)' }}>Codex ${todayCodexCost.toFixed(4)}</span>
             )}
             <span style={{ opacity: 0.6, marginLeft: 4 }}>today</span>
+            {onToggleCostAutoUpdate && (
+              <label style={{ marginLeft: 8, opacity: 0.6, cursor: 'pointer', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: 3 }} title="Auto-refresh cost display every 60s">
+                <input type="checkbox" checked={costAutoUpdate ?? true} onChange={onToggleCostAutoUpdate} style={{ margin: 0 }} />
+                auto
+              </label>
+            )}
           </div>
         )}
       </div>

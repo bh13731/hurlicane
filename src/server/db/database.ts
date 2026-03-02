@@ -277,6 +277,12 @@ export function initDb(dbPath: string): DatabaseSync {
     )
   `);
 
+  // last_hit_at column on knowledge_base — tracks when entries are actually matched/used
+  const kbCols: string[] = (db.prepare('PRAGMA table_info(knowledge_base)').all() as any[]).map((r: any) => r.name);
+  if (!kbCols.includes('last_hit_at')) {
+    db.exec('ALTER TABLE knowledge_base ADD COLUMN last_hit_at INTEGER');
+  }
+
   // ── Feature 3: Multi-Model Review Pipeline ────────────────────────────────
   db.exec(`
     CREATE TABLE IF NOT EXISTS reviews (

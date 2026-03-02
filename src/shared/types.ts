@@ -443,6 +443,7 @@ export interface KBEntry {
   source: string | null;
   agent_id: string | null;
   project_id: string | null;
+  last_hit_at: number | null;
   created_at: number;
   updated_at: number;
 }

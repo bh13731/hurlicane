@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
+import { runConsolidation } from '../orchestrator/KBConsolidator.js';
 
 const router = Router();
 
@@ -42,6 +43,15 @@ router.delete('/:id', (req, res) => {
   if (!entry) { res.status(404).json({ error: 'not found' }); return; }
   queries.deleteKBEntry(req.params.id);
   res.json({ deleted: true });
+});
+
+router.post('/consolidate', async (_req, res) => {
+  try {
+    const result = await runConsolidation();
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message ?? 'consolidation failed' });
+  }
 });
 
 export default router;

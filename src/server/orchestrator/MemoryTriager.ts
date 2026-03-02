@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
-import type { Job } from '../../shared/types.js';
+import type { Job, KBEntry } from '../../shared/types.js';
 
 const TRIAGE_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -14,6 +14,7 @@ interface Learning {
 interface TriageResult {
   index: number;
   classification: 'project' | 'global' | 'discard';
+  supersedes?: string; // ID of existing entry this learning improves on
 }
 
 /**
@@ -40,26 +41,40 @@ export async function triageLearnings(agentId: string, job: Job): Promise<void> 
 
   const projectId: string | null = (job as any).project_id ?? null;
 
-  // Fetch existing KB titles for dedup context
-  const existingEntries = queries.listKBEntries(projectId ?? undefined);
-  const existingTitles = existingEntries.map(e => e.title).slice(0, 50);
+  // Find similar existing KB entries using FTS on each learning's title
+  const candidates = findCandidateMatches(learnings, projectId);
 
   let classifications: TriageResult[];
   try {
-    classifications = await classifyLearnings(learnings, existingTitles, job.title);
+    classifications = await classifyLearnings(learnings, candidates, job.title);
   } catch (err) {
     console.error(`[memory-triage] API call failed for agent ${agentId}, storing all as project-scoped:`, err);
-    // Fallback: store all as project-scoped
     classifications = learnings.map((_, i) => ({ index: i, classification: 'project' as const }));
   }
 
   let stored = 0;
+  let updated = 0;
   for (const result of classifications) {
     if (result.classification === 'discard') continue;
     const learning = learnings[result.index];
     if (!learning) continue;
 
     const entryProjectId = result.classification === 'global' ? null : projectId;
+
+    // If this learning supersedes an existing entry, update it instead of creating a duplicate
+    if (result.supersedes) {
+      const existing = queries.getKBEntryById(result.supersedes);
+      if (existing) {
+        queries.updateKBEntry(result.supersedes, {
+          title: learning.title,
+          content: learning.content,
+          tags: learning.tags ?? existing.tags,
+        });
+        updated++;
+        continue;
+      }
+    }
+
     queries.insertKBEntry({
       id: randomUUID(),
       title: learning.title,
@@ -75,19 +90,50 @@ export async function triageLearnings(agentId: string, job: Job): Promise<void> 
   // Clean up transient note
   queries.deleteNote(noteKey);
 
-  if (stored > 0) {
-    console.log(`[memory-triage] agent ${agentId}: stored ${stored}/${learnings.length} learnings`);
+  if (stored > 0 || updated > 0) {
+    console.log(`[memory-triage] agent ${agentId}: stored ${stored}, updated ${updated}/${learnings.length} learnings`);
   }
+}
+
+interface CandidateEntry {
+  id: string;
+  title: string;
+  excerpt: string; // first ~200 chars of content
+}
+
+/**
+ * For each incoming learning, search the KB via FTS to find semantically similar
+ * existing entries. Returns a flat list of candidates with content excerpts.
+ */
+function findCandidateMatches(learnings: Learning[], projectId: string | null): CandidateEntry[] {
+  const seen = new Set<string>();
+  const candidates: CandidateEntry[] = [];
+
+  for (const learning of learnings) {
+    try {
+      const results = queries.searchKB(learning.title, projectId ?? undefined, 5);
+      for (const r of results) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        candidates.push({
+          id: r.id,
+          title: r.title,
+          excerpt: r.content.slice(0, 200),
+        });
+      }
+    } catch { /* FTS error — skip */ }
+  }
+
+  return candidates.slice(0, 30); // cap context size
 }
 
 async function classifyLearnings(
   learnings: Learning[],
-  existingTitles: string[],
+  candidates: CandidateEntry[],
   jobTitle: string,
 ): Promise<TriageResult[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    // No API key — store all as project-scoped
     return learnings.map((_, i) => ({ index: i, classification: 'project' as const }));
   }
 
@@ -95,8 +141,8 @@ async function classifyLearnings(
     `${i}. "${l.title}": ${l.content.slice(0, 200)}${l.scope ? ` [hint: ${l.scope}]` : ''}`
   ).join('\n');
 
-  const existingList = existingTitles.length > 0
-    ? `\nExisting KB entries (avoid duplicates):\n${existingTitles.map(t => `- ${t}`).join('\n')}`
+  const existingList = candidates.length > 0
+    ? `\nExisting KB entries (check for duplicates — compare CONTENT, not just titles):\n${candidates.map(c => `- [${c.id}] "${c.title}": ${c.excerpt}`).join('\n')}`
     : '';
 
   const prompt = `You are triaging learnings from an AI coding agent into a knowledge base.
@@ -111,7 +157,12 @@ For each learning, classify as:
 - "global" — universally useful (language patterns, tool usage tips, general debugging strategies)
 - "discard" — too vague, trivially obvious, or duplicates an existing entry
 
-Respond with ONLY a JSON array like: [{"index":0,"classification":"project"},{"index":1,"classification":"discard"}]`;
+IMPORTANT: Two entries are duplicates if they encode the SAME fact, even if worded differently.
+If a new learning improves on or updates an existing entry, set "supersedes" to that entry's ID
+instead of discarding — the existing entry will be updated with the new content.
+
+Respond with ONLY a JSON array like:
+[{"index":0,"classification":"project"},{"index":1,"classification":"discard"},{"index":2,"classification":"project","supersedes":"existing-entry-id"}]`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
@@ -125,7 +176,7 @@ Respond with ONLY a JSON array like: [{"index":0,"classification":"project"},{"i
     },
     body: JSON.stringify({
       model: TRIAGE_MODEL,
-      max_tokens: 256,
+      max_tokens: 512,
       messages: [{ role: 'user', content: prompt }],
     }),
   });
@@ -138,14 +189,12 @@ Respond with ONLY a JSON array like: [{"index":0,"classification":"project"},{"i
   const data = await response.json() as any;
   const text = (data.content?.[0]?.text ?? '').trim();
 
-  // Extract JSON array from response
   const match = text.match(/\[[\s\S]*\]/);
   if (!match) {
     throw new Error(`Could not parse triage response: ${text.slice(0, 200)}`);
   }
 
   const results: TriageResult[] = JSON.parse(match[0]);
-  // Validate and fill in any missing indices with project scope
   const resultMap = new Map(results.map(r => [r.index, r]));
   return learnings.map((_, i) => resultMap.get(i) ?? { index: i, classification: 'project' as const });
 }

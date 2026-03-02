@@ -44,6 +44,65 @@ async function runCcusage(args: string[]): Promise<{ stdout: string; stderr: str
   }
 }
 
+// ── Cache to avoid spawning expensive ccusage processes on every request ─────
+// ccusage shells out to parse log files and can take 10-30s+ under load.
+// The client polls every 60s and on every agent completion, so without caching
+// multiple overlapping ccusage processes easily saturate the CPU.
+const CACHE_TTL_MS = 120_000; // 2 minutes
+const _cache = new Map<string, { data: any; timestamp: number }>();
+let _inFlight: Promise<any> | null = null;
+
+async function fetchUsageCached(since: string): Promise<any> {
+  const cached = _cache.get(since);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  // If another request is already fetching, wait for it instead of spawning more processes
+  if (_inFlight) return _inFlight;
+
+  _inFlight = (async () => {
+    try {
+      const [claudeResult, codexResult] = await Promise.all([
+        runCcusage(['ccusage@17', 'daily', '--since', since, '--json']),
+        runCcusage(['@ccusage/codex@17', 'daily', '--since', since, '--json']),
+      ]);
+
+      if (!claudeResult.stdout.trim()) {
+        throw new Error(`ccusage failed: ${claudeResult.stderr}`);
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(claudeResult.stdout);
+      } catch (parseErr: any) {
+        throw new Error(`Failed to parse ccusage output: ${parseErr.message}`);
+      }
+
+      if (Array.isArray(parsed)) {
+        parsed = { daily: [], totals: null };
+      }
+
+      let codex: unknown = null;
+      if (codexResult.stdout.trim()) {
+        try {
+          const codexParsed = JSON.parse(codexResult.stdout);
+          const normalized = Array.isArray(codexParsed) ? { daily: [], totals: null } : codexParsed;
+          codex = applyCodexFallbackPricing(normalized);
+        } catch { /* codex stays null */ }
+      }
+
+      const result = { ...parsed, codex };
+      _cache.set(since, { data: result, timestamp: Date.now() });
+      return result;
+    } finally {
+      _inFlight = null;
+    }
+  })();
+
+  return _inFlight;
+}
+
 router.get('/', async (req, res) => {
   const since = (req.query.since as string) || '7d';
 
@@ -52,43 +111,12 @@ router.get('/', async (req, res) => {
     return;
   }
 
-  const [claudeResult, codexResult] = await Promise.all([
-    runCcusage(['ccusage@17', 'daily', '--since', since, '--json']),
-    runCcusage(['@ccusage/codex@17', 'daily', '--since', since, '--json']),
-  ]);
-
-  if (!claudeResult.stdout.trim()) {
-    res.status(500).json({ error: `ccusage failed: ${claudeResult.stderr}` });
-    return;
-  }
-
-  let parsed: any;
   try {
-    parsed = JSON.parse(claudeResult.stdout);
-  } catch (parseErr: any) {
-    res.status(500).json({ error: `Failed to parse ccusage output: ${parseErr.message}` });
-    return;
+    const result = await fetchUsageCached(since);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-
-  // ccusage returns [] when there is no data for the period;
-  // normalize to the object shape the client expects.
-  if (Array.isArray(parsed)) {
-    parsed = { daily: [], totals: null };
-  }
-
-  // Attach Codex data (best-effort; null if unavailable)
-  let codex: unknown = null;
-  if (codexResult.stdout.trim()) {
-    try {
-      const codexParsed = JSON.parse(codexResult.stdout);
-      const normalized = Array.isArray(codexParsed) ? { daily: [], totals: null } : codexParsed;
-      codex = applyCodexFallbackPricing(normalized);
-    } catch {
-      // ignore parse error — codex stays null
-    }
-  }
-
-  res.json({ ...parsed, codex });
 });
 
 export default router;

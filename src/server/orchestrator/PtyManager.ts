@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents, startTailing, stopTailing, readClaudeMd } from './AgentRunner.js';
+import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents, startTailing, stopTailing, readClaudeMd, buildMemorySection } from './AgentRunner.js';
 import type { Job } from '../../shared/types.js';
 import { isCodexModel, codexModelName } from '../../shared/types.js';
 
@@ -536,6 +536,9 @@ function buildInteractivePrompt(job: Job): string {
       prompt += `\n\n## Project Instructions (from CLAUDE.md)\n\n${claudeMd}`;
     }
   }
+
+  // Inject relevant memories from knowledge base (2000-char budget)
+  prompt += buildMemorySection(job);
 
   return prompt;
 }

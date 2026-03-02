@@ -55,6 +55,7 @@ export default function App() {
 
   const [todayClaudeCost, setTodayClaudeCost] = useState<number | null>(null);
   const [todayCodexCost, setTodayCodexCost] = useState<number | null>(null);
+  const [costAutoUpdate, setCostAutoUpdate] = useState(true);
   const fetchingCost = useRef(false);
 
   // Track when PTY data was last received per agent (for idle detection)
@@ -118,10 +119,10 @@ export default function App() {
     updateAgent(agent);
     updateJob(agent.job);
     setSelectedAgent(prev => prev?.id === agent.id ? agent : prev);
-    if (agent.status === 'done' || agent.status === 'failed') {
+    if (costAutoUpdate && (agent.status === 'done' || agent.status === 'failed')) {
       fetchTodayCost();
     }
-  }, [updateAgent, updateJob, fetchTodayCost]);
+  }, [updateAgent, updateJob, fetchTodayCost, costAutoUpdate]);
 
   const handleAgentNew = useCallback((agent: AgentWithJob) => {
     addAgent(agent);
@@ -156,12 +157,13 @@ export default function App() {
     onDebateUpdate: updateDebateState,
   });
 
-  // Fetch on mount, then every 60s
+  // Fetch on mount, then every 60s (if auto-update enabled)
   useEffect(() => {
     fetchTodayCost();
+    if (!costAutoUpdate) return;
     const id = setInterval(fetchTodayCost, 60_000);
     return () => clearInterval(id);
-  }, [fetchTodayCost]);
+  }, [fetchTodayCost, costAutoUpdate]);
 
   // ─── Load archived jobs when the archived view is active ──────────────────
   useEffect(() => {
@@ -308,7 +310,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} />
+      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} />
 
       <div className="main-layout">
         <div className={`left-sidebar-stack ${leftTab === 'lineage' && selectedAgent ? '' : 'left-sidebar-stack--narrow'}`}>
