@@ -276,15 +276,16 @@ export default function App() {
 
   const handleSelectAgent = useCallback((agent: AgentWithJob) => {
     setSelectedAgent(agent);
-    setActiveProjectId(agent.job.project_id ?? null);
-  }, []);
+    const canonicalJob = jobs.find(j => j.id === agent.job_id);
+    setActiveProjectId(canonicalJob?.project_id ?? agent.job.project_id ?? null);
+  }, [jobs]);
 
   const handleSelectJob = useCallback((job: Job) => {
     const agent = agents.find(a => a.job_id === job.id);
     if (agent) {
       setSelectedAgent(agent);
-      setActiveProjectId(agent.job.project_id ?? null);
     }
+    setActiveProjectId(job.project_id ?? null);
   }, [agents]);
 
   const handleCancelJob = useCallback(async (job: Job) => {
