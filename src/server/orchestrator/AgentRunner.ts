@@ -472,6 +472,15 @@ export async function handleJobCompletion(
 function handleAgentExit(agentId: string, job: Job, exitCode: number | null): void {
   console.log(`[agent ${agentId}] exited (code ${exitCode ?? 'unknown'})`);
 
+  // If the agent is already in a terminal state, another exit path already handled it
+  // (e.g. PTY onExit vs PID poll race for debate-stage agents). Don't double-process.
+  const current = queries.getAgentById(agentId);
+  const TERMINAL = ['done', 'failed', 'cancelled'];
+  if (current && TERMINAL.includes(current.status)) {
+    console.log(`[agent ${agentId}] already ${current.status}, skipping duplicate exit handler`);
+    return;
+  }
+
   // If the agent was cancelled, the cancel endpoint already updated DB + emitted socket events
   if (cancelledAgents.has(agentId)) {
     cancelledAgents.delete(agentId);
