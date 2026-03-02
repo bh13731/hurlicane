@@ -50,8 +50,9 @@ ORCHESTRATION (spawn and coordinate sub-agents):
       Create a new job that will be run by another agent. Returns { job_id, title, status }.
       work_dir defaults to your own working directory.
   - wait_for_jobs(job_ids, timeout_ms?):
-      Block until all specified jobs finish. Returns each job's status, result_text, and diff.
-      Use this after create_job to collect results from sub-agents.
+      Block until all specified jobs finish. Returns an array of { job_id, title, status, result_text }.
+      Each call returns after at most ~90s. If some jobs still have non-terminal status (queued/running),
+      re-call wait_for_jobs with those job IDs until all are done/failed/cancelled.
 
 SHARED SCRATCHPAD (coordinate data between agents):
   - write_note(key, value): Write a note visible to all agents. Use namespaced keys like "results/step1".

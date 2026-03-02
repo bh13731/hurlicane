@@ -238,7 +238,7 @@ function buildMcpServer(agentId: string): MCP {
 
   server.tool(
     'wait_for_jobs',
-    'Block until all specified jobs reach a terminal state (done/failed/cancelled). Returns an array of { job_id, title, status, result_text } for each job.',
+    'Block until all specified jobs finish. Returns an array of { job_id, title, status, result_text } for each job. Each call returns after at most ~90s. If any jobs still have non-terminal status (queued/running/assigned), re-call wait_for_jobs with those job IDs until all reach a terminal state (done/failed/cancelled).',
     {
       job_ids: waitForJobsSchema.shape.job_ids,
       timeout_ms: waitForJobsSchema.shape.timeout_ms,

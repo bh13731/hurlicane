@@ -10,6 +10,10 @@ export const waitForJobsSchema = z.object({
 
 const TERMINAL: JobStatus[] = ['done', 'failed', 'cancelled'];
 const POLL_MS = 2000;
+// rmcp (Codex CLI's Rust MCP client) has a hardcoded 120s timeout for all tool
+// calls. Cap each wait_for_jobs call to 90s so we always return before that
+// limit fires. Codex agents are expected to retry for still-pending jobs.
+const MAX_SINGLE_WAIT_MS = 90_000;
 
 /**
  * In-memory registry of active wait_for_jobs calls: agentId → job_ids[].
@@ -39,12 +43,18 @@ export async function waitForJobsHandler(
     return JSON.stringify({ error: 'job_ids must not be empty' });
   }
 
+  // Abort any previous wait for this agent (e.g. rmcp timed out and retried)
+  // before setting new state, to prevent zombie handlers with orphaned abort controllers.
+  abortAgentWait(agentId);
+
   console.log(`[wait_for_jobs] agent ${agentId} starting — waiting for ${job_ids.length} jobs: [${job_ids.join(', ')}]`);
   activeWaits.set(agentId, job_ids);
   // Persist to DB so recovery can re-register the orphaned wait after a server restart
   queries.updateAgent(agentId, { pending_wait_ids: JSON.stringify(job_ids) });
 
-  const deadline = Date.now() + timeout_ms;
+  // Cap to MAX_SINGLE_WAIT_MS to stay under rmcp's 120s tool-call timeout.
+  // If jobs aren't done yet, we return their current statuses and the agent retries.
+  const deadline = Date.now() + Math.min(timeout_ms, MAX_SINGLE_WAIT_MS);
   const abortCtrl = new AbortController();
   activeWaitAborts.set(agentId, abortCtrl);
 
@@ -111,21 +121,30 @@ export async function waitForJobsHandler(
       return JSON.stringify({ error: 'MCP connection closed while waiting' });
     }
 
-    // Timed out
+    // Hit the 90s cap (or the caller's timeout). Return current statuses so the
+    // agent can see which jobs finished and retry wait_for_jobs for the rest.
     queries.updateAgent(agentId, { status_message: null, pending_wait_ids: null });
     const agentWithJob = queries.getAgentWithJob(agentId);
     if (agentWithJob) socket.emitAgentUpdate(agentWithJob);
 
     const jobs = job_ids.map(id => queries.getJobById(id));
-    const timedOut = jobs
-      .filter(j => j && !TERMINAL.includes(j.status))
-      .map(j => j!.id);
+    const stillPending = jobs.filter(j => j && !TERMINAL.includes(j!.status)).map(j => j!.id);
+    console.log(`[wait_for_jobs] agent ${agentId} — returning after cap; ${stillPending.length} still pending: [${stillPending.join(', ')}]`);
 
-    console.warn(`[wait_for_jobs] agent ${agentId} TIMED OUT after ${timeout_ms}ms; still pending: [${timedOut.join(', ')}]`);
-    return JSON.stringify({
-      error: `Timed out after ${timeout_ms}ms`,
-      still_pending: timedOut,
+    const results = jobs.map(j => {
+      if (!j) return { job_id: null, status: 'unknown', result_text: null };
+      const agents = queries.getAgentsWithJobByJobId(j.id);
+      const latestAgent = agents[0] ?? null;
+      return {
+        job_id: j.id,
+        title: j.title,
+        status: j.status,
+        result_text: TERMINAL.includes(j.status) && latestAgent
+          ? queries.getAgentResultText(latestAgent.id)
+          : null,
+      };
     });
+    return JSON.stringify(results);
   } finally {
     activeWaits.delete(agentId);
     activeWaitAborts.delete(agentId);
