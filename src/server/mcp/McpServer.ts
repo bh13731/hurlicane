@@ -88,6 +88,7 @@ export function createMcpApp(): express.Application {
         orphanedWaits.delete(agentId);
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
+          enableJsonResponse: true,
           onsessioninitialized: (sid) => {
             transportMap!.set(sid, transport!);
           },
@@ -104,6 +105,7 @@ export function createMcpApp(): express.Application {
         orphanedWaits.delete(agentId);
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
+          enableJsonResponse: true,
           onsessioninitialized: (sid) => {
             transportMap!.set(sid, transport!);
           },
