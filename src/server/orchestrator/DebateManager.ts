@@ -20,7 +20,21 @@ export function onJobCompleted(job: Job): void {
   }
 }
 
+// Track jobs we've already processed to prevent the double-exit race from
+// triggering duplicate spawns. Using a Set is simpler than DB-level locking
+// since all calls happen in the same Node.js process (single-threaded).
+const _processedJobs = new Set<string>();
+
 function _onJobCompleted(job: Job): void {
+  // Guard against double-call from PID poll + PTY onExit race
+  if (_processedJobs.has(job.id)) return;
+  _processedJobs.add(job.id);
+  // Clean up old entries periodically to avoid unbounded growth
+  if (_processedJobs.size > 500) {
+    const entries = [..._processedJobs];
+    for (let i = 0; i < entries.length - 200; i++) _processedJobs.delete(entries[i]);
+  }
+
   const debate = queries.getDebateById(job.debate_id!);
   if (!debate) return;
 
@@ -171,13 +185,25 @@ function getAgentResultOrDiff(agentId: string | null): string | null {
 function maybeStartNextLoop(debate: Debate): void {
   if (debate.loop_count <= 1) return;
 
-  const nextLoop = debate.current_loop + 1;
-  if (nextLoop >= debate.loop_count) {
-    console.log(`[debate ${debate.id}] all ${debate.loop_count} loops complete`);
+  // Re-read from DB to get the latest state — guards against the double-exit race
+  // where two completion paths call this with the same stale debate object.
+  const fresh = queries.getDebateById(debate.id);
+  if (!fresh) return;
+
+  // Only advance if the debate is still on the loop we expect.
+  // If another path already advanced it, fresh.current_loop > debate.current_loop.
+  if (fresh.current_loop !== debate.current_loop) {
+    console.log(`[debate ${debate.id}] loop already advanced (expected ${debate.current_loop}, found ${fresh.current_loop}) — skipping duplicate`);
     return;
   }
 
-  console.log(`[debate ${debate.id}] starting loop ${nextLoop + 1} of ${debate.loop_count}`);
+  const nextLoop = fresh.current_loop + 1;
+  if (nextLoop >= fresh.loop_count) {
+    console.log(`[debate ${debate.id}] all ${fresh.loop_count} loops complete`);
+    return;
+  }
+
+  console.log(`[debate ${debate.id}] starting loop ${nextLoop + 1} of ${fresh.loop_count}`);
 
   // Reset debate state for next loop
   const updated = queries.updateDebate(debate.id, {
