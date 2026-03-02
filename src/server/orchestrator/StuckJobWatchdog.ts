@@ -19,6 +19,7 @@ import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { runAgent, getLogPath } from './AgentRunner.js';
+import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
 import { isTmuxSessionAlive, startInteractiveAgent, saveSnapshot } from './PtyManager.js';
 import { orphanedWaits, hasActiveTransport } from '../mcp/McpServer.js';
@@ -188,6 +189,13 @@ function check(): void {
 
     const updatedAgent = queries.getAgentWithJob(agent.id);
     if (updatedAgent) socket.emitAgentUpdate(updatedAgent);
+
+    // If this job belongs to a debate, trigger the debate state machine
+    const updatedJob = queries.getJobById(agent.job_id);
+    if (updatedJob) {
+      try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[watchdog] emitJobUpdate error:`, err); }
+      try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] debateOnJobCompleted error:`, err); }
+    }
   }
 
   // ── Check 2: Orphaned waits after MCP disconnect ────────────────────────────

@@ -142,6 +142,7 @@ export interface AgentOutputSegment {
   job_title: string;
   job_description: string;
   output: AgentOutput[];
+  truncated?: boolean; // true when output was capped by a tail limit
 }
 
 // ─── Socket.io Event Payloads ────────────────────────────────────────────────

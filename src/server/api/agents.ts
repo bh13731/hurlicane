@@ -60,7 +60,8 @@ router.get('/:id/output', (req, res) => {
 router.get('/:id/full-output', (req, res) => {
   const agent = queries.getAgentById(req.params.id);
   if (!agent) { res.status(404).json({ error: 'not found' }); return; }
-  res.json(queries.getAgentFullOutput(req.params.id));
+  const tail = req.query.tail ? parseInt(req.query.tail as string, 10) : undefined;
+  res.json(queries.getAgentFullOutput(req.params.id, tail));
 });
 
 router.get('/:id/pty-history', (req, res) => {

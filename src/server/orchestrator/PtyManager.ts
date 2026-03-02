@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents, startTailing, stopTailing } from './AgentRunner.js';
+import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents, startTailing, stopTailing, readClaudeMd } from './AgentRunner.js';
 import type { Job } from '../../shared/types.js';
 import { isCodexModel, codexModelName } from '../../shared/types.js';
 
@@ -520,5 +520,15 @@ function buildInteractivePrompt(job: Job): string {
       }
     } catch { /* ignore */ }
   }
+
+  // Inject CLAUDE.md for Codex agents (Claude reads it natively)
+  const workDir = (job as any).work_dir ?? process.cwd();
+  if (isCodexModel(model)) {
+    const claudeMd = readClaudeMd(workDir);
+    if (claudeMd) {
+      prompt += `\n\n## Project Instructions (from CLAUDE.md)\n\n${claudeMd}`;
+    }
+  }
+
   return prompt;
 }

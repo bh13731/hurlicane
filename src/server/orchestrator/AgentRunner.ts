@@ -1,4 +1,5 @@
 import { spawn, execSync, type ChildProcess } from 'child_process';
+import { setPriority } from 'os';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -191,6 +192,12 @@ export function runAgent(options: RunOptions): void {
   // Parent releases its copies of the file descriptors — child keeps its own
   fs.closeSync(logFd);
   fs.closeSync(errFd);
+
+  // Reduce scheduling priority of Claude workers so the UI/server stays responsive
+  // under CPU load. On macOS/Linux this is equivalent to `nice -n 10`.
+  if (child.pid) {
+    try { setPriority(child.pid, 10); } catch { /* ignore if unsupported */ }
+  }
 
   // Write prompt to stdin then close (child reads it all before doing anything else)
   child.stdin.write(buildPrompt(job));
@@ -609,6 +616,37 @@ function storeOutput(agentId: string, seq: number, eventType: string, content: s
   });
 }
 
+/**
+ * Read CLAUDE.md and any docs it references from .claude/docs/ in the given directory.
+ * Claude Code reads these natively; Codex does not, so we inject them into the prompt.
+ */
+export function readClaudeMd(workDir: string): string | null {
+  const claudeMdPath = path.join(workDir, 'CLAUDE.md');
+  let content: string;
+  try {
+    content = fs.readFileSync(claudeMdPath, 'utf8');
+  } catch {
+    return null;
+  }
+
+  // Also read any .claude/docs/ files referenced in CLAUDE.md
+  const docsDir = path.join(workDir, '.claude', 'docs');
+  try {
+    const docFiles = fs.readdirSync(docsDir).filter(f => f.endsWith('.md'));
+    if (docFiles.length > 0) {
+      content += '\n\n---\n\n# Referenced Documentation\n';
+      for (const docFile of docFiles) {
+        try {
+          const docContent = fs.readFileSync(path.join(docsDir, docFile), 'utf8');
+          content += `\n## ${docFile}\n\n${docContent}\n`;
+        } catch { /* skip unreadable docs */ }
+      }
+    }
+  } catch { /* no .claude/docs directory */ }
+
+  return content;
+}
+
 function buildPrompt(job: Job): string {
   const model: string | null = (job as any).model ?? null;
   let prompt = '';
@@ -643,6 +681,15 @@ function buildPrompt(job: Job): string {
         prompt += `- **${k}**: ${v}\n`;
       }
     } catch { /* ignore */ }
+  }
+
+  // Inject CLAUDE.md for Codex agents (Claude reads it natively)
+  const workDir = (job as any).work_dir ?? process.cwd();
+  if (isCodexModel(model)) {
+    const claudeMd = readClaudeMd(workDir);
+    if (claudeMd) {
+      prompt += `\n\n## Project Instructions (from CLAUDE.md)\n\n${claudeMd}`;
+    }
   }
 
   // Inject relevant memories from knowledge base

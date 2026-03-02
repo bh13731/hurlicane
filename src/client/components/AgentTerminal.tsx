@@ -303,6 +303,21 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
       .catch(() => {});
   }, [agent.id, agent.status]);
 
+  const [isTruncated, setIsTruncated] = useState(false);
+  const isTruncatedRef = useRef(false);
+  // loadFullHistoryRef is set inside the terminal useEffect so it closes over
+  // the local `term` instance; both the button and scroll handler call it.
+  const loadFullHistoryRef = useRef<() => void>(() => {});
+
+  // Keep ref in sync with state, and reset immediately on agent switch
+  useEffect(() => {
+    isTruncatedRef.current = false;
+    setIsTruncated(false);
+  }, [agent.id]);
+  useEffect(() => {
+    isTruncatedRef.current = isTruncated;
+  }, [isTruncated]);
+
   const isInteractive = !!(agent.job as any).is_interactive;
   const [tmuxCopied, setTmuxCopied] = useState(false);
 
@@ -462,36 +477,83 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
       };
     } else {
       // Batch mode: stream-json rendering
-      // Load historical output (full ancestry chain for continuations)
+      const TAIL = 5000;
+
+      // Helper to render segments into the terminal
+      const writeSegments = (segments: AgentOutputSegment[]) => {
+        let combined = '';
+        for (let i = 0; i < segments.length; i++) {
+          const seg = segments[i];
+          if (i > 0) {
+            combined += `\r\n\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n`;
+            combined += `\x1b[2m↩ ${seg.job_description}\x1b[0m\r\n`;
+            combined += `\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n\r\n`;
+          }
+          for (const line of seg.output) {
+            const rendered = renderAnyEvent(line.content);
+            if (rendered) combined += rendered;
+          }
+        }
+        if (combined) term.write(combined);
+      };
+
+      // Wire up load-full-history for this term instance — called by both the
+      // button and the scroll-near-top handler below.
+      loadFullHistoryRef.current = () => {
+        if (!isTruncatedRef.current) return;
+        isTruncatedRef.current = false;
+        setIsTruncated(false);
+        term.clear();
+        term.write('\x1b[2mLoading full history…\x1b[0m');
+        fetch(`/api/agents/${agent.id}/full-output`)
+          .then(r => r.json())
+          .then((segments: AgentOutputSegment[]) => {
+            term.clear();
+            if (!Array.isArray(segments)) return;
+            writeSegments(segments);
+            term.scrollToTop();
+          })
+          .catch(console.error);
+      };
+
+      // Auto-load full history when the user scrolls near the top of the buffer
+      const scrollDispose = term.onScroll((position) => {
+        if (position < 50) loadFullHistoryRef.current();
+      });
+
+      // Load historical output, capped at TAIL lines
       term.write('\x1b[2mLoading output…\x1b[0m');
-      fetch(`/api/agents/${agent.id}/full-output`)
+      fetch(`/api/agents/${agent.id}/full-output?tail=${TAIL}`)
         .then(r => r.json())
         .then((segments: AgentOutputSegment[]) => {
           term.clear();
           if (!Array.isArray(segments)) return;
-          // Build all history into a single string for efficient rendering
-          let combined = '';
-          for (let i = 0; i < segments.length; i++) {
-            const seg = segments[i];
-            if (i > 0) {
-              combined += `\r\n\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n`;
-              combined += `\x1b[2m↩ ${seg.job_description}\x1b[0m\r\n`;
-              combined += `\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n\r\n`;
-            }
-            for (const line of seg.output) {
-              const rendered = renderAnyEvent(line.content);
-              if (rendered) combined += rendered;
-            }
+          const anyTruncated = segments.some(s => s.truncated);
+          if (anyTruncated) {
+            term.write(`\x1b[2m[showing last ${TAIL} lines — scroll to top to load more]\x1b[0m\r\n`);
           }
-          if (combined) term.write(combined);
+          writeSegments(segments);
+          setIsTruncated(anyTruncated);
         })
         .catch(console.error);
 
-      // Stream live output
+      // Stream live output — batch writes on requestAnimationFrame to avoid
+      // starving the browser main thread when many events arrive under CPU load
+      let pendingOutput = '';
+      let rafId: number | null = null;
+      const flushPending = () => {
+        rafId = null;
+        if (pendingOutput) {
+          term.write(pendingOutput);
+          pendingOutput = '';
+        }
+      };
       const outputHandler = ({ agent_id, line }: { agent_id: string; line: AgentOutput }) => {
         if (agent_id !== agent.id) return;
         const rendered = renderAnyEvent(line.content);
-        if (rendered) term.write(rendered);
+        if (!rendered) return;
+        pendingOutput += rendered;
+        if (rafId === null) rafId = requestAnimationFrame(flushPending);
       };
 
       socket.on('agent:output', outputHandler);
@@ -508,6 +570,8 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
 
       return () => {
         socket.off('agent:output', outputHandler);
+        if (rafId !== null) cancelAnimationFrame(rafId);
+        scrollDispose.dispose();
         if (resizeTimer) clearTimeout(resizeTimer);
         resizeObserver.disconnect();
         term.dispose();
@@ -674,6 +738,12 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
         )}
       </div>
 
+      {isTruncated && activeTab === 'output' && (
+        <div className="output-truncated-bar">
+          <span>Showing last 5000 lines.</span>
+          <button className="btn btn-sm" onClick={() => loadFullHistoryRef.current()}>Load full history</button>
+        </div>
+      )}
       <div ref={containerRef} className={`xterm-container${activeTab !== 'output' ? ' xterm-hidden' : ''}`} />
 
       {activeTab === 'changes' && (

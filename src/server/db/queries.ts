@@ -438,8 +438,15 @@ export function searchOutputs(query: string, limit = 50): SearchResult[] {
   }
 }
 
-export function getAgentOutput(agentId: string): AgentOutput[] {
+export function getAgentOutput(agentId: string, tail?: number): AgentOutput[] {
   const db = getDb();
+  if (tail) {
+    // Fetch the last `tail` rows then re-order ascending
+    const rows = db.prepare(
+      'SELECT * FROM (SELECT * FROM agent_output WHERE agent_id = ? ORDER BY seq DESC LIMIT ?) ORDER BY seq ASC'
+    ).all(agentId, tail);
+    return rows.map(r => cast<AgentOutput>(r));
+  }
   const rows = db.prepare('SELECT * FROM agent_output WHERE agent_id = ? ORDER BY seq ASC').all(agentId);
   return rows.map(r => cast<AgentOutput>(r));
 }
@@ -450,7 +457,8 @@ export function getLatestAgentOutput(agentId: string): AgentOutput | null {
   return row ? cast<AgentOutput>(row) : null;
 }
 
-export function getAgentFullOutput(agentId: string): AgentOutputSegment[] {
+export function getAgentFullOutput(agentId: string, tailLines?: number): AgentOutputSegment[] {
+  const db = getDb();
   // Walk the parent chain to build oldest-first list of agents
   const chain: Agent[] = [];
   let current = getAgentById(agentId);
@@ -462,8 +470,14 @@ export function getAgentFullOutput(agentId: string): AgentOutputSegment[] {
 
   return chain.map(agent => {
     const job = getJobById(agent.job_id);
-    const output = getAgentOutput(agent.id);
-    return { agent_id: agent.id, job_title: job?.title ?? '(unknown)', job_description: job?.description ?? '', output };
+    const output = getAgentOutput(agent.id, tailLines);
+    let truncated = false;
+    if (tailLines) {
+      const row = db.prepare('SELECT COUNT(*) as cnt FROM agent_output WHERE agent_id = ?').get(agent.id);
+      const total = cast<{ cnt: number }>(row).cnt;
+      truncated = total > tailLines;
+    }
+    return { agent_id: agent.id, job_title: job?.title ?? '(unknown)', job_description: job?.description ?? '', output, truncated };
   });
 }
 
