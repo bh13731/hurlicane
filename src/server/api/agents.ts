@@ -115,6 +115,7 @@ router.post('/:id/retry', (req, res) => {
     model: original.job.model,
     template_id: originalJob.template_id ?? null,
     is_interactive: interactive ? 1 : 0,
+    project_id: originalJob.project_id ?? null,
   });
   socket.emitJobNew(retryJob);
 
@@ -156,6 +157,7 @@ router.post('/:id/continue', (req, res) => {
     model: original.job.model,
     template_id: originalJob.template_id ?? null,
     is_interactive: interactive ? 1 : 0,
+    project_id: originalJob.project_id ?? null,
   });
   socket.emitJobNew(contJob);
 
