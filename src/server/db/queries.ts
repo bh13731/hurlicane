@@ -25,6 +25,7 @@ export function insertJob(job: {
   use_worktree?: number;
   project_id?: string | null;
   debate_id?: string | null;
+  debate_loop?: number | null;
   debate_round?: number | null;
   debate_role?: DebateRole | null;
   scheduled_at?: number | null;
@@ -41,8 +42,8 @@ export function insertJob(job: {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_round, debate_role, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_loop, debate_round, debate_role, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     job.id, job.title, job.description, job.context,
     job.status ?? 'queued', job.priority,
@@ -54,6 +55,7 @@ export function insertJob(job: {
     job.use_worktree ?? 0,
     job.project_id ?? null,
     job.debate_id ?? null,
+    job.debate_loop ?? null,
     job.debate_round ?? null,
     job.debate_role ?? null,
     job.scheduled_at ?? null,
@@ -377,7 +379,7 @@ function extractSearchText(content: string): string {
 
 export function insertAgentOutput(output: Omit<AgentOutput, 'id'>): void {
   const db = getDb();
-  db.prepare(`
+  const result = db.prepare(`
     INSERT INTO agent_output (agent_id, seq, event_type, content, created_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(output.agent_id, output.seq, output.event_type, output.content, output.created_at);
@@ -385,10 +387,7 @@ export function insertAgentOutput(output: Omit<AgentOutput, 'id'>): void {
   // Index in FTS table (skip empty text)
   const text = extractSearchText(output.content);
   if (text.trim()) {
-    const row = db.prepare('SELECT id FROM agent_output WHERE agent_id = ? AND seq = ?').get(output.agent_id, output.seq) as { id: number } | undefined;
-    if (row) {
-      db.prepare('INSERT INTO output_fts(rowid, text_content, agent_id) VALUES (?, ?, ?)').run(row.id, text, output.agent_id);
-    }
+    db.prepare('INSERT INTO output_fts(rowid, text_content, agent_id) VALUES (?, ?, ?)').run(result.lastInsertRowid, text, output.agent_id);
   }
 }
 
@@ -788,8 +787,8 @@ export function deleteBatchTemplate(id: string): void {
 export function insertDebate(debate: Debate): Debate {
   const db = getDb();
   db.prepare(`
-    INSERT INTO debates (id, title, task, claude_model, codex_model, max_rounds, current_round, status, consensus, project_id, work_dir, max_turns, template_id, post_action_prompt, post_action_role, post_action_job_id, post_action_verification, verification_review_job_id, verification_response_job_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO debates (id, title, task, claude_model, codex_model, max_rounds, current_round, status, consensus, project_id, work_dir, max_turns, template_id, post_action_prompt, post_action_role, post_action_job_id, post_action_verification, verification_review_job_id, verification_response_job_id, verification_round, loop_count, current_loop, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     debate.id, debate.title, debate.task, debate.claude_model, debate.codex_model,
     debate.max_rounds, debate.current_round, debate.status, debate.consensus,
@@ -797,6 +796,8 @@ export function insertDebate(debate: Debate): Debate {
     debate.post_action_prompt ?? null, debate.post_action_role ?? null, debate.post_action_job_id ?? null,
     debate.post_action_verification ?? 0,
     debate.verification_review_job_id ?? null, debate.verification_response_job_id ?? null,
+    debate.verification_round ?? 0,
+    debate.loop_count ?? 1, debate.current_loop ?? 0,
     debate.created_at, debate.updated_at
   );
   return getDebateById(debate.id)!;
@@ -814,7 +815,7 @@ export function listDebates(): Debate[] {
   return rows.map(r => cast<Debate>(r));
 }
 
-export function updateDebate(id: string, fields: Partial<Pick<Debate, 'current_round' | 'status' | 'consensus' | 'post_action_job_id' | 'verification_review_job_id' | 'verification_response_job_id'>>): Debate | null {
+export function updateDebate(id: string, fields: Partial<Pick<Debate, 'current_round' | 'status' | 'consensus' | 'post_action_job_id' | 'verification_review_job_id' | 'verification_response_job_id' | 'verification_round' | 'current_loop'>>): Debate | null {
   const db = getDb();
   const sets: string[] = ['updated_at = ?'];
   const values: unknown[] = [Date.now()];
@@ -827,9 +828,9 @@ export function updateDebate(id: string, fields: Partial<Pick<Debate, 'current_r
   return getDebateById(id);
 }
 
-export function getJobsForDebateRound(debateId: string, round: number): Job[] {
+export function getJobsForDebateRound(debateId: string, loop: number, round: number): Job[] {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM jobs WHERE debate_id = ? AND debate_round = ?').all(debateId, round);
+  const rows = db.prepare('SELECT * FROM jobs WHERE debate_id = ? AND debate_loop = ? AND debate_round = ?').all(debateId, loop, round);
   return rows.map(r => cast<Job>(r));
 }
 

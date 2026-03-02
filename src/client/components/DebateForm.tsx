@@ -13,11 +13,11 @@ export function DebateForm({ onSubmit, onClose }: DebateFormProps) {
   const [codexModel, setCodexModel] = useState('codex');
   const [maxRounds, setMaxRounds] = useState(3);
   const [workDir, setWorkDir] = useState('');
-  const [maxTurns, setMaxTurns] = useState(50);
   const [templateId, setTemplateId] = useState('');
   const [postActionPrompt, setPostActionPrompt] = useState('');
   const [postActionRole, setPostActionRole] = useState<'claude' | 'codex'>('claude');
   const [postActionVerification, setPostActionVerification] = useState(false);
+  const [loopCount, setLoopCount] = useState(1);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -45,11 +45,11 @@ export function DebateForm({ onSubmit, onClose }: DebateFormProps) {
         codexModel,
         maxRounds,
         workDir: workDir.trim() || undefined,
-        maxTurns,
         templateId: templateId || undefined,
         postActionPrompt: postActionPrompt.trim() || undefined,
         postActionRole: postActionPrompt.trim() ? postActionRole : undefined,
         postActionVerification: postActionPrompt.trim() ? postActionVerification : undefined,
+        loopCount: loopCount > 1 ? loopCount : undefined,
       });
       onClose();
     } finally {
@@ -148,14 +148,15 @@ export function DebateForm({ onSubmit, onClose }: DebateFormProps) {
               />
             </div>
             <div className="form-group form-group-sm">
-              <label htmlFor="debate-max-turns">Max Turns</label>
+              <label htmlFor="debate-loop-count">Loops</label>
               <input
-                id="debate-max-turns"
+                id="debate-loop-count"
                 type="number"
-                value={maxTurns}
-                onChange={e => setMaxTurns(Number(e.target.value))}
+                value={loopCount}
+                onChange={e => setLoopCount(Math.max(1, Number(e.target.value)))}
                 min={1}
-                max={200}
+                max={20}
+                title="Run the entire debate flow this many times in sequence"
               />
             </div>
             <div className="form-group">

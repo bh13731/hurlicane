@@ -3,6 +3,8 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import type { Job, Debate, DebateRole } from '../../shared/types.js';
 
+const MAX_VERIFICATION_ROUNDS = 10;
+
 /**
  * Called from AgentRunner.handleAgentExit after a job's status is finalized.
  * If the job belongs to a debate, checks whether the current round is complete
@@ -22,21 +24,35 @@ function _onJobCompleted(job: Job): void {
   const debate = queries.getDebateById(job.debate_id!);
   if (!debate) return;
 
-  // Phase: post-action job completed → maybe spawn verification review
+  // Phase: post-action job completed
   if (job.debate_role === 'post_action') {
-    if (job.status === 'done' && debate.post_action_verification) {
-      const agentId = getAgentIdForJob(job.id);
-      const postActionResult = getAgentResultOrDiff(agentId);
-      spawnVerificationReview(debate, postActionResult);
+    if (job.status === 'done') {
+      if (debate.post_action_verification) {
+        const agentId = getAgentIdForJob(job.id);
+        const postActionResult = getAgentResultOrDiff(agentId);
+        spawnVerificationReview(debate, postActionResult);
+      } else {
+        // No verification — this loop's flow is done
+        maybeStartNextLoop(debate);
+      }
     }
     return;
   }
 
-  // Phase: verification review completed → spawn verification response
+  // Phase: verification review completed → check verdict, maybe spawn response
   if (job.debate_role === 'verification_review') {
     if (job.status === 'done') {
       const reviewAgentId = getAgentIdForJob(job.id);
       const reviewResult = reviewAgentId ? queries.getAgentResultText(reviewAgentId) : null;
+
+      const verifierVerdict = parseVerifierVerdict(reviewResult);
+      if (verifierVerdict?.verdict === 'no_issues') {
+        console.log(`[debate ${debate.id}] verifier found no issues at verification round ${debate.verification_round} — loop ${debate.current_loop + 1} complete`);
+        maybeStartNextLoop(debate);
+        return;
+      }
+
+      // Has issues (or no structured verdict) → spawn implementor response
       const postActionAgentId = debate.post_action_job_id ? getAgentIdForJob(debate.post_action_job_id) : null;
       const postActionResult = getAgentResultOrDiff(postActionAgentId);
       spawnVerificationResponse(debate, reviewResult, postActionResult);
@@ -44,8 +60,34 @@ function _onJobCompleted(job: Job): void {
     return;
   }
 
-  // Phase: verification response completed — cycle complete, nothing more to do
-  if (job.debate_role === 'verification_response') return;
+  // Phase: verification response completed → check verdict, maybe loop
+  if (job.debate_role === 'verification_response') {
+    if (job.status === 'done') {
+      const responseAgentId = getAgentIdForJob(job.id);
+      const responseResult = responseAgentId ? queries.getAgentResultText(responseAgentId) : null;
+
+      const implementorVerdict = parseImplementorVerdict(responseResult);
+      if (implementorVerdict?.verdict === 'disagrees') {
+        console.log(`[debate ${debate.id}] implementor disagrees at verification round ${debate.verification_round} — loop ${debate.current_loop + 1} complete`);
+        maybeStartNextLoop(debate);
+        return;
+      }
+
+      // Safety cap on verification rounds
+      if (debate.verification_round >= MAX_VERIFICATION_ROUNDS - 1) {
+        console.log(`[debate ${debate.id}] max verification rounds (${MAX_VERIFICATION_ROUNDS}) reached — loop ${debate.current_loop + 1} complete`);
+        maybeStartNextLoop(debate);
+        return;
+      }
+
+      // Accepted → increment verification round and spawn next review
+      const newVerifRound = debate.verification_round + 1;
+      const updated = queries.updateDebate(debate.id, { verification_round: newVerifRound });
+      if (!updated) return;
+      spawnVerificationReview(updated, responseResult);
+    }
+    return;
+  }
 
   // Debate round handling — only while debate is still running
   if (debate.status !== 'running') return;
@@ -61,8 +103,8 @@ function _onJobCompleted(job: Job): void {
     return;
   }
 
-  // Check if both sides of the current round are done
-  const roundJobs = queries.getJobsForDebateRound(debate.id, debate.current_round);
+  // Check if both sides of the current round are done (scoped to current loop)
+  const roundJobs = queries.getJobsForDebateRound(debate.id, debate.current_loop, debate.current_round);
   const allDone = roundJobs.length === 2 && roundJobs.every(j => j.status === 'done');
   if (!allDone) return;
 
@@ -90,7 +132,7 @@ function _onJobCompleted(job: Job): void {
       socket.emitDebateUpdate(updated);
       maybeSpawnPostAction(updated, claudeResult, codexResult);
     }
-    console.log(`[debate ${debate.id}] consensus reached at round ${debate.current_round}`);
+    console.log(`[debate ${debate.id}] consensus at round ${debate.current_round} (loop ${debate.current_loop + 1})`);
     return;
   }
 
@@ -102,7 +144,7 @@ function _onJobCompleted(job: Job): void {
       socket.emitDebateUpdate(updated);
       maybeSpawnPostAction(updated, claudeResult, codexResult);
     }
-    console.log(`[debate ${debate.id}] max rounds reached, disagreement`);
+    console.log(`[debate ${debate.id}] max rounds reached, disagreement (loop ${debate.current_loop + 1})`);
     return;
   }
 
@@ -112,7 +154,6 @@ function _onJobCompleted(job: Job): void {
 
 function getAgentIdForJob(jobId: string): string | null {
   const agents = queries.getAgentsWithJobByJobId(jobId);
-  // Return the last agent for this job (most recent attempt)
   return agents.length > 0 ? agents[0].id : null;
 }
 
@@ -120,10 +161,94 @@ function getAgentResultOrDiff(agentId: string | null): string | null {
   if (!agentId) return null;
   const text = queries.getAgentResultText(agentId);
   if (text) return text;
-  // Fallback: use the diff if the agent hit max_turns or produced no result text
   const agent = queries.getAgentById(agentId);
   if (agent?.diff) return `(Agent reached max turns without producing a summary. Here is the diff of changes made)\n\n\`\`\`diff\n${agent.diff}\n\`\`\``;
   return null;
+}
+
+// ─── Loop restart ─────────────────────────────────────────────────────────────
+
+function maybeStartNextLoop(debate: Debate): void {
+  if (debate.loop_count <= 1) return;
+
+  const nextLoop = debate.current_loop + 1;
+  if (nextLoop >= debate.loop_count) {
+    console.log(`[debate ${debate.id}] all ${debate.loop_count} loops complete`);
+    return;
+  }
+
+  console.log(`[debate ${debate.id}] starting loop ${nextLoop + 1} of ${debate.loop_count}`);
+
+  // Reset debate state for next loop
+  const updated = queries.updateDebate(debate.id, {
+    current_loop: nextLoop,
+    current_round: 0,
+    status: 'running',
+    consensus: null,
+    post_action_job_id: null,
+    verification_review_job_id: null,
+    verification_response_job_id: null,
+    verification_round: 0,
+  });
+  if (!updated) return;
+
+  socket.emitDebateUpdate(updated);
+  spawnInitialRoundJobs(updated);
+}
+
+// ─── Round creation ───────────────────────────────────────────────────────────
+
+function loopPrefix(debate: Debate): string {
+  return debate.loop_count > 1 ? ` L${debate.current_loop + 1}` : '';
+}
+
+/**
+ * Spawns the two initial round-0 jobs for a debate (or next loop iteration).
+ * Exported so debates.ts API can call it too.
+ */
+export function spawnInitialRoundJobs(debate: Debate): [Job, Job] {
+  const prefix = loopPrefix(debate);
+  const initialPrompt = buildInitialPrompt(debate);
+
+  const claudeJob = queries.insertJob({
+    id: randomUUID(),
+    title: `[Debate${prefix} R0] Claude`,
+    description: initialPrompt,
+    context: null,
+    priority: 0,
+    model: debate.claude_model,
+    template_id: debate.template_id,
+    work_dir: debate.work_dir,
+    max_turns: debate.max_turns,
+    project_id: debate.project_id,
+    debate_id: debate.id,
+    debate_loop: debate.current_loop,
+    debate_round: 0,
+    debate_role: 'claude',
+  });
+
+  const codexJob = queries.insertJob({
+    id: randomUUID(),
+    title: `[Debate${prefix} R0] Codex`,
+    description: initialPrompt,
+    context: null,
+    priority: 0,
+    model: debate.codex_model,
+    template_id: debate.template_id,
+    work_dir: debate.work_dir,
+    max_turns: debate.max_turns,
+    project_id: debate.project_id,
+    debate_id: debate.id,
+    debate_loop: debate.current_loop,
+    debate_round: 0,
+    debate_role: 'codex',
+  });
+
+  socket.emitJobNew(claudeJob);
+  socket.emitJobNew(codexJob);
+
+  console.log(`[debate ${debate.id}] spawned initial jobs (loop ${debate.current_loop + 1}): claude=${claudeJob.id.slice(0, 8)} codex=${codexJob.id.slice(0, 8)}`);
+  return [claudeJob, codexJob];
 }
 
 function createDiscussionRound(
@@ -132,15 +257,15 @@ function createDiscussionRound(
   claudePrevResult: string | null,
   codexPrevResult: string | null,
 ): void {
-  // Update debate current_round
   queries.updateDebate(debate.id, { current_round: round });
 
+  const prefix = loopPrefix(debate);
   const claudePrompt = buildDiscussionPrompt(debate, 'claude', round, claudePrevResult, codexPrevResult);
   const codexPrompt = buildDiscussionPrompt(debate, 'codex', round, codexPrevResult, claudePrevResult);
 
   const claudeJob = queries.insertJob({
     id: randomUUID(),
-    title: `[Debate R${round}] Claude`,
+    title: `[Debate${prefix} R${round}] Claude`,
     description: claudePrompt,
     context: null,
     priority: 0,
@@ -150,13 +275,14 @@ function createDiscussionRound(
     max_turns: debate.max_turns,
     project_id: debate.project_id,
     debate_id: debate.id,
+    debate_loop: debate.current_loop,
     debate_round: round,
     debate_role: 'claude',
   });
 
   const codexJob = queries.insertJob({
     id: randomUUID(),
-    title: `[Debate R${round}] Codex`,
+    title: `[Debate${prefix} R${round}] Codex`,
     description: codexPrompt,
     context: null,
     priority: 0,
@@ -166,6 +292,7 @@ function createDiscussionRound(
     max_turns: debate.max_turns,
     project_id: debate.project_id,
     debate_id: debate.id,
+    debate_loop: debate.current_loop,
     debate_round: round,
     debate_role: 'codex',
   });
@@ -176,8 +303,10 @@ function createDiscussionRound(
   const updated = queries.getDebateById(debate.id);
   if (updated) socket.emitDebateUpdate(updated);
 
-  console.log(`[debate ${debate.id}] created round ${round} jobs: claude=${claudeJob.id.slice(0, 8)} codex=${codexJob.id.slice(0, 8)}`);
+  console.log(`[debate ${debate.id}] created round ${round} jobs (loop ${debate.current_loop + 1}): claude=${claudeJob.id.slice(0, 8)} codex=${codexJob.id.slice(0, 8)}`);
 }
+
+// ─── Prompt builders ─────────────────────────────────────────────────────────
 
 export function buildInitialPrompt(debate: Debate): string {
   return `# Debate Task
@@ -238,6 +367,8 @@ Use "partial" if you agree on most points but have remaining minor differences.
 Use "disagree" if there are significant unresolved differences.`;
 }
 
+// ─── Verdict parsing ──────────────────────────────────────────────────────────
+
 interface Verdict {
   verdict: 'agree' | 'disagree' | 'partial';
   summary: string;
@@ -245,43 +376,77 @@ interface Verdict {
 
 export function parseVerdict(resultText: string | null): Verdict | null {
   if (!resultText) return null;
-
-  // Look for ```consensus ... ``` block
   const pattern = /```consensus\s*\n?([\s\S]*?)\n?\s*```/;
   const match = resultText.match(pattern);
   if (!match) return null;
-
   try {
     const parsed = JSON.parse(match[1].trim());
     if (parsed.verdict && typeof parsed.summary === 'string') {
-      return {
-        verdict: parsed.verdict as Verdict['verdict'],
-        summary: parsed.summary,
-      };
+      return { verdict: parsed.verdict as Verdict['verdict'], summary: parsed.summary };
     }
   } catch { /* malformed JSON */ }
-
   return null;
 }
 
 function detectConsensus(a: Verdict | null, b: Verdict | null): boolean {
-  // Both must explicitly say "agree"
   return a?.verdict === 'agree' && b?.verdict === 'agree';
 }
+
+interface VerifierVerdict {
+  verdict: 'no_issues' | 'has_issues';
+  summary: string;
+  issues?: string[];
+}
+
+interface ImplementorVerdict {
+  verdict: 'accepted' | 'disagrees';
+  summary: string;
+}
+
+function parseVerifierVerdict(resultText: string | null): VerifierVerdict | null {
+  if (!resultText) return null;
+  const pattern = /```verification\s*\n?([\s\S]*?)\n?\s*```/;
+  const match = resultText.match(pattern);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1].trim());
+    if (parsed.verdict && typeof parsed.summary === 'string') return parsed as VerifierVerdict;
+  } catch { /* malformed JSON */ }
+  return null;
+}
+
+function parseImplementorVerdict(resultText: string | null): ImplementorVerdict | null {
+  if (!resultText) return null;
+  const pattern = /```verification_response\s*\n?([\s\S]*?)\n?\s*```/;
+  const match = resultText.match(pattern);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1].trim());
+    if (parsed.verdict && typeof parsed.summary === 'string') return parsed as ImplementorVerdict;
+  } catch { /* malformed JSON */ }
+  return null;
+}
+
+// ─── Post-action and verification spawners ───────────────────────────────────
 
 function maybeSpawnPostAction(
   debate: Debate,
   claudeResult: string | null,
   codexResult: string | null,
 ): void {
-  if (!debate.post_action_prompt || !debate.post_action_role) return;
+  if (!debate.post_action_prompt || !debate.post_action_role) {
+    // No post-action configured — this loop's flow is done
+    maybeStartNextLoop(debate);
+    return;
+  }
 
+  const prefix = loopPrefix(debate);
   const model = debate.post_action_role === 'claude' ? debate.claude_model : debate.codex_model;
   const prompt = buildPostActionPrompt(debate, claudeResult, codexResult);
 
   const job = queries.insertJob({
     id: randomUUID(),
-    title: `[Post-Debate] ${debate.title.slice(0, 50)}`,
+    title: `[Post-Debate${prefix}] ${debate.title.slice(0, 45)}`,
     description: prompt,
     context: null,
     priority: 0,
@@ -291,6 +456,7 @@ function maybeSpawnPostAction(
     max_turns: debate.max_turns,
     project_id: debate.project_id,
     debate_id: debate.id,
+    debate_loop: debate.current_loop,
     debate_round: null,
     debate_role: 'post_action',
   });
@@ -300,22 +466,23 @@ function maybeSpawnPostAction(
   const updated = queries.updateDebate(debate.id, { post_action_job_id: job.id });
   if (updated) socket.emitDebateUpdate(updated);
 
-  console.log(`[debate ${debate.id}] spawned post-action job ${job.id.slice(0, 8)} (model: ${model})`);
+  console.log(`[debate ${debate.id}] spawned post-action job ${job.id.slice(0, 8)} (loop ${debate.current_loop + 1}, model: ${model})`);
 }
 
-function spawnVerificationReview(debate: Debate, postActionResult: string | null): void {
+function spawnVerificationReview(debate: Debate, implementationResult: string | null): void {
   if (!debate.post_action_role) return;
 
-  // The reviewer is the OTHER model
   const reviewerRole: DebateRole = debate.post_action_role === 'claude' ? 'codex' : 'claude';
   const reviewerModel = reviewerRole === 'claude' ? debate.claude_model : debate.codex_model;
   const implementerLabel = debate.post_action_role === 'claude' ? 'Claude' : 'Codex';
 
-  const prompt = buildVerificationReviewPrompt(debate, postActionResult, implementerLabel);
+  const prefix = loopPrefix(debate);
+  const roundLabel = debate.verification_round > 0 ? ` V${debate.verification_round + 1}` : '';
+  const prompt = buildVerificationReviewPrompt(debate, implementationResult, implementerLabel);
 
   const job = queries.insertJob({
     id: randomUUID(),
-    title: `[Verification Review] ${debate.title.slice(0, 40)}`,
+    title: `[Verif Review${prefix}${roundLabel}] ${debate.title.slice(0, 30)}`,
     description: prompt,
     context: null,
     priority: 0,
@@ -325,6 +492,7 @@ function spawnVerificationReview(debate: Debate, postActionResult: string | null
     max_turns: debate.max_turns,
     project_id: debate.project_id,
     debate_id: debate.id,
+    debate_loop: debate.current_loop,
     debate_round: null,
     debate_role: 'verification_review',
   });
@@ -334,24 +502,26 @@ function spawnVerificationReview(debate: Debate, postActionResult: string | null
   const updated = queries.updateDebate(debate.id, { verification_review_job_id: job.id });
   if (updated) socket.emitDebateUpdate(updated);
 
-  console.log(`[debate ${debate.id}] spawned verification review job ${job.id.slice(0, 8)} (reviewer: ${reviewerModel})`);
+  console.log(`[debate ${debate.id}] spawned verification review (loop ${debate.current_loop + 1}, verif round ${debate.verification_round}): ${job.id.slice(0, 8)}`);
 }
 
 function spawnVerificationResponse(
   debate: Debate,
   reviewResult: string | null,
-  postActionResult: string | null,
+  implementationResult: string | null,
 ): void {
   if (!debate.post_action_role) return;
 
   const implementerModel = debate.post_action_role === 'claude' ? debate.claude_model : debate.codex_model;
   const reviewerLabel = debate.post_action_role === 'claude' ? 'Codex' : 'Claude';
 
-  const prompt = buildVerificationResponsePrompt(debate, reviewResult, postActionResult, reviewerLabel);
+  const prefix = loopPrefix(debate);
+  const roundLabel = debate.verification_round > 0 ? ` V${debate.verification_round + 1}` : '';
+  const prompt = buildVerificationResponsePrompt(debate, reviewResult, implementationResult, reviewerLabel);
 
   const job = queries.insertJob({
     id: randomUUID(),
-    title: `[Verification Response] ${debate.title.slice(0, 37)}`,
+    title: `[Verif Response${prefix}${roundLabel}] ${debate.title.slice(0, 27)}`,
     description: prompt,
     context: null,
     priority: 0,
@@ -361,6 +531,7 @@ function spawnVerificationResponse(
     max_turns: debate.max_turns,
     project_id: debate.project_id,
     debate_id: debate.id,
+    debate_loop: debate.current_loop,
     debate_round: null,
     debate_role: 'verification_response',
   });
@@ -370,12 +541,14 @@ function spawnVerificationResponse(
   const updated = queries.updateDebate(debate.id, { verification_response_job_id: job.id });
   if (updated) socket.emitDebateUpdate(updated);
 
-  console.log(`[debate ${debate.id}] spawned verification response job ${job.id.slice(0, 8)} (implementer: ${implementerModel})`);
+  console.log(`[debate ${debate.id}] spawned verification response (loop ${debate.current_loop + 1}, verif round ${debate.verification_round}): ${job.id.slice(0, 8)}`);
 }
+
+// ─── Prompt content ───────────────────────────────────────────────────────────
 
 function buildVerificationReviewPrompt(
   debate: Debate,
-  postActionResult: string | null,
+  implementationResult: string | null,
   implementerLabel: string,
 ): string {
   const statusLabel =
@@ -388,43 +561,63 @@ function buildVerificationReviewPrompt(
     try { return (JSON.parse(debate.consensus) as any).summary ?? null; } catch { return null; }
   })();
 
-  let prompt = `# Verification Review\n\n`;
-  prompt += `Your role is to review the implementation done by ${implementerLabel} after a collaborative debate.\n\n`;
+  const isSubsequentRound = debate.verification_round > 0;
+  const roundSuffix = isSubsequentRound ? ` (Round ${debate.verification_round + 1})` : '';
+
+  let prompt = `# Verification Review${roundSuffix}\n\n`;
+  prompt += `Your role is to review the implementation done by ${implementerLabel}`;
+  if (isSubsequentRound) prompt += ` after they addressed your previous feedback`;
+  prompt += `.\n\n`;
   prompt += `## Original Task\n${debate.task}\n\n`;
   prompt += `## Debate Outcome\n${statusLabel}.\n`;
   if (consensusSummary) prompt += `**Summary:** ${consensusSummary}\n`;
   prompt += `\n`;
-  prompt += `## Implementation Done by ${implementerLabel}\n`;
-  prompt += postActionResult ?? '(No implementation output available)';
+  prompt += `## Implementation by ${implementerLabel}\n`;
+  prompt += implementationResult ?? '(No implementation output available)';
   prompt += `\n\n`;
   prompt += `## Your Review\n`;
-  prompt += `Please review the implementation above. Provide constructive feedback on:\n`;
+  prompt += `Please review the implementation above. Examine the actual code/files in the working directory. Evaluate:\n`;
   prompt += `1. **Correctness** — does the implementation address the task properly?\n`;
   prompt += `2. **Completeness** — is anything missing or incomplete?\n`;
   prompt += `3. **Quality** — any improvements you would suggest?\n\n`;
-  prompt += `Be specific and actionable. Highlight what was done well, then clearly describe any concerns or improvements needed.`;
+  prompt += `Be specific and actionable. List any concrete issues found.\n\n`;
+  prompt += `At the END of your response, include a structured verdict block:\n\n`;
+  prompt += `\`\`\`verification\n{"verdict": "no_issues", "summary": "brief description"}\`\`\`\n\n`;
+  prompt += `or\n\n`;
+  prompt += `\`\`\`verification\n{"verdict": "has_issues", "summary": "brief description", "issues": ["issue 1", "issue 2"]}\`\`\`\n\n`;
+  prompt += `Use **"no_issues"** if the implementation is satisfactory.\n`;
+  prompt += `Use **"has_issues"** if there are specific problems or improvements needed.`;
   return prompt;
 }
 
 function buildVerificationResponsePrompt(
   debate: Debate,
   reviewResult: string | null,
-  postActionResult: string | null,
+  implementationResult: string | null,
   reviewerLabel: string,
 ): string {
-  let prompt = `# Implementation Review Response\n\n`;
+  const isSubsequentRound = debate.verification_round > 0;
+  const roundSuffix = isSubsequentRound ? ` (Round ${debate.verification_round + 1})` : '';
+
+  let prompt = `# Implementation Review Response${roundSuffix}\n\n`;
   prompt += `You previously implemented a solution after a collaborative debate. ${reviewerLabel} has reviewed your work and provided feedback.\n\n`;
   prompt += `## Original Task\n${debate.task}\n\n`;
   prompt += `## Your Previous Implementation\n`;
-  prompt += postActionResult ?? '(No implementation output available)';
+  prompt += implementationResult ?? '(No implementation output available)';
   prompt += `\n\n`;
   prompt += `## ${reviewerLabel}'s Feedback\n`;
   prompt += reviewResult ?? '(No feedback available)';
   prompt += `\n\n`;
   prompt += `## Your Action\n`;
-  prompt += `Review the feedback above. Make any changes to your implementation that you agree with or find valuable. `;
-  prompt += `If you disagree with specific feedback, you may skip it — but only if you have a clear reason. `;
-  prompt += `Focus on improving the implementation based on the constructive feedback provided.`;
+  prompt += `Review the feedback above carefully.\n`;
+  prompt += `- If you **agree**: apply the changes to your implementation.\n`;
+  prompt += `- If you **disagree**: explain clearly why the current implementation is correct.\n\n`;
+  prompt += `At the END of your response, include a structured verdict block:\n\n`;
+  prompt += `\`\`\`verification_response\n{"verdict": "accepted", "summary": "brief description of changes made"}\`\`\`\n\n`;
+  prompt += `or\n\n`;
+  prompt += `\`\`\`verification_response\n{"verdict": "disagrees", "summary": "brief explanation of why you disagree"}\`\`\`\n\n`;
+  prompt += `Use **"accepted"** if you agree with the feedback and have applied changes.\n`;
+  prompt += `Use **"disagrees"** only if you fundamentally disagree with the reviewer's assessment.`;
   return prompt;
 }
 
@@ -448,14 +641,8 @@ function buildPostActionPrompt(
   prompt += `## Debate Outcome\n${statusLabel}.\n`;
   if (consensusSummary) prompt += `**Summary:** ${consensusSummary}\n`;
   prompt += `\n`;
-
-  if (claudeResult) {
-    prompt += `## Claude's Final Analysis\n${claudeResult}\n\n`;
-  }
-  if (codexResult) {
-    prompt += `## Codex's Final Analysis\n${codexResult}\n\n`;
-  }
-
+  if (claudeResult) prompt += `## Claude's Final Analysis\n${claudeResult}\n\n`;
+  if (codexResult) prompt += `## Codex's Final Analysis\n${codexResult}\n\n`;
   prompt += `## Your Action\n${debate.post_action_prompt}`;
   return prompt;
 }

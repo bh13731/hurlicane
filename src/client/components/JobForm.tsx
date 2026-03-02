@@ -13,7 +13,6 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [description, setDescription] = useState('');
   const [workDir, setWorkDir] = useState('');
   const [priority, setPriority] = useState(0);
-  const [maxTurns, setMaxTurns] = useState(50);
   const [model, setModel] = useState('');
   const [templateId, setTemplateId] = useState('');
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -77,7 +76,6 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         description: description.trim(),
         workDir: workDir.trim() || undefined,
         priority,
-        maxTurns,
         model: model.trim() || undefined,
         templateId: templateId || undefined,
         dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
@@ -179,17 +177,6 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
                 onChange={e => setPriority(Number(e.target.value))}
                 min={-10}
                 max={10}
-              />
-            </div>
-            <div className="form-group form-group-sm">
-              <label htmlFor="maxTurns">Max Turns</label>
-              <input
-                id="maxTurns"
-                type="number"
-                value={maxTurns}
-                onChange={e => setMaxTurns(Number(e.target.value))}
-                min={1}
-                max={200}
               />
             </div>
           </div>

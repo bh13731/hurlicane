@@ -153,6 +153,9 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!jobCols.includes('debate_id')) {
     db.exec('ALTER TABLE jobs ADD COLUMN debate_id TEXT REFERENCES debates(id)');
   }
+  if (!jobCols.includes('debate_loop')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN debate_loop INTEGER');
+  }
   if (!jobCols.includes('debate_round')) {
     db.exec('ALTER TABLE jobs ADD COLUMN debate_round INTEGER');
   }
@@ -201,6 +204,15 @@ export function initDb(dbPath: string): DatabaseSync {
   }
   if (!debateCols.includes('verification_response_job_id')) {
     db.exec('ALTER TABLE debates ADD COLUMN verification_response_job_id TEXT');
+  }
+  if (!debateCols.includes('verification_round')) {
+    db.exec('ALTER TABLE debates ADD COLUMN verification_round INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!debateCols.includes('loop_count')) {
+    db.exec('ALTER TABLE debates ADD COLUMN loop_count INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!debateCols.includes('current_loop')) {
+    db.exec('ALTER TABLE debates ADD COLUMN current_loop INTEGER NOT NULL DEFAULT 0');
   }
 
   // ── Feature 6: Agent Health Monitoring ──────────────────────────────────────

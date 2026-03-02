@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import { buildInitialPrompt } from '../orchestrator/DebateManager.js';
+import { spawnInitialRoundJobs } from '../orchestrator/DebateManager.js';
 import type { CreateBatchTemplateRequest, UpdateBatchTemplateRequest, RunBatchTemplateRequest, Debate, Job } from '../../shared/types.js';
 
 const router = Router();
@@ -119,6 +119,9 @@ router.post('/:id/run', (req, res) => {
         post_action_verification: (body.postActionVerification && !!body.postActionPrompt?.trim()) ? 1 : 0,
         verification_review_job_id: null,
         verification_response_job_id: null,
+        verification_round: 0,
+        loop_count: 1,
+        current_loop: 0,
         created_at: now,
         updated_at: now,
       };
@@ -126,43 +129,8 @@ router.post('/:id/run', (req, res) => {
       socket.emitDebateNew(debate);
       allDebates.push(debate);
 
-      const initialPrompt = buildInitialPrompt(debate);
-
-      const claudeJob = queries.insertJob({
-        id: randomUUID(),
-        title: `[Debate R0] Claude`,
-        description: initialPrompt,
-        context: null,
-        priority: 0,
-        model: debate.claude_model,
-        template_id: debate.template_id,
-        work_dir: debate.work_dir,
-        max_turns: debate.max_turns,
-        project_id: project.id,
-        debate_id: debateId,
-        debate_round: 0,
-        debate_role: 'claude',
-      });
-      socket.emitJobNew(claudeJob);
-      allJobs.push(claudeJob);
-
-      const codexJob = queries.insertJob({
-        id: randomUUID(),
-        title: `[Debate R0] Codex`,
-        description: initialPrompt,
-        context: null,
-        priority: 0,
-        model: debate.codex_model,
-        template_id: debate.template_id,
-        work_dir: debate.work_dir,
-        max_turns: debate.max_turns,
-        project_id: project.id,
-        debate_id: debateId,
-        debate_round: 0,
-        debate_role: 'codex',
-      });
-      socket.emitJobNew(codexJob);
-      allJobs.push(codexJob);
+      const [claudeJob, codexJob] = spawnInitialRoundJobs(debate);
+      allJobs.push(claudeJob, codexJob);
     }
 
     res.status(201).json({ project, jobs: allJobs, debates: allDebates });

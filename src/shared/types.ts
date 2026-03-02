@@ -24,6 +24,7 @@ export interface Job {
   use_worktree: number;       // 0=normal, 1=create git worktree
   project_id: string | null;  // FK → projects.id
   debate_id: string | null;   // FK → debates.id
+  debate_loop: number | null;  // which loop iteration this job belongs to (0-based)
   debate_round: number | null;
   debate_role: DebateRole | null;
   scheduled_at: number | null;
@@ -59,8 +60,11 @@ export interface Debate {
   post_action_role: DebateRole | null; // which side's model runs the action
   post_action_job_id: string | null;  // FK → jobs.id once created
   post_action_verification: number;   // 0=off, 1=other model reviews post-action then implementer responds
-  verification_review_job_id: string | null;   // FK → jobs.id for the review job
-  verification_response_job_id: string | null; // FK → jobs.id for the response job
+  verification_review_job_id: string | null;   // FK → jobs.id for the latest review job
+  verification_response_job_id: string | null; // FK → jobs.id for the latest response job
+  verification_round: number;                  // current verification loop iteration (0-based)
+  loop_count: number;    // total loops to run (1 = run once)
+  current_loop: number;  // which debate loop we're on (0-based)
   created_at: number;
   updated_at: number;
 }
@@ -385,6 +389,7 @@ export interface CreateDebateRequest {
   postActionPrompt?: string;
   postActionRole?: DebateRole;
   postActionVerification?: boolean;
+  loopCount?: number;
 }
 
 export interface CreateDebateResponse {
