@@ -358,16 +358,21 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
       const TERMINAL_STATUSES = ['done', 'failed', 'cancelled'];
       fetch(`/api/agents/${agent.id}/pty-history`)
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-        .then(({ chunks = [] }: { chunks?: string[] }) => {
-          if (chunks.length > 0) {
-            const isCompleted = TERMINAL_STATUSES.includes(agent.status);
-            const STRIP_FOR_REPLAY_RE = /\x1b\[\?(?:1049|47|1047|1000|1002|1003|1006|1005|1004)[hl]|\x1b\[3J/g;
-            // Write all history as a single string for efficient xterm.js processing
-            // (individual writes queue separately and can render garbled intermediate states)
-            const combined = isCompleted
-              ? chunks.map(c => c.replace(STRIP_FOR_REPLAY_RE, '')).join('')
-              : chunks.join('');
-            term.write(combined);
+        .then((response: { mode?: string; snapshot?: string; chunks?: string[] }) => {
+          if (response.mode === 'snapshot' && response.snapshot) {
+            // Clean tmux snapshot: convert \n to \r\n for xterm.js
+            term.write(response.snapshot.replace(/\n/g, '\r\n'));
+          } else {
+            // Legacy raw PTY chunk replay
+            const chunks = response.chunks ?? [];
+            if (chunks.length > 0) {
+              const isCompleted = TERMINAL_STATUSES.includes(agent.status);
+              const STRIP_FOR_REPLAY_RE = /\x1b\[\?(?:1049|47|1047|1000|1002|1003|1006|1005|1004)[hl]|\x1b\[3J/g;
+              const combined = isCompleted
+                ? chunks.map(c => c.replace(STRIP_FOR_REPLAY_RE, '')).join('')
+                : chunks.join('');
+              term.write(combined);
+            }
           }
           // Flush any live data that arrived during the fetch (batched)
           if (pendingPtyData.length > 0) {
@@ -458,9 +463,11 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
     } else {
       // Batch mode: stream-json rendering
       // Load historical output (full ancestry chain for continuations)
+      term.write('\x1b[2mLoading output…\x1b[0m');
       fetch(`/api/agents/${agent.id}/full-output`)
         .then(r => r.json())
         .then((segments: AgentOutputSegment[]) => {
+          term.clear();
           if (!Array.isArray(segments)) return;
           // Build all history into a single string for efficient rendering
           let combined = '';

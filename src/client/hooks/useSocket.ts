@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import socket from '../socket';
 import type { AgentWithJob, Job, Question, FileLock, AgentOutput, QueueSnapshot, Debate } from '@shared/types';
 
@@ -18,55 +18,45 @@ interface SocketHandlers {
 }
 
 export function useSocket(handlers: SocketHandlers): void {
+  // Store handlers in a ref so the socket listeners always call the latest version.
+  const ref = useRef(handlers);
+  ref.current = handlers;
+
   useEffect(() => {
-    const { onSnapshot, onAgentNew, onAgentUpdate, onAgentOutput, onQuestionNew, onQuestionAnswered, onLockAcquired, onLockReleased, onJobNew, onJobUpdate, onDebateNew, onDebateUpdate } = handlers;
+    const h = (ev: string, fn: (...args: any[]) => void) => {
+      socket.on(ev as any, fn);
+      return () => { socket.off(ev as any, fn); };
+    };
 
-    // Keep named references so we can remove the exact listener on cleanup
-    const handleAgentNew = ({ agent }: { agent: AgentWithJob }) => onAgentNew(agent);
-    const handleAgentUpdate = ({ agent }: { agent: AgentWithJob }) => onAgentUpdate(agent);
-    const handleAgentOutput = ({ agent_id, line }: { agent_id: string; line: AgentOutput }) => onAgentOutput(agent_id, line);
-    const handleQuestionNew = ({ question }: { question: Question }) => onQuestionNew(question);
-    const handleQuestionAnswered = ({ question }: { question: Question }) => onQuestionAnswered(question);
-    const handleLockAcquired = ({ lock }: { lock: FileLock }) => onLockAcquired(lock);
-    const handleLockReleased = ({ lock_id, file_path }: { lock_id: string; file_path: string }) => onLockReleased(lock_id, file_path);
-    const handleJobNew = ({ job }: { job: Job }) => onJobNew(job);
-    const handleJobUpdate = ({ job }: { job: Job }) => onJobUpdate(job);
-    const handleDebateNew = onDebateNew ? ({ debate }: { debate: Debate }) => onDebateNew(debate) : undefined;
-    const handleDebateUpdate = onDebateUpdate ? ({ debate }: { debate: Debate }) => onDebateUpdate(debate) : undefined;
+    const offs = [
+      h('queue:snapshot', (snapshot: QueueSnapshot) => ref.current.onSnapshot(snapshot)),
+      h('agent:new', ({ agent }: { agent: AgentWithJob }) => ref.current.onAgentNew(agent)),
+      h('agent:update', ({ agent }: { agent: AgentWithJob }) => ref.current.onAgentUpdate(agent)),
+      h('agent:output', ({ agent_id, line }: { agent_id: string; line: AgentOutput }) => ref.current.onAgentOutput(agent_id, line)),
+      h('question:new', ({ question }: { question: Question }) => ref.current.onQuestionNew(question)),
+      h('question:answered', ({ question }: { question: Question }) => ref.current.onQuestionAnswered(question)),
+      h('lock:acquired', ({ lock }: { lock: FileLock }) => ref.current.onLockAcquired(lock)),
+      h('lock:released', ({ lock_id, file_path }: { lock_id: string; file_path: string }) => ref.current.onLockReleased(lock_id, file_path)),
+      h('job:new', ({ job }: { job: Job }) => ref.current.onJobNew(job)),
+      h('job:update', ({ job }: { job: Job }) => ref.current.onJobUpdate(job)),
+      h('debate:new', ({ debate }: { debate: Debate }) => ref.current.onDebateNew?.(debate)),
+      h('debate:update', ({ debate }: { debate: Debate }) => ref.current.onDebateUpdate?.(debate)),
+      h('warning:new', (payload: any) => (ref.current as any).onWarningNew?.(payload)),
+    ];
 
-    socket.on('queue:snapshot', onSnapshot);
-    socket.on('agent:new', handleAgentNew);
-    socket.on('agent:update', handleAgentUpdate);
-    socket.on('agent:output', handleAgentOutput);
-    socket.on('question:new', handleQuestionNew);
-    socket.on('question:answered', handleQuestionAnswered);
-    socket.on('lock:acquired', handleLockAcquired);
-    socket.on('lock:released', handleLockReleased);
-    socket.on('job:new', handleJobNew);
-    socket.on('job:update', handleJobUpdate);
-    if (handleDebateNew) (socket as any).on('debate:new', handleDebateNew);
-    if (handleDebateUpdate) (socket as any).on('debate:update', handleDebateUpdate);
-
-    // If the socket is already connected (e.g. React StrictMode double-mount or Vite HMR),
-    // the server's connection event already fired and won't fire again. Request a fresh snapshot.
+    // The server already pushes a snapshot on every new connection (io.on('connection')),
+    // so we do NOT request one on the 'connect' event — that would cause a duplicate
+    // snapshot that races with individual events and overwrites newer state with stale data.
+    //
+    // The only case we need to manually request is if the socket was already connected
+    // before this effect ran (React StrictMode double-mount, Vite HMR), because the
+    // server's connection handler already fired and won't fire again.
     if (socket.connected) {
       socket.emit('request:snapshot');
     }
 
     return () => {
-      socket.off('queue:snapshot', onSnapshot);
-      socket.off('agent:new', handleAgentNew);
-      socket.off('agent:update', handleAgentUpdate);
-      socket.off('agent:output', handleAgentOutput);
-      socket.off('question:new', handleQuestionNew);
-      socket.off('question:answered', handleQuestionAnswered);
-      socket.off('lock:acquired', handleLockAcquired);
-      socket.off('lock:released', handleLockReleased);
-      socket.off('job:new', handleJobNew);
-      socket.off('job:update', handleJobUpdate);
-      if (handleDebateNew) (socket as any).off('debate:new', handleDebateNew);
-      if (handleDebateUpdate) (socket as any).off('debate:update', handleDebateUpdate);
+      for (const off of offs) off();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

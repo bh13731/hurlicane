@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { runAgent, cancelledAgents } from '../orchestrator/AgentRunner.js';
-import { disconnectAgent, disconnectAll, getPtyBuffer, attachPty, isTmuxSessionAlive, startInteractiveAgent } from '../orchestrator/PtyManager.js';
+import { disconnectAgent, disconnectAll, getPtyBuffer, getSnapshot, attachPty, isTmuxSessionAlive, startInteractiveAgent } from '../orchestrator/PtyManager.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 
 const router = Router();
@@ -66,7 +66,13 @@ router.get('/:id/full-output', (req, res) => {
 router.get('/:id/pty-history', (req, res) => {
   const agent = queries.getAgentById(req.params.id);
   if (!agent) { res.status(404).json({ error: 'not found' }); return; }
-  res.json({ chunks: getPtyBuffer(req.params.id) });
+  // Prefer a clean tmux snapshot over raw PTY replay chunks
+  const snapshot = getSnapshot(req.params.id);
+  if (snapshot) {
+    res.json({ snapshot, mode: 'snapshot' });
+  } else {
+    res.json({ chunks: getPtyBuffer(req.params.id), mode: 'chunks' });
+  }
 });
 
 router.get('/:id/diff', (req, res) => {

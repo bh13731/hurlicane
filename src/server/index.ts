@@ -21,9 +21,16 @@ const PORT = Number(process.env.PORT ?? 3000);
 const MCP_PORT = Number(process.env.MCP_PORT ?? 3001);
 const DB_PATH = process.env.DB_PATH ?? path.join(process.cwd(), 'data', 'orchestrator.db');
 
-// ── Global error handlers — prevent silent crashes ──────────────────────────
-process.on('uncaughtException', (err) => {
+// ── Global error handlers ────────────────────────────────────────────────────
+// Log uncaught errors but EXIT for fatal ones (e.g. EADDRINUSE from a duplicate
+// server process). Without exit, a zombie process keeps running WorkQueue and
+// dispatching agents whose socket events go nowhere.
+process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
   console.error('[server] Uncaught exception:', err);
+  if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
+    console.error('[server] Fatal: port already in use — exiting to avoid zombie process');
+    process.exit(1);
+  }
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[server] Unhandled rejection:', reason);

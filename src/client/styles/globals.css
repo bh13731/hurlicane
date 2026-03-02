@@ -342,6 +342,199 @@ body {
   font-style: italic;
 }
 
+/* ─── Sidebar section header (label + folder button) ───────────────────────── */
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.sidebar-section-header .sidebar-section-label {
+  margin-bottom: 0;
+}
+
+.sidebar-section-folder-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.1s;
+}
+
+.sidebar-section:hover .sidebar-section-folder-btn {
+  opacity: 1;
+}
+
+.sidebar-section-folder-btn:hover {
+  color: var(--text-primary);
+}
+
+/* ─── Drag handle ──────────────────────────────────────────────────────────── */
+
+.sidebar-drag-handle {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.1s;
+  user-select: none;
+}
+
+.sidebar-job-draggable:hover .sidebar-drag-handle {
+  opacity: 1;
+}
+
+.sidebar-job-draggable {
+  cursor: default;
+}
+
+/* ─── Drag-and-drop feedback ───────────────────────────────────────────────── */
+
+.sidebar-job-dragging {
+  opacity: 0.4;
+}
+
+.sidebar-job-drag-target {
+  outline: 1px solid var(--accent, #58a6ff);
+  border-radius: 4px;
+  background: rgba(88, 166, 255, 0.08) !important;
+}
+
+.sidebar-job-indented {
+  padding-left: 8px;
+}
+
+/* ─── Folders ──────────────────────────────────────────────────────────────── */
+
+.sidebar-folder {
+  margin-bottom: 4px;
+  border-radius: 4px;
+  transition: opacity 0.15s;
+}
+
+.sidebar-folder-dragging {
+  opacity: 0.4;
+}
+
+.sidebar-folder-drag-target > .sidebar-folder-header {
+  outline: 1px solid var(--accent, #58a6ff);
+  border-radius: 4px;
+  background: rgba(88, 166, 255, 0.08);
+}
+
+.sidebar-folder-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 2px;
+  border-radius: 4px;
+  cursor: grab;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: background 0.1s;
+}
+
+.sidebar-folder-header:hover {
+  background: var(--bg-interactive);
+}
+
+.sidebar-folder-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 9px;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+  transition: color 0.1s;
+}
+
+.sidebar-folder-toggle:hover {
+  color: var(--text-primary);
+}
+
+.sidebar-folder-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.sidebar-folder-rename-input {
+  flex: 1;
+  background: var(--bg-base);
+  border: 1px solid var(--accent, #58a6ff);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 1px 4px;
+  min-width: 0;
+  outline: none;
+}
+
+.sidebar-folder-count {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-interactive);
+  border-radius: 8px;
+  padding: 0 5px;
+  min-width: 16px;
+  text-align: center;
+  line-height: 16px;
+}
+
+.sidebar-folder-delete {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s;
+}
+
+.sidebar-folder-header:hover .sidebar-folder-delete {
+  opacity: 1;
+}
+
+.sidebar-folder-delete:hover {
+  color: var(--status-failed);
+}
+
+.sidebar-folder-items {
+  padding-left: 4px;
+  border-left: 1px solid var(--border);
+  margin-left: 7px;
+  margin-top: 2px;
+}
+
+.sidebar-folder-empty-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 4px 8px;
+}
+
 /* ─── Agent Main Area ──────────────────────────────────────────────────────── */
 
 .agent-main {

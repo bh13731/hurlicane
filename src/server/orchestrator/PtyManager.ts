@@ -84,6 +84,45 @@ export function isTmuxSessionAlive(agentId: string): boolean {
   }
 }
 
+function getSnapshotPath(agentId: string): string {
+  return path.join(PTY_LOG_DIR, `${agentId}.snapshot`);
+}
+
+function captureTmuxSnapshot(agentId: string): string | null {
+  try {
+    const output = execFileSync('tmux', [
+      'capture-pane', '-p', '-e', '-S', '-',
+      '-t', sessionName(agentId),
+    ], { stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' });
+    return output;
+  } catch {
+    return null;
+  }
+}
+
+export function saveSnapshot(agentId: string): void {
+  const snapshot = captureTmuxSnapshot(agentId);
+  if (!snapshot) return;
+  try {
+    fs.mkdirSync(PTY_LOG_DIR, { recursive: true });
+    fs.writeFileSync(getSnapshotPath(agentId), snapshot, 'utf8');
+  } catch { /* ignore write errors */ }
+}
+
+export function getSnapshot(agentId: string): string | null {
+  // Prefer live capture from tmux if the session is still running
+  if (isTmuxSessionAlive(agentId)) {
+    const live = captureTmuxSnapshot(agentId);
+    if (live) return live;
+  }
+  // Fall back to saved snapshot file on disk
+  try {
+    return fs.readFileSync(getSnapshotPath(agentId), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 export interface StartInteractiveOptions {
   agentId: string;
   job: Job;
@@ -162,9 +201,10 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
   ].join('\n') + '\n';
   fs.writeFileSync(script, scriptLines, { mode: 0o755 });
 
-  // Clear any previous PTY log so this fresh session starts from a clean slate
+  // Clear any previous PTY log and snapshot so this fresh session starts from a clean slate
   fs.mkdirSync(PTY_LOG_DIR, { recursive: true });
   try { fs.unlinkSync(getPtyLogPath(agentId)); } catch { /* no previous log */ }
+  try { fs.unlinkSync(getSnapshotPath(agentId)); } catch { /* no previous snapshot */ }
 
   try {
     // Kill any existing session with this name
@@ -223,6 +263,11 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
           console.warn(`[pty ${agentId}] failed to send Enter:`, err.message);
         }
       }
+
+      // Guard: agent may have already finished during the 4s startup delay
+      const currentAgent = queries.getAgentById(agentId);
+      const TERMINAL = ['done', 'failed', 'cancelled'];
+      if (currentAgent && TERMINAL.includes(currentAgent.status)) return;
 
       queries.updateAgent(agentId, { status: 'running' });
       const updated = queries.getAgentWithJob(agentId);
@@ -350,6 +395,8 @@ export function attachPty(agentId: string, job: Job, cols = 220, rows = 50): voi
 
   ptyInstance.onExit(() => {
     try {
+      // Best-effort snapshot before we lose the tmux session (may already be gone)
+      saveSnapshot(agentId);
       console.log(`[pty ${agentId}] PTY exited`);
       _ptys.delete(agentId);
       socket.emitPtyClosed(agentId);
@@ -409,6 +456,9 @@ export function disconnectAgent(agentId: string): void {
   // Delete buffer first so the onData guard prevents writes during teardown
   _ptyBuffers.delete(agentId);
   _pendingResizes.delete(agentId);
+
+  // Capture a clean snapshot before killing the session
+  saveSnapshot(agentId);
 
   try {
     execFileSync('tmux', ['kill-session', '-t', sessionName(agentId)], { stdio: 'pipe' });

@@ -20,7 +20,7 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { runAgent, getLogPath } from './AgentRunner.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
-import { isTmuxSessionAlive, startInteractiveAgent } from './PtyManager.js';
+import { isTmuxSessionAlive, startInteractiveAgent, saveSnapshot } from './PtyManager.js';
 import { orphanedWaits, hasActiveTransport } from '../mcp/McpServer.js';
 import { isCodexModel } from '../../shared/types.js';
 
@@ -229,8 +229,9 @@ function check(): void {
     console.warn(`[watchdog] agent ${agentId} stuck after MCP disconnect (${stuckMs}ms), all sub-jobs terminal — restarting job ${job.id}`);
     orphanedWaits.delete(agentId);
 
-    // Kill the stuck tmux session (if still alive)
+    // Capture a snapshot before killing the stuck tmux session
     if (isTmuxSessionAlive(agentId)) {
+      saveSnapshot(agentId);
       try {
         execFileSync('tmux', ['kill-session', '-t', `orchestrator-${agentId}`], { stdio: 'pipe' });
       } catch { /* already gone */ }
@@ -266,11 +267,10 @@ function check(): void {
     const updatedJob = queries.getJobById(job.id);
     if (updatedJob) socket.emitJobUpdate(updatedJob);
 
-    // Codex batch still uses runAgent; all others use startInteractiveAgent
-    if (isCodexModel((job as any).model ?? null) && !job.is_interactive) {
-      runAgent({ agentId: newAgentId, job, resumeSessionId: agent.session_id ?? undefined });
+    if (job.is_interactive) {
+      startInteractiveAgent({ agentId: newAgentId, job });
     } else {
-      startInteractiveAgent({ agentId: newAgentId, job, autoFinish: !job.is_interactive });
+      runAgent({ agentId: newAgentId, job, resumeSessionId: agent.session_id ?? undefined });
     }
     console.log(`[watchdog] re-spawned agent ${newAgentId} for job ${job.id}`);
   }

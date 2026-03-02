@@ -111,14 +111,22 @@ export default function App() {
     }
   }, []);
 
-  // When an agent updates, sync the selected agent if it's open; refresh cost when one finishes
+  // When an agent updates, sync the selected agent if it's open; refresh cost when one finishes.
+  // Also sync jobs state from the embedded job, since job:update events can be missed when
+  // agent events arrive out-of-order or a transition happens entirely within the agent path.
   const handleAgentUpdate = useCallback((agent: AgentWithJob) => {
     updateAgent(agent);
+    updateJob(agent.job);
     setSelectedAgent(prev => prev?.id === agent.id ? agent : prev);
     if (agent.status === 'done' || agent.status === 'failed') {
       fetchTodayCost();
     }
-  }, [updateAgent, fetchTodayCost]);
+  }, [updateAgent, updateJob, fetchTodayCost]);
+
+  const handleAgentNew = useCallback((agent: AgentWithJob) => {
+    addAgent(agent);
+    updateJob(agent.job);
+  }, [addAgent, updateJob]);
 
   useSocket({
     onSnapshot: (snapshot) => {
@@ -129,7 +137,7 @@ export default function App() {
       setInitialProjects(snapshot.projects ?? []);
       setInitialDebates(snapshot.debates ?? []);
     },
-    onAgentNew: addAgent,
+    onAgentNew: handleAgentNew,
     onAgentUpdate: handleAgentUpdate,
     onAgentOutput: (_agentId: string, _line: AgentOutput) => {
       // Output is rendered live in AgentTerminal via socket listener
