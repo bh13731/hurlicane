@@ -192,12 +192,19 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
     }
   }
 
+  // Wrap the exec line with `nice -n 10` so agent processes run at lower scheduling
+  // priority than the orchestrator server/UI. setPriority() doesn't work here because
+  // tmux spawns a grandchild process that doesn't inherit the nice value.
+  const nicedExecLine = execLine.startsWith('exec ')
+    ? `exec nice -n 10 ${execLine.slice(5)}`
+    : `nice -n 10 ${execLine}`;
+
   const scriptLines = [
     '#!/bin/sh',
     `export ORCHESTRATOR_AGENT_ID=${JSON.stringify(agentId)}`,
     `export ORCHESTRATOR_API_URL=${JSON.stringify(`http://localhost:${process.env.PORT ?? 3000}`)}`,
     `unset CLAUDECODE`,
-    execLine,
+    nicedExecLine,
   ].join('\n') + '\n';
   fs.writeFileSync(script, scriptLines, { mode: 0o755 });
 

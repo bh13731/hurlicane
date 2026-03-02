@@ -1,5 +1,4 @@
 import { spawn, execSync, type ChildProcess } from 'child_process';
-import { setPriority } from 'os';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -176,7 +175,9 @@ export function runAgent(options: RunOptions): void {
 
   console.log(`[agent ${agentId}] spawning ${useCodex ? 'codex' : 'claude'} for job "${job.title}"${model ? ` (model: ${model})` : ''}`);
 
-  const child = spawn(binary, args, {
+  // Spawn via `nice -n 10` so agent processes run at lower scheduling priority
+  // than the orchestrator server/UI. This keeps the dashboard responsive under load.
+  const child = spawn('nice', ['-n', '10', binary, ...args], {
     cwd: workDir,
     detached: true,            // becomes process group leader — survives server restart
     stdio: ['pipe', logFd, errFd],  // stdout/stderr go to files, not pipes
@@ -192,12 +193,6 @@ export function runAgent(options: RunOptions): void {
   // Parent releases its copies of the file descriptors — child keeps its own
   fs.closeSync(logFd);
   fs.closeSync(errFd);
-
-  // Reduce scheduling priority of Claude workers so the UI/server stays responsive
-  // under CPU load. On macOS/Linux this is equivalent to `nice -n 10`.
-  if (child.pid) {
-    try { setPriority(child.pid, 10); } catch { /* ignore if unsupported */ }
-  }
 
   // Write prompt to stdin then close (child reads it all before doing anything else)
   child.stdin.write(buildPrompt(job));
