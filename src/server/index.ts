@@ -15,7 +15,6 @@ import { startKBConsolidator, stopKBConsolidator } from './orchestrator/KBConsol
 import { runRecovery } from './orchestrator/recovery.js';
 import { writeInput, resizePty } from './orchestrator/PtyManager.js';
 import { stopEyeProcess } from './api/eye.js';
-import { restoreApiKey } from './api/settings.js';
 import * as queries from './db/queries.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -112,7 +111,6 @@ async function main() {
   // Restore persisted settings
   const savedMax = queries.getNote('setting:maxConcurrentAgents');
   if (savedMax) setMaxConcurrent(Number(savedMax.value));
-  restoreApiKey();
 
   // 7. Start main server
   httpServer.listen(PORT, () => {

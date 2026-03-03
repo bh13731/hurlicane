@@ -1172,6 +1172,12 @@ export function getWorktreeById(id: string): Worktree | null {
   return row ? cast<Worktree>(row) : null;
 }
 
+export function getWorktreeByJobId(jobId: string): Worktree | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM worktrees WHERE job_id = ? AND cleaned_at IS NULL ORDER BY created_at DESC LIMIT 1').get(jobId);
+  return row ? cast<Worktree>(row) : null;
+}
+
 export function listActiveWorktrees(): Worktree[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM worktrees WHERE cleaned_at IS NULL ORDER BY created_at DESC').all();

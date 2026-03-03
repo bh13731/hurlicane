@@ -1,8 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
+import { callClaude } from './LLMHelper.js';
 import type { Job, KBEntry } from '../../shared/types.js';
-
-const TRIAGE_MODEL = 'claude-haiku-4-5-20251001';
 
 interface Learning {
   title: string;
@@ -132,11 +131,6 @@ async function classifyLearnings(
   candidates: CandidateEntry[],
   jobTitle: string,
 ): Promise<TriageResult[]> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return learnings.map((_, i) => ({ index: i, classification: 'project' as const }));
-  }
-
   const learningsList = learnings.map((l, i) =>
     `${i}. "${l.title}": ${l.content.slice(0, 200)}${l.scope ? ` [hint: ${l.scope}]` : ''}`
   ).join('\n');
@@ -164,30 +158,7 @@ instead of discarding — the existing entry will be updated with the new conten
 Respond with ONLY a JSON array like:
 [{"index":0,"classification":"project"},{"index":1,"classification":"discard"},{"index":2,"classification":"project","supersedes":"existing-entry-id"}]`;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    signal: controller.signal,
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: TRIAGE_MODEL,
-      max_tokens: 512,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-  clearTimeout(timeout);
-
-  if (!response.ok) {
-    throw new Error(`Anthropic API ${response.status}: ${await response.text()}`);
-  }
-
-  const data = await response.json() as any;
-  const text = (data.content?.[0]?.text ?? '').trim();
+  const text = await callClaude(prompt, { model: 'haiku', maxTokens: 512 });
 
   const match = text.match(/\[[\s\S]*\]/);
   if (!match) {

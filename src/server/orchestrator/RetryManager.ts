@@ -29,19 +29,31 @@ function retrySame(job: Job): boolean {
 
   console.log(`[retry] cloning job ${job.id} (same strategy, attempt ${retryCount}/${job.max_retries})`);
 
+  // Reuse existing worktree if the original job created one
+  let workDir = (job as any).work_dir ?? null;
+  let useWorktree = job.use_worktree;
+  if (useWorktree) {
+    const existingWt = queries.getWorktreeByJobId(job.id);
+    if (existingWt) {
+      workDir = existingWt.path;
+      useWorktree = 0; // already have a worktree, don't create another
+      console.log(`[retry] reusing worktree ${existingWt.path} (branch: ${existingWt.branch})`);
+    }
+  }
+
   const retryJob = queries.insertJob({
     id: randomUUID(),
     title: job.title,
     description: job.description,
     context: job.context,
     priority: job.priority,
-    work_dir: (job as any).work_dir ?? null,
+    work_dir: workDir,
     max_turns: (job as any).max_turns ?? 50,
     model: job.model ?? null,
     template_id: job.template_id ?? null,
     depends_on: null,
     is_interactive: 0,
-    use_worktree: job.use_worktree,
+    use_worktree: useWorktree,
     project_id: job.project_id ?? null,
     retry_policy: job.retry_policy,
     max_retries: job.max_retries,
@@ -101,13 +113,20 @@ function retryAnalyze(job: Job, agentId: string): boolean {
     originalJob: job,
   });
 
+  // Reuse existing worktree for the analysis job
+  let analysisWorkDir = (job as any).work_dir ?? null;
+  if (job.use_worktree) {
+    const existingWt = queries.getWorktreeByJobId(job.id);
+    if (existingWt) analysisWorkDir = existingWt.path;
+  }
+
   const analysisJob = queries.insertJob({
     id: randomUUID(),
     title: `[Analysis] ${job.title}`.slice(0, 100),
     description: analysisPrompt,
     context: null,
     priority: job.priority + 1, // slightly higher to run soon
-    work_dir: (job as any).work_dir ?? null,
+    work_dir: analysisWorkDir,
     max_turns: 10,
     model: 'claude-haiku-4-5-20251001',
     template_id: null,

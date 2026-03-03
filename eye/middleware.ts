@@ -10,30 +10,78 @@ export interface ProcessEventResult {
 }
 
 /**
- * Parse "Skip repos matching: pattern" lines from the skip prompt.
+ * Build a concise summary of the event for the LLM skip evaluator.
  */
-function parseSkipPatterns(prompt: string): string[] {
-  const patterns: string[] = [];
-  for (const line of prompt.split('\n')) {
-    const match = line.match(/skip\s+repos?\s+matching:\s*(.+)/i);
-    if (match) {
-      patterns.push(...match[1].split(',').map(p => p.trim()).filter(Boolean));
-    }
-  }
-  return patterns;
+function summarizeEvent(eventType: string, payload: any, jobReq: CreateJobRequest): string {
+  const repo = payload.repository?.full_name ?? '';
+  const action = payload.action ?? '';
+  const sender = payload.sender?.login ?? '';
+  const pr = payload.pull_request ?? payload.issue ?? {};
+  const draft = pr.draft ? 'DRAFT' : 'not draft';
+  const prNum = pr.number ?? '';
+  const prTitle = pr.title ?? '';
+  const branch = jobReq.context?.branch ?? '';
+
+  return [
+    `Event: ${eventType} (action: ${action})`,
+    `Repo: ${repo}`,
+    `Sender: ${sender}`,
+    `PR #${prNum}: "${prTitle}" [${draft}]`,
+    branch ? `Branch: ${branch}` : '',
+    `Job title: ${jobReq.title ?? ''}`,
+    `Job description: ${jobReq.description.slice(0, 500)}`,
+  ].filter(Boolean).join('\n');
 }
 
 /**
- * Test whether a repo name matches a glob-like pattern (supports trailing *).
+ * Use the local claude CLI to evaluate whether this event should be skipped
+ * based on the user's skip prompt.
  */
-function matchesPattern(repoName: string, pattern: string): boolean {
-  if (pattern.endsWith('/*')) {
-    return repoName.startsWith(pattern.slice(0, -1));
+async function llmShouldSkip(
+  skipPrompt: string,
+  eventSummary: string,
+): Promise<string | null> {
+  try {
+    const { execFile } = await import('child_process');
+    const prompt = `You are a GitHub event filter. Based on the skip rules and the event, decide whether to SKIP or PROCESS this event.
+
+## Skip Rules
+${skipPrompt}
+
+## Event
+${eventSummary}
+
+Reply with exactly one word: SKIP or PROCESS`;
+
+    const { spawn } = await import('child_process');
+    const answer = await new Promise<string>((resolve, reject) => {
+      const proc = spawn('claude', ['--print', '--model', 'haiku', '--no-session-persistence'], {
+        timeout: 15_000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const chunks: Buffer[] = [];
+      const errChunks: Buffer[] = [];
+      proc.stdout.on('data', (d: Buffer) => chunks.push(d));
+      proc.stderr.on('data', (d: Buffer) => errChunks.push(d));
+      proc.on('error', (err: Error) => reject(new Error(`claude CLI failed: ${err.message}`)));
+      proc.on('close', (code: number | null) => {
+        const out = Buffer.concat(chunks).toString().trim();
+        const errOut = Buffer.concat(errChunks).toString().trim();
+        if (code !== 0) { reject(new Error(`claude CLI exited ${code}${errOut ? `\n${errOut}` : ''}`)); return; }
+        resolve(out);
+      });
+      proc.stdin.write(prompt);
+      proc.stdin.end();
+    });
+
+    if (answer.toUpperCase().includes('SKIP')) {
+      return `LLM skip: matched rule "${skipPrompt.slice(0, 80)}"`;
+    }
+    return null;
+  } catch (err: any) {
+    console.warn(`[eye] skip LLM evaluation failed: ${err.message}`);
+    return null; // on error, allow through
   }
-  if (pattern.endsWith('*')) {
-    return repoName.startsWith(pattern.slice(0, -1));
-  }
-  return repoName === pattern;
 }
 
 /**
@@ -44,20 +92,20 @@ async function shouldSkip(
   client: OrchestratorClient,
   repoName: string,
   skipPrompt: string,
+  eventSummary: string,
 ): Promise<string | null> {
   if (!repoName) return 'no repo in payload';
-
-  // Check custom skip patterns from prompt
-  const patterns = parseSkipPatterns(skipPrompt);
-  for (const pattern of patterns) {
-    if (matchesPattern(repoName, pattern)) {
-      return `repo "${repoName}" matches skip pattern "${pattern}"`;
-    }
-  }
 
   // Default: skip if repo isn't registered in the orchestrator
   const repo = await client.getRepoByName(repoName);
   if (!repo) return `repo "${repoName}" not registered`;
+
+  // Evaluate skip prompt via LLM
+  if (skipPrompt.trim()) {
+    const llmResult = await llmShouldSkip(skipPrompt, eventSummary);
+    if (llmResult) return llmResult;
+  }
+
   return null;
 }
 
@@ -75,11 +123,14 @@ export async function processEvent(
   const repoName = payload.repository?.full_name ?? '';
   const branch = jobReq.context?.branch ?? '';
 
+  console.log(`[eye] processEvent: ${eventType} repo=${repoName} branch="${branch}"`);
+
   // ── Fetch configurable prompts ──
   const prompts = await client.getPrompts();
 
   // ── Skip filter (before complexity evaluation) ──
-  const skipReason = await shouldSkip(client, repoName, prompts.skipPrompt);
+  const eventSummary = summarizeEvent(eventType, payload, jobReq);
+  const skipReason = await shouldSkip(client, repoName, prompts.skipPrompt, eventSummary);
   if (skipReason) {
     console.log(`[eye] skipping ${eventType}: ${skipReason}`);
     return { type: 'skipped', title: skipReason };
@@ -88,7 +139,10 @@ export async function processEvent(
   // Resolve worktree for branch isolation
   const wt = await resolveWorktree(client, repoName, branch);
   if (wt) {
+    console.log(`[eye] worktree resolved: ${wt.workDir} (branch: ${wt.branch}, new: ${wt.isNew})`);
     jobReq.workDir = wt.workDir;
+  } else {
+    console.log(`[eye] no worktree resolved for branch="${branch}"`);
   }
 
   // Evaluate complexity with configurable thresholds

@@ -6,9 +6,6 @@ interface SettingsModalProps {
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [maxConcurrent, setMaxConcurrent] = useState<number>(20);
-  const [apiKey, setApiKey] = useState('');
-  const [maskedKey, setMaskedKey] = useState('');
-  const [hasKey, setHasKey] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -16,8 +13,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       .then(r => r.json())
       .then(data => {
         setMaxConcurrent(data.maxConcurrentAgents);
-        setMaskedKey(data.anthropicApiKey || '');
-        setHasKey(data.hasAnthropicApiKey);
       })
       .catch(() => {});
   }, []);
@@ -25,12 +20,10 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const body: Record<string, unknown> = { maxConcurrentAgents: maxConcurrent };
-      if (apiKey) body.anthropicApiKey = apiKey;
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent }),
       });
       if (res.ok) onClose();
     } finally {
@@ -47,21 +40,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
         <div className="modal-body">
           <div className="form-group">
-            <label>Anthropic API Key</label>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-              placeholder={hasKey ? maskedKey : 'sk-ant-...'}
-            />
-            {hasKey && !apiKey && (
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                Key is set. Enter a new value to replace it.
-              </div>
-            )}
-          </div>
-
-          <div className="form-group" style={{ marginTop: 16 }}>
             <label>Max Concurrent Agents</label>
             <input
               type="number"

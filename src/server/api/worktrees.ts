@@ -54,14 +54,31 @@ router.post('/', (req, res) => {
     const worktreeDir = path.resolve(repoDir, '..', '.orchestrator-worktrees', shortId);
 
     if (trackExisting) {
-      // Fetch the branch from origin, then check out the existing branch
+      // Fetch the branch from origin, then check out the existing branch.
+      // Use --detach first to avoid "already checked out" errors, then
+      // create a local branch tracking the remote.
       execSync('git fetch origin', { cwd: repoDir, timeout: 30_000 });
-      execSync(`git worktree add ${JSON.stringify(worktreeDir)} ${JSON.stringify(branch)}`, {
-        cwd: repoDir,
-        timeout: 30_000,
-      });
+      try {
+        execSync(`git worktree add ${JSON.stringify(worktreeDir)} ${JSON.stringify(branch)}`, {
+          cwd: repoDir,
+          timeout: 30_000,
+        });
+      } catch {
+        // Branch is likely already checked out in the main repo.
+        // Detach at the remote ref, then create a local branch pointing there.
+        const remoteRef = `origin/${branch}`;
+        execSync(`git worktree add --detach ${JSON.stringify(worktreeDir)} ${JSON.stringify(remoteRef)}`, {
+          cwd: repoDir,
+          timeout: 30_000,
+        });
+        // Create a local branch in the worktree so commits land on a named branch
+        execSync(`git checkout -B ${JSON.stringify(branch)} ${JSON.stringify(remoteRef)}`, {
+          cwd: worktreeDir,
+          timeout: 10_000,
+        });
+      }
     } else {
-      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branch)}`, {
+      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branch)} main`, {
         cwd: repoDir,
         timeout: 30_000,
       });

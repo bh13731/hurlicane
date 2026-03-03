@@ -346,57 +346,54 @@ export async function attachPty(agentId: string, job: Job, cols = 220, rows = 50
     _pendingResizes.delete(agentId);
   }
 
-  if (!isTmuxSessionAlive(agentId)) {
-    console.warn(`[pty ${agentId}] tmux session not alive, cannot attach`);
-    queries.updateAgent(agentId, { status: 'done', finished_at: Date.now() });
-    queries.updateJobStatus(job.id, 'done');
-    const updated = queries.getAgentWithJob(agentId);
-    if (updated) socket.emitAgentUpdate(updated);
-    return;
-  }
-
   // Wait for the tmux session to be ready before spawning the PTY
   const MAX_WAIT_ATTEMPTS = 10;
   const WAIT_INTERVAL_MS = 500;
   for (let i = 0; i < MAX_WAIT_ATTEMPTS; i++) {
     if (isTmuxSessionAlive(agentId)) break;
     if (i === MAX_WAIT_ATTEMPTS - 1) {
-      console.error(`[pty ${agentId}] tmux session not ready after ${MAX_WAIT_ATTEMPTS * WAIT_INTERVAL_MS}ms`);
-      queries.updateAgent(agentId, { status: 'failed', error_message: 'tmux session not ready', finished_at: Date.now() });
-      queries.updateJobStatus(job.id, 'failed');
-      const updated = queries.getAgentWithJob(agentId);
-      if (updated) socket.emitAgentUpdate(updated);
+      console.warn(`[pty ${agentId}] tmux session not alive after ${MAX_WAIT_ATTEMPTS * WAIT_INTERVAL_MS}ms, skipping PTY attach`);
       return;
     }
     await new Promise(r => setTimeout(r, WAIT_INTERVAL_MS));
   }
 
-  let ptyInstance: IPty;
-  try {
-    ptyInstance = ptySpawn('tmux', ['attach-session', '-t', sessionName(agentId)], {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd: (job as any).work_dir ?? process.cwd(),
-      env: (() => {
-        const env: Record<string, string> = {};
-        for (const [k, v] of Object.entries(process.env)) {
-          if (v !== undefined) env[k] = v;
-        }
-        delete env['CLAUDECODE'];
-        return env;
-      })(),
-    });
-  } catch (err: any) {
-    console.error(`[pty ${agentId}] failed to spawn PTY:`, err.message);
-    queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
-    queries.updateJobStatus(job.id, 'failed');
-    const updated = queries.getAgentWithJob(agentId);
-    if (updated) socket.emitAgentUpdate(updated);
-    return;
+  let ptyInstance: IPty | null = null;
+  const PTY_SPAWN_RETRIES = 3;
+  const PTY_SPAWN_DELAY_MS = 500;
+  for (let attempt = 1; attempt <= PTY_SPAWN_RETRIES; attempt++) {
+    try {
+      ptyInstance = ptySpawn('tmux', ['attach-session', '-t', sessionName(agentId)], {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd: (job as any).work_dir ?? process.cwd(),
+        env: (() => {
+          const env: Record<string, string> = {};
+          for (const [k, v] of Object.entries(process.env)) {
+            if (v !== undefined) env[k] = v;
+          }
+          delete env['CLAUDECODE'];
+          return env;
+        })(),
+      });
+      break;
+    } catch (err: any) {
+      console.warn(`[pty ${agentId}] spawn attempt ${attempt}/${PTY_SPAWN_RETRIES} failed: ${err.message}`);
+      if (attempt < PTY_SPAWN_RETRIES) {
+        await new Promise(r => setTimeout(r, PTY_SPAWN_DELAY_MS));
+      } else {
+        console.error(`[pty ${agentId}] all spawn attempts failed`);
+        queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
+        queries.updateJobStatus(job.id, 'failed');
+        const updated = queries.getAgentWithJob(agentId);
+        if (updated) socket.emitAgentUpdate(updated);
+        return;
+      }
+    }
   }
 
-  _ptys.set(agentId, ptyInstance);
+  _ptys.set(agentId, ptyInstance!);
   if (!_ptyBuffers.has(agentId)) _ptyBuffers.set(agentId, []);
   console.log(`[pty ${agentId}] attached to tmux session`);
 

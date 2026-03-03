@@ -1,7 +1,6 @@
 import * as queries from '../db/queries.js';
+import { callClaude } from './LLMHelper.js';
 import type { KBEntry } from '../../shared/types.js';
-
-const TRIAGE_MODEL = 'claude-haiku-4-5-20251001';
 const CONSOLIDATION_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const STALE_ENTRY_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 
@@ -43,12 +42,6 @@ export async function runConsolidation(): Promise<ConsolidationResult> {
   }
 
   // Step 2: Dedup clusters per project
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    console.log('[kb-consolidator] no ANTHROPIC_API_KEY, skipping AI-based dedup/contradiction checks');
-    return result;
-  }
-
   const projects = queries.listProjects();
   // Process each project + global (null project)
   const projectIds: Array<string | null> = [...projects.map(p => p.id), null];
@@ -58,11 +51,11 @@ export async function runConsolidation(): Promise<ConsolidationResult> {
     if (entries.length < 2) continue;
 
     // Step 2: Find duplicate clusters using FTS
-    const dedupResult = await dedupCluster(entries, apiKey);
+    const dedupResult = await dedupCluster(entries);
     result.deduped += dedupResult;
 
     // Step 3: Contradiction check (newest first, in batches of 20)
-    const contradictionResult = await checkContradictions(entries, apiKey);
+    const contradictionResult = await checkContradictions(entries);
     result.contradictions += contradictionResult;
   }
 
@@ -74,7 +67,7 @@ export async function runConsolidation(): Promise<ConsolidationResult> {
  * Send batches of entries to Haiku to identify duplicates.
  * Returns count of entries removed.
  */
-async function dedupCluster(entries: KBEntry[], apiKey: string): Promise<number> {
+async function dedupCluster(entries: KBEntry[]): Promise<number> {
   if (entries.length < 2) return 0;
 
   // Process in batches of 20 entries
@@ -101,8 +94,9 @@ Respond with ONLY a JSON array of IDs to delete. If no duplicates found, respond
 Example: ["id-to-delete-1", "id-to-delete-2"]`;
 
     try {
-      const idsToDelete = await callHaiku(apiKey, prompt);
-      const parsed = JSON.parse(idsToDelete);
+      const text = await callClaude(prompt, { model: 'haiku', maxTokens: 512 });
+      const match = text.match(/\[[\s\S]*\]/);
+      const parsed = match ? JSON.parse(match[0]) : [];
       if (Array.isArray(parsed)) {
         for (const id of parsed) {
           if (typeof id === 'string' && batch.some(e => e.id === id)) {
@@ -124,7 +118,7 @@ Example: ["id-to-delete-1", "id-to-delete-2"]`;
  * When newer entries contradict older ones, the older entry is removed.
  * Returns count of entries removed.
  */
-async function checkContradictions(entries: KBEntry[], apiKey: string): Promise<number> {
+async function checkContradictions(entries: KBEntry[]): Promise<number> {
   if (entries.length < 2) return 0;
 
   // entries are already sorted newest-first from the query
@@ -151,8 +145,9 @@ Respond with ONLY a JSON array of IDs of the OLDER contradicted entries to delet
 Example: ["old-contradicted-id-1"]`;
 
     try {
-      const idsToDelete = await callHaiku(apiKey, prompt);
-      const parsed = JSON.parse(idsToDelete);
+      const text = await callClaude(prompt, { model: 'haiku', maxTokens: 512 });
+      const match = text.match(/\[[\s\S]*\]/);
+      const parsed = match ? JSON.parse(match[0]) : [];
       if (Array.isArray(parsed)) {
         for (const id of parsed) {
           if (typeof id === 'string' && batch.some(e => e.id === id)) {
@@ -167,36 +162,4 @@ Example: ["old-contradicted-id-1"]`;
   }
 
   return removed;
-}
-
-async function callHaiku(apiKey: string, prompt: string): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    signal: controller.signal,
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: TRIAGE_MODEL,
-      max_tokens: 512,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-  clearTimeout(timeout);
-
-  if (!response.ok) {
-    throw new Error(`Anthropic API ${response.status}: ${await response.text()}`);
-  }
-
-  const data = await response.json() as any;
-  const text = (data.content?.[0]?.text ?? '').trim();
-
-  // Extract JSON array from response
-  const match = text.match(/\[[\s\S]*\]/);
-  if (!match) return '[]';
-  return match[0];
 }

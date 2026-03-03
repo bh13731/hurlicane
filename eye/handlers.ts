@@ -221,10 +221,10 @@ function handlePullRequestReview(
   return `review state "${state}"`;
 }
 
-function handleIssueComment(
+async function handleIssueComment(
   payload: any,
   config: EyeConfig,
-): HandlerResult {
+): Promise<HandlerResult> {
   if (payload.action !== 'created') return `action "${payload.action}" (want "created")`;
 
   const comment = payload.comment;
@@ -235,15 +235,26 @@ function handleIssueComment(
   if (!issue.pull_request) return 'not a PR comment';
 
   const commenter = comment.user?.login;
-  if (commenter === config.author) return 'self-comment';
 
   const prNum = issue.number;
   const dedupKey = `comment:${repo}#${prNum}:${comment.id}`;
   if (isDuplicate(dedupKey)) return 'duplicate';
 
+  // Fetch PR branch via gh CLI (issue_comment payload doesn't include it)
+  let branch = '';
+  try {
+    const { execSync } = await import('child_process');
+    branch = execSync(
+      `gh pr view ${prNum} --repo ${repo} --json headRefName --jq .headRefName`,
+      { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
+    ).toString().trim();
+  } catch (err: any) {
+    console.warn(`[eye] failed to fetch PR branch for ${repo}#${prNum}:`, err.message);
+  }
+
   const title = `Reply to comment on ${repo}#${prNum}`;
   const description = [
-    `${commenter} commented on ${repo}#${prNum}.`,
+    `${commenter} commented on ${repo}#${prNum}${branch ? ` (branch: ${branch})` : ''}.`,
     `\nComment:\n${comment.body ?? '(empty)'}`,
     `\nReview and respond to the comment as needed.`,
   ].join('\n');
@@ -251,6 +262,7 @@ function handleIssueComment(
   return buildJob(config, title, description, 2, {
     repo,
     pr: String(prNum),
+    branch,
     commenter: commenter ?? '',
     comment_id: String(comment.id),
   });
@@ -349,7 +361,7 @@ export async function dispatch(
       handlerResult = handlePullRequestReview(payload, config);
       break;
     case 'issue_comment':
-      handlerResult = handleIssueComment(payload, config);
+      handlerResult = await handleIssueComment(payload, config);
       break;
     default:
       return null;
