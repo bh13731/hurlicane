@@ -228,6 +228,16 @@ export function initDb(dbPath: string): DatabaseSync {
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_agent_warnings_agent ON agent_warnings(agent_id, dismissed)');
 
+  // ── Repos ──────────────────────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS repos (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      path       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+
   // ── Feature 4: Worktree Cleanup ───────────────────────────────────────────
   db.exec(`
     CREATE TABLE IF NOT EXISTS worktrees (

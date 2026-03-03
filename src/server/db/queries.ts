@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getDb } from './database.js';
-import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, Debate, DebateStatus, DebateRole, RetryPolicy, JobStatus, AgentStatus, SearchResult, AgentWarning, Worktree, Nudge, KBEntry, Review, TemplateModelStat, ReviewStatus } from '../../shared/types.js';
+import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, Debate, DebateStatus, DebateRole, RetryPolicy, JobStatus, AgentStatus, SearchResult, AgentWarning, Worktree, Nudge, KBEntry, Review, TemplateModelStat, ReviewStatus, Repo } from '../../shared/types.js';
 
 // node:sqlite returns null-prototype objects; shallow-copy to a regular object.
 // SQLite rows are always flat scalars so a shallow copy is sufficient and far
@@ -1112,6 +1112,28 @@ export function hasUndismissedWarning(agentId: string, type: string): boolean {
   return !!row;
 }
 
+// ─── Repos ──────────────────────────────────────────────────────────────────
+
+export function insertRepo(repo: { id: string; name: string; path: string }): Repo {
+  const db = getDb();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO repos (id, name, path, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(repo.id, repo.name, repo.path, now);
+  return cast<Repo>(db.prepare('SELECT * FROM repos WHERE id = ?').get(repo.id));
+}
+
+export function listRepos(): Repo[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM repos ORDER BY name ASC').all().map(r => cast<Repo>(r));
+}
+
+export function deleteRepo(id: string): void {
+  const db = getDb();
+  db.prepare('DELETE FROM repos WHERE id = ?').run(id);
+}
+
 // ─── Worktrees (Feature 4) ──────────────────────────────────────────────────
 
 export function insertWorktree(wt: { id: string; agent_id: string; job_id: string; path: string; branch: string }): Worktree {
@@ -1122,6 +1144,12 @@ export function insertWorktree(wt: { id: string; agent_id: string; job_id: strin
     VALUES (?, ?, ?, ?, ?, ?, NULL)
   `).run(wt.id, wt.agent_id, wt.job_id, wt.path, wt.branch, now);
   return cast<Worktree>(db.prepare('SELECT * FROM worktrees WHERE id = ?').get(wt.id));
+}
+
+export function getWorktreeById(id: string): Worktree | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM worktrees WHERE id = ?').get(id);
+  return row ? cast<Worktree>(row) : null;
 }
 
 export function listActiveWorktrees(): Worktree[] {

@@ -17,6 +17,8 @@ import { ProjectSelector } from './components/ProjectSelector';
 import { SettingsModal } from './components/SettingsModal';
 import { DebateForm } from './components/DebateForm';
 import { KnowledgeBaseModal } from './components/KnowledgeBaseModal';
+import { EyeModal } from './components/EyeModal';
+import { GitModal } from './components/GitModal';
 import { useSocket } from './hooks/useSocket';
 import { useAgents } from './hooks/useAgents';
 import { useJobs } from './hooks/useJobs';
@@ -49,6 +51,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showDebateForm, setShowDebateForm] = useState(false);
   const [showKnowledgeBase, setShowKnowledgeBase] = useState(false);
+  const [showEye, setShowEye] = useState(false);
+  const [showGit, setShowGit] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [archivedJobs, setArchivedJobs] = useState<Job[]>([]);
   const [leftTab, setLeftTab] = useState<'feed' | 'lineage'>('feed');
@@ -311,7 +315,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} />
+      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(true)} onGit={() => setShowGit(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); setShowEye(false); setShowGit(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} />
 
       <div className="main-layout">
         <div className={`left-sidebar-stack ${leftTab === 'lineage' && selectedAgent ? '' : 'left-sidebar-stack--narrow'}`}>
@@ -435,6 +439,14 @@ export default function App() {
 
       {showKnowledgeBase && (
         <KnowledgeBaseModal onClose={() => setShowKnowledgeBase(false)} />
+      )}
+
+      {showEye && (
+        <EyeModal onClose={() => setShowEye(false)} />
+      )}
+
+      {showGit && (
+        <GitModal onClose={() => setShowGit(false)} />
       )}
 
       {showProjects && (

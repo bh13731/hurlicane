@@ -410,6 +410,15 @@ export interface AgentWarning {
   created_at: number;
 }
 
+// ─── Repos ──────────────────────────────────────────────────────────────────
+
+export interface Repo {
+  id: string;
+  name: string;
+  path: string;
+  created_at: number;
+}
+
 // ─── Worktrees (Feature 4) ──────────────────────────────────────────────────
 
 export interface Worktree {

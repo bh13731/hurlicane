@@ -14,6 +14,8 @@ import { startWorktreeCleanup, stopWorktreeCleanup } from './orchestrator/Worktr
 import { startKBConsolidator, stopKBConsolidator } from './orchestrator/KBConsolidator.js';
 import { runRecovery } from './orchestrator/recovery.js';
 import { writeInput, resizePty } from './orchestrator/PtyManager.js';
+import { stopEyeProcess } from './api/eye.js';
+import { restoreApiKey } from './api/settings.js';
 import * as queries from './db/queries.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -110,6 +112,7 @@ async function main() {
   // Restore persisted settings
   const savedMax = queries.getNote('setting:maxConcurrentAgents');
   if (savedMax) setMaxConcurrent(Number(savedMax.value));
+  restoreApiKey();
 
   // 7. Start main server
   httpServer.listen(PORT, () => {
@@ -137,6 +140,7 @@ async function main() {
     stopHealthMonitor();
     stopWorktreeCleanup();
     stopKBConsolidator();
+    stopEyeProcess();
 
     // Stop accepting new HTTP connections; wait for in-flight requests to drain
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
