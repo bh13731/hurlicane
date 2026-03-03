@@ -208,7 +208,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
                         }
                       }}
                     >
-                      <option value="">Default (project root)</option>
+                      <option value="">Select a worktree...</option>
                       {worktrees.map(w => (
                         <option key={w.id} value={w.path}>
                           {w.branch} — {w.path}
