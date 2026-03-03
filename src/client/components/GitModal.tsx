@@ -33,7 +33,6 @@ export function GitModal({ onClose }: GitModalProps) {
 
   // Repos state
   const [repos, setRepos] = useState<Repo[]>([]);
-  const [newRepoName, setNewRepoName] = useState('');
   const [newRepoPath, setNewRepoPath] = useState('');
   const [addingRepo, setAddingRepo] = useState(false);
   const [deletingRepoId, setDeletingRepoId] = useState<string | null>(null);
@@ -116,17 +115,16 @@ export function GitModal({ onClose }: GitModalProps) {
   };
 
   const handleAddRepo = async () => {
-    if (!newRepoName.trim() || !newRepoPath.trim()) return;
+    if (!newRepoPath.trim()) return;
     setAddingRepo(true);
     setRepoError(null);
     try {
       const res = await fetch('/api/repos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newRepoName.trim(), path: newRepoPath.trim() }),
+        body: JSON.stringify({ path: newRepoPath.trim() }),
       });
       if (res.ok) {
-        setNewRepoName('');
         setNewRepoPath('');
         fetchRepos();
       } else {
@@ -203,14 +201,6 @@ export function GitModal({ onClose }: GitModalProps) {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <input
                 type="text"
-                placeholder="Name"
-                value={newRepoName}
-                onChange={e => setNewRepoName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleAddRepo()}
-                style={{ flex: 1, minWidth: 80 }}
-              />
-              <input
-                type="text"
                 placeholder="Path (e.g. /home/user/myrepo)"
                 value={newRepoPath}
                 onChange={e => setNewRepoPath(e.target.value)}
@@ -220,7 +210,7 @@ export function GitModal({ onClose }: GitModalProps) {
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={handleAddRepo}
-                disabled={addingRepo || !newRepoName.trim() || !newRepoPath.trim()}
+                disabled={addingRepo || !newRepoPath.trim()}
               >
                 {addingRepo ? 'Adding...' : 'Add'}
               </button>

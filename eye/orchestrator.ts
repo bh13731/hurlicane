@@ -1,15 +1,54 @@
 import type { CreateJobRequest, CreateDebateRequest, CreateDebateResponse, Repo, Worktree } from '../src/shared/types.js';
 
+export interface EyePrompts {
+  skipPrompt: string;
+  discussionPrompt: string;
+  disabledEvents: string[];
+}
+
 export interface OrchestratorClient {
   createJob(req: CreateJobRequest): Promise<{ id: string; title: string } | null>;
   createDebate(req: CreateDebateRequest): Promise<CreateDebateResponse | null>;
   getRepoByName(name: string): Promise<Repo | null>;
   getWorktreeByBranch(branch: string): Promise<Worktree | null>;
   createWorktree(branch: string, repoDir: string, trackExisting?: boolean): Promise<Worktree | null>;
+  cleanupBranch(branch: string): Promise<{ found: boolean; cancelledJobs: number } | null>;
+  getPrompts(): Promise<EyePrompts>;
 }
 
+const DEFAULT_PROMPTS: EyePrompts = {
+  skipPrompt: 'Skip events from repos not registered in the orchestrator.',
+  discussionPrompt: `Escalate to debate when:
+- CI suite has 3+ failing checks
+- Review requests changes with body longer than 500 characters
+Otherwise create a simple job.`,
+  disabledEvents: [],
+};
+
 export function createOrchestratorClient(baseUrl: string): OrchestratorClient {
+  let promptsCache: { data: EyePrompts; fetchedAt: number } | null = null;
+  const CACHE_TTL_MS = 60_000;
+
   return {
+    async getPrompts(): Promise<EyePrompts> {
+      if (promptsCache && Date.now() - promptsCache.fetchedAt < CACHE_TTL_MS) {
+        return promptsCache.data;
+      }
+      try {
+        const res = await fetch(`${baseUrl}/api/eye/prompts`);
+        if (!res.ok) {
+          console.error(`[eye] orchestrator GET /api/eye/prompts failed: ${res.status}`);
+          return promptsCache?.data ?? DEFAULT_PROMPTS;
+        }
+        const data = await res.json() as EyePrompts;
+        promptsCache = { data, fetchedAt: Date.now() };
+        return data;
+      } catch (err) {
+        console.error('[eye] orchestrator unreachable (prompts):', err);
+        return promptsCache?.data ?? DEFAULT_PROMPTS;
+      }
+    },
+
     async createJob(req: CreateJobRequest): Promise<{ id: string; title: string } | null> {
       try {
         const res = await fetch(`${baseUrl}/api/jobs`, {
@@ -94,6 +133,28 @@ export function createOrchestratorClient(baseUrl: string): OrchestratorClient {
         const wt = await res.json() as Worktree;
         console.log(`[eye] created worktree: ${wt.path} (branch: ${wt.branch})`);
         return wt;
+      } catch (err) {
+        console.error('[eye] orchestrator unreachable:', err);
+        return null;
+      }
+    },
+
+    async cleanupBranch(branch: string): Promise<{ found: boolean; cancelledJobs: number } | null> {
+      try {
+        const res = await fetch(`${baseUrl}/api/worktrees/cleanup-branch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ branch }),
+        });
+        if (!res.ok) {
+          console.error(`[eye] orchestrator POST /api/worktrees/cleanup-branch failed: ${res.status}`);
+          return null;
+        }
+        const data = await res.json() as { found: boolean; cancelledJobs: number };
+        if (data.found) {
+          console.log(`[eye] cleaned up branch ${branch}: cancelled ${data.cancelledJobs} jobs`);
+        }
+        return data;
       } catch (err) {
         console.error('[eye] orchestrator unreachable:', err);
         return null;

@@ -328,7 +328,7 @@ function flushDebateNdjson(agentId: string): void {
   } catch { /* no ndjson file or read error — skip silently */ }
 }
 
-export function attachPty(agentId: string, job: Job, cols = 220, rows = 50): void {
+export async function attachPty(agentId: string, job: Job, cols = 220, rows = 50): Promise<void> {
   if (_ptys.has(agentId)) return; // already attached
 
   // For debate-stage agents running --print, start tailing the tee'd .ndjson file so
@@ -353,6 +353,22 @@ export function attachPty(agentId: string, job: Job, cols = 220, rows = 50): voi
     const updated = queries.getAgentWithJob(agentId);
     if (updated) socket.emitAgentUpdate(updated);
     return;
+  }
+
+  // Wait for the tmux session to be ready before spawning the PTY
+  const MAX_WAIT_ATTEMPTS = 10;
+  const WAIT_INTERVAL_MS = 500;
+  for (let i = 0; i < MAX_WAIT_ATTEMPTS; i++) {
+    if (isTmuxSessionAlive(agentId)) break;
+    if (i === MAX_WAIT_ATTEMPTS - 1) {
+      console.error(`[pty ${agentId}] tmux session not ready after ${MAX_WAIT_ATTEMPTS * WAIT_INTERVAL_MS}ms`);
+      queries.updateAgent(agentId, { status: 'failed', error_message: 'tmux session not ready', finished_at: Date.now() });
+      queries.updateJobStatus(job.id, 'failed');
+      const updated = queries.getAgentWithJob(agentId);
+      if (updated) socket.emitAgentUpdate(updated);
+      return;
+    }
+    await new Promise(r => setTimeout(r, WAIT_INTERVAL_MS));
   }
 
   let ptyInstance: IPty;

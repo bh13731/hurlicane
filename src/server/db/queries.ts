@@ -92,6 +92,14 @@ export function listJobs(status?: JobStatus): Job[] {
   return rows.map(r => cast<Job>(r));
 }
 
+export function listActiveJobsByWorkDir(workDir: string): Job[] {
+  const db = getDb();
+  const rows = db.prepare(
+    "SELECT * FROM jobs WHERE work_dir = ? AND status IN ('queued', 'assigned', 'running') ORDER BY created_at ASC"
+  ).all(workDir);
+  return rows.map(r => cast<Job>(r));
+}
+
 export function listArchivedJobs(): Job[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM jobs WHERE archived_at IS NOT NULL ORDER BY archived_at DESC').all();

@@ -5,6 +5,39 @@ export interface ComplexitySignals {
   reviewBodyLength: number;
 }
 
+export interface ComplexityConfig {
+  failedCheckThreshold: number;
+  reviewBodyThreshold: number;
+}
+
+const DEFAULT_CONFIG: ComplexityConfig = {
+  failedCheckThreshold: 3,
+  reviewBodyThreshold: 500,
+};
+
+/**
+ * Parse threshold numbers from a discussion prompt string.
+ * Looks for patterns like "3+ failing checks" and "500 characters".
+ * Falls back to defaults for any values not found.
+ */
+export function parseComplexityConfig(prompt: string): ComplexityConfig {
+  const config = { ...DEFAULT_CONFIG };
+
+  // Match patterns like "3+ failing checks" or "3 failing checks"
+  const checkMatch = prompt.match(/(\d+)\+?\s*failing\s*checks/i);
+  if (checkMatch) {
+    config.failedCheckThreshold = Number(checkMatch[1]);
+  }
+
+  // Match patterns like "500 characters" or "longer than 500 characters"
+  const bodyMatch = prompt.match(/(\d+)\s*characters/i);
+  if (bodyMatch) {
+    config.reviewBodyThreshold = Number(bodyMatch[1]);
+  }
+
+  return config;
+}
+
 export function extractSignals(eventType: string, payload: any): ComplexitySignals {
   const signals: ComplexitySignals = {
     eventType,
@@ -39,14 +72,16 @@ export function extractSignals(eventType: string, payload: any): ComplexitySigna
   return signals;
 }
 
-export function evaluateComplexity(signals: ComplexitySignals): 'simple' | 'debate' {
-  // CI suite failure with 3+ failing checks → debate
-  if (signals.failedCheckCount >= 3) return 'debate';
+export function evaluateComplexity(signals: ComplexitySignals, config?: ComplexityConfig): 'simple' | 'debate' {
+  const { failedCheckThreshold, reviewBodyThreshold } = config ?? DEFAULT_CONFIG;
 
-  // changes_requested review with body >500 chars → debate
+  // CI suite failure with N+ failing checks → debate
+  if (signals.failedCheckCount >= failedCheckThreshold) return 'debate';
+
+  // changes_requested review with body > threshold chars → debate
   if (
     signals.reviewState === 'changes_requested' &&
-    signals.reviewBodyLength > 500
+    signals.reviewBodyLength > reviewBodyThreshold
   ) {
     return 'debate';
   }

@@ -5,12 +5,15 @@ import { processEvent } from './middleware.js';
 
 // ─── Recent Events Log ─────────────────────────────────────────────────────
 
+export type Decision = 'ignored' | 'skipped' | 'debated' | 'ran';
+
 export interface EyeEvent {
   ts: number;
   event_type: string;
   action: string;
   repo: string;
-  result: 'job_created' | 'debate_created' | 'ignored' | 'error' | 'meta';
+  author: string;
+  decision: Decision;
   job_title: string | null;
   detail: string | null;
 }
@@ -74,19 +77,30 @@ function buildJob(
 }
 
 // ─── Event Handlers ─────────────────────────────────────────────────────────
+//
+// Each handler returns either a CreateJobRequest (matched) or a reason string
+// explaining why the event was ignored.
+
+type HandlerResult = CreateJobRequest | string;
 
 function handleCheckSuite(
   payload: any,
   config: EyeConfig,
-): CreateJobRequest | null {
-  if (payload.action !== 'completed') return null;
+): HandlerResult {
+  if (payload.action !== 'completed') return `action "${payload.action}" (want "completed")`;
   const suite = payload.check_suite;
-  if (!suite || suite.conclusion !== 'failure') return null;
+  if (!suite) return 'no check_suite in payload';
+  if (suite.conclusion !== 'failure') return `suite ${suite.conclusion ?? 'pending'}`;
 
   const repo = payload.repository?.full_name;
-  if (!repo) return null;
+  if (!repo) return 'no repo in payload';
+
+  const sender = payload.sender?.login;
+  if (sender !== config.author) return `sender "${sender}" is not author`;
 
   const prs: any[] = suite.pull_requests ?? [];
+  if (prs.length === 0) return 'no linked PRs';
+
   for (const pr of prs) {
     const prNum = pr.number;
     const dedupKey = `ci:${repo}#${prNum}:${suite.head_sha ?? suite.id}`;
@@ -107,21 +121,27 @@ function handleCheckSuite(
       check_suite_id: String(suite.id),
     });
   }
-  return null;
+  return 'duplicate';
 }
 
 function handleCheckRun(
   payload: any,
   config: EyeConfig,
-): CreateJobRequest | null {
-  if (payload.action !== 'completed') return null;
+): HandlerResult {
+  if (payload.action !== 'completed') return `action "${payload.action}" (want "completed")`;
   const run = payload.check_run;
-  if (!run || run.conclusion !== 'failure') return null;
+  if (!run) return 'no check_run in payload';
+  if (run.conclusion !== 'failure') return `run ${run.conclusion ?? 'pending'}`;
 
   const repo = payload.repository?.full_name;
-  if (!repo) return null;
+  if (!repo) return 'no repo in payload';
+
+  const sender = payload.sender?.login;
+  if (sender !== config.author) return `sender "${sender}" is not author`;
 
   const prs: any[] = run.pull_requests ?? [];
+  if (prs.length === 0) return 'no linked PRs';
+
   for (const pr of prs) {
     const prNum = pr.number;
     const dedupKey = `ci:${repo}#${prNum}:${run.head_sha ?? run.id}`;
@@ -142,27 +162,25 @@ function handleCheckRun(
       check_run_id: String(run.id),
     });
   }
-  return null;
+  return 'duplicate';
 }
 
 function handlePullRequestReview(
   payload: any,
   config: EyeConfig,
-): CreateJobRequest | null {
+): HandlerResult {
   const review = payload.review;
   const pr = payload.pull_request;
   const repo = payload.repository?.full_name;
-  if (!review || !pr || !repo) return null;
+  if (!review || !pr || !repo) return 'missing review/pr/repo';
 
-  // Ignore self-reviews
   const reviewer = review.user?.login;
-  if (reviewer === config.author) return null;
-
   const prNum = pr.number;
+  const state = review.state ?? 'unknown';
 
-  if (payload.action === 'submitted' && review.state === 'changes_requested') {
+  if (payload.action === 'submitted' && state === 'changes_requested') {
     const dedupKey = `review:${repo}#${prNum}:${review.id}`;
-    if (isDuplicate(dedupKey)) return null;
+    if (isDuplicate(dedupKey)) return 'duplicate';
 
     const title = `Address review on ${repo}#${prNum}`;
     const description = [
@@ -180,11 +198,9 @@ function handlePullRequestReview(
     });
   }
 
-  if (payload.action === 'submitted' && review.state === 'commented') {
-    if (!review.body?.trim()) return null;
-
+  if (payload.action === 'submitted' && state === 'commented') {
     const dedupKey = `review-comment:${repo}#${prNum}:${review.id}`;
-    if (isDuplicate(dedupKey)) return null;
+    if (isDuplicate(dedupKey)) return 'duplicate';
 
     const title = `Review comment on ${repo}#${prNum}`;
     const description = [
@@ -202,30 +218,28 @@ function handlePullRequestReview(
     });
   }
 
-  return null;
+  return `review state "${state}"`;
 }
 
 function handleIssueComment(
   payload: any,
   config: EyeConfig,
-): CreateJobRequest | null {
-  if (payload.action !== 'created') return null;
+): HandlerResult {
+  if (payload.action !== 'created') return `action "${payload.action}" (want "created")`;
 
   const comment = payload.comment;
   const issue = payload.issue;
   const repo = payload.repository?.full_name;
-  if (!comment || !issue || !repo) return null;
+  if (!comment || !issue || !repo) return 'missing comment/issue/repo';
 
-  // Only handle PR comments (issues with pull_request field)
-  if (!issue.pull_request) return null;
+  if (!issue.pull_request) return 'not a PR comment';
 
-  // Ignore self-comments
   const commenter = comment.user?.login;
-  if (commenter === config.author) return null;
+  if (commenter === config.author) return 'self-comment';
 
   const prNum = issue.number;
   const dedupKey = `comment:${repo}#${prNum}:${comment.id}`;
-  if (isDuplicate(dedupKey)) return null;
+  if (isDuplicate(dedupKey)) return 'duplicate';
 
   const title = `Reply to comment on ${repo}#${prNum}`;
   const description = [
@@ -242,7 +256,7 @@ function handleIssueComment(
   });
 }
 
-function handlePullRequestMeta(payload: any, _config: EyeConfig): string | null {
+async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: OrchestratorClient): Promise<string | null> {
   const pr = payload.pull_request;
   const repo = payload.repository?.full_name;
   if (!pr || !repo) return null;
@@ -262,6 +276,16 @@ function handlePullRequestMeta(payload: any, _config: EyeConfig): string | null 
     clearDedupPrefix(`review:${repo}#${prNum}:`);
     clearDedupPrefix(`review-comment:${repo}#${prNum}:`);
     clearDedupPrefix(`comment:${repo}#${prNum}:`);
+
+    // Cleanup worktree + cancel running agents on this branch
+    const branch = pr.head?.ref;
+    if (branch) {
+      const cleanup = await client.cleanupBranch(branch);
+      if (cleanup?.found) {
+        return `cleaned dedup + worktree for ${repo}#${prNum} (cancelled ${cleanup.cancelledJobs} jobs)`;
+      }
+    }
+
     return `cleaned dedup for ${repo}#${prNum}`;
   }
 
@@ -278,47 +302,75 @@ export async function dispatch(
 ): Promise<string | null> {
   const repo = payload.repository?.full_name ?? '';
   const action = payload.action ?? '';
+  const author = payload.sender?.login ?? '';
 
-  // Handle PR meta events (dedup resets) — no job creation
+  // Handle PR meta events (dedup resets + worktree cleanup) — no job creation
   if (eventType === 'pull_request') {
-    const result = handlePullRequestMeta(payload, config);
+    const result = await handlePullRequestMeta(payload, config, client);
     if (result) {
-      logEvent({ ts: Date.now(), event_type: eventType, action, repo, result: 'meta', job_title: null, detail: result });
+      logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: result });
     }
     return result;
   }
 
-  // Get a CreateJobRequest from the appropriate handler
-  let jobReq: CreateJobRequest | null;
-  switch (eventType) {
-    case 'check_suite':
-      jobReq = handleCheckSuite(payload, config);
-      break;
-    case 'check_run':
-      jobReq = handleCheckRun(payload, config);
-      break;
-    case 'pull_request_review':
-      jobReq = handlePullRequestReview(payload, config);
-      break;
-    case 'issue_comment':
-      jobReq = handleIssueComment(payload, config);
-      break;
-    default:
-      return null;
+  // Skip events on branches/PRs not owned by the configured author
+  const prOwner = payload.pull_request?.user?.login ?? payload.issue?.user?.login;
+  if (prOwner && prOwner !== config.author) {
+    logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: `PR owner "${prOwner}" is not author` });
+    return null;
   }
 
-  if (!jobReq) {
+  // Check if this event type is disabled via config toggles
+  const prompts = await client.getPrompts();
+  if (prompts.disabledEvents.includes(eventType)) {
     logEvent({
       ts: Date.now(),
       event_type: eventType,
       action,
       repo,
-      result: 'ignored',
+      author,
+      decision: 'ignored',
       job_title: null,
-      detail: null,
+      detail: `${eventType} is disabled`,
     });
     return null;
   }
+
+  // Get a CreateJobRequest from the appropriate handler
+  let handlerResult: HandlerResult;
+  switch (eventType) {
+    case 'check_suite':
+      handlerResult = handleCheckSuite(payload, config);
+      break;
+    case 'check_run':
+      handlerResult = handleCheckRun(payload, config);
+      break;
+    case 'pull_request_review':
+      handlerResult = handlePullRequestReview(payload, config);
+      break;
+    case 'issue_comment':
+      handlerResult = handleIssueComment(payload, config);
+      break;
+    default:
+      return null;
+  }
+
+  // String result = reason the handler ignored this event
+  if (typeof handlerResult === 'string') {
+    logEvent({
+      ts: Date.now(),
+      event_type: eventType,
+      action,
+      repo,
+      author,
+      decision: 'ignored',
+      job_title: null,
+      detail: handlerResult,
+    });
+    return null;
+  }
+
+  const jobReq = handlerResult;
 
   // Pass through middleware: worktree resolution + complexity evaluation + dispatch
   const result = await processEvent(client, config, eventType, payload, jobReq);
@@ -328,9 +380,10 @@ export async function dispatch(
     event_type: eventType,
     action,
     repo,
-    result: result ? (result.type === 'debate' ? 'debate_created' : 'job_created') : 'error',
-    job_title: result?.title ?? null,
-    detail: result ? `type=${result.type}` : 'processEvent returned null',
+    author,
+    decision: !result ? 'ignored' : result.type === 'skipped' ? 'skipped' : result.type === 'debate' ? 'debated' : 'ran',
+    job_title: result && result.type !== 'skipped' ? result.title : null,
+    detail: !result ? 'processEvent returned null' : result.type === 'skipped' ? result.title : `type=${result.type}`,
   });
 
   return result?.title ?? null;

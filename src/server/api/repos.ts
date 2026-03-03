@@ -5,6 +5,20 @@ import * as queries from '../db/queries.js';
 
 const router = Router();
 
+/**
+ * Extract "owner/repo" from a git remote URL.
+ * Handles HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git).
+ */
+function parseGitHubName(remoteUrl: string): string | null {
+  // SSH: git@github.com:owner/repo.git
+  const sshMatch = remoteUrl.match(/[:\/]([^/]+\/[^/]+?)(?:\.git)?\s*$/);
+  if (sshMatch) return sshMatch[1];
+  // HTTPS: https://github.com/owner/repo.git
+  const httpsMatch = remoteUrl.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\s*$/);
+  if (httpsMatch) return httpsMatch[1];
+  return null;
+}
+
 router.get('/', (_req, res) => {
   res.json(queries.listRepos());
 });
@@ -18,18 +32,34 @@ router.get('/by-name/:name(*)', (req, res) => {
 
 router.post('/', (req, res) => {
   const { name, path } = req.body as { name?: string; path?: string };
-  if (!name?.trim() || !path?.trim()) {
-    res.status(400).json({ error: 'name and path are required' });
+  if (!path?.trim()) {
+    res.status(400).json({ error: 'path is required' });
     return;
   }
+  const repoPath = path.trim();
+
   // Validate that path is a git repo
   try {
-    execSync('git rev-parse --git-dir', { cwd: path.trim(), stdio: 'pipe' });
+    execSync('git rev-parse --git-dir', { cwd: repoPath, stdio: 'pipe' });
   } catch {
     res.status(400).json({ error: 'Path is not a git repository' });
     return;
   }
-  const repo = queries.insertRepo({ id: randomUUID(), name: name.trim(), path: path.trim() });
+
+  // Auto-derive owner/repo from git remote, fall back to provided name
+  let repoName = name?.trim() || '';
+  try {
+    const remoteUrl = execSync('git remote get-url origin', { cwd: repoPath, stdio: 'pipe' }).toString().trim();
+    const parsed = parseGitHubName(remoteUrl);
+    if (parsed) repoName = parsed;
+  } catch { /* no origin remote */ }
+
+  if (!repoName) {
+    res.status(400).json({ error: 'Could not detect repo name from git remote. Provide a name manually.' });
+    return;
+  }
+
+  const repo = queries.insertRepo({ id: randomUUID(), name: repoName, path: repoPath });
   res.status(201).json(repo);
 });
 

@@ -19,6 +19,8 @@ import { DebateForm } from './components/DebateForm';
 import { KnowledgeBaseModal } from './components/KnowledgeBaseModal';
 import { EyeModal } from './components/EyeModal';
 import { GitModal } from './components/GitModal';
+import { WorktreesSidebar } from './components/WorktreesSidebar';
+import { WorktreeDetail } from './components/WorktreeDetail';
 import { useSocket } from './hooks/useSocket';
 import { useAgents } from './hooks/useAgents';
 import { useJobs } from './hooks/useJobs';
@@ -28,7 +30,7 @@ import { useDebates } from './hooks/useDebates';
 import { useToasts } from './hooks/useToasts';
 import { ToastFeed } from './components/ToastFeed';
 import socket from './socket';
-import type { AgentWithJob, AgentOutput, CreateJobRequest, CreateDebateRequest, Job, Template, BatchTemplate } from '@shared/types';
+import type { AgentWithJob, AgentOutput, CreateJobRequest, CreateDebateRequest, Job, Template, BatchTemplate, Worktree } from '@shared/types';
 
 export default function App() {
   const { agents, setInitial: setInitialAgents, addAgent, updateAgent } = useAgents();
@@ -55,7 +57,8 @@ export default function App() {
   const [showGit, setShowGit] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [archivedJobs, setArchivedJobs] = useState<Job[]>([]);
-  const [leftTab, setLeftTab] = useState<'feed' | 'lineage'>('feed');
+  const [leftTab, setLeftTab] = useState<'feed' | 'lineage' | 'worktrees'>('feed');
+  const [selectedWorktree, setSelectedWorktree] = useState<Worktree | null>(null);
 
   const [todayClaudeCost, setTodayClaudeCost] = useState<number | null>(null);
   const [todayCodexCost, setTodayCodexCost] = useState<number | null>(null);
@@ -318,20 +321,29 @@ export default function App() {
       <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(true)} onGit={() => setShowGit(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); setShowEye(false); setShowGit(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} />
 
       <div className="main-layout">
-        <div className={`left-sidebar-stack ${leftTab === 'lineage' && selectedAgent ? '' : 'left-sidebar-stack--narrow'}`}>
-          {selectedAgent && (
-            <div className="left-sidebar-tabs">
-              <button
-                className={`left-sidebar-tab ${leftTab === 'feed' ? 'left-sidebar-tab--active' : ''}`}
-                onClick={() => setLeftTab('feed')}
-              >Feed</button>
+        <div className={`left-sidebar-stack ${(leftTab === 'lineage' && selectedAgent) || leftTab === 'worktrees' ? '' : 'left-sidebar-stack--narrow'}`}>
+          <div className="left-sidebar-tabs">
+            <button
+              className={`left-sidebar-tab ${leftTab === 'feed' ? 'left-sidebar-tab--active' : ''}`}
+              onClick={() => setLeftTab('feed')}
+            >Feed</button>
+            {selectedAgent && (
               <button
                 className={`left-sidebar-tab ${leftTab === 'lineage' ? 'left-sidebar-tab--active' : ''}`}
                 onClick={() => setLeftTab('lineage')}
               >Lineage</button>
-            </div>
-          )}
-          {leftTab === 'lineage' && selectedAgent ? (
+            )}
+            <button
+              className={`left-sidebar-tab ${leftTab === 'worktrees' ? 'left-sidebar-tab--active' : ''}`}
+              onClick={() => setLeftTab('worktrees')}
+            >Worktrees</button>
+          </div>
+          {leftTab === 'worktrees' ? (
+            <WorktreesSidebar
+              selectedWorktreeId={selectedWorktree?.id}
+              onSelectWorktree={(wt) => setSelectedWorktree(wt)}
+            />
+          ) : leftTab === 'lineage' && selectedAgent ? (
             <JobLineagePanel
               selectedAgent={selectedAgent}
               allAgents={agents}
@@ -340,12 +352,14 @@ export default function App() {
           ) : (
             <WorkQueueSidebar jobs={jobs} projects={projects} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} onArchiveJob={handleArchiveJob} />
           )}
-          <RunningJobsPanel
-            agents={agents}
-            projects={projects}
-            onSelectAgent={handleSelectAgent}
-            ptyIdleAgentIds={ptyIdleAgents}
-          />
+          {leftTab !== 'worktrees' && (
+            <RunningJobsPanel
+              agents={agents}
+              projects={projects}
+              onSelectAgent={handleSelectAgent}
+              ptyIdleAgentIds={ptyIdleAgents}
+            />
+          )}
         </div>
 
         <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
@@ -358,6 +372,11 @@ export default function App() {
             onClose={handleCloseTerminal}
             onContinued={handleSelectAgent}
             onRenameJob={handleRenameJob}
+          />
+        ) : leftTab === 'worktrees' && selectedWorktree ? (
+          <WorktreeDetail
+            worktree={selectedWorktree}
+            onDeleted={() => setSelectedWorktree(null)}
           />
         ) : (
           <FileLockMap locks={locks} />
