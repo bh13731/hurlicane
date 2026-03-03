@@ -251,6 +251,7 @@ export function initDb(dbPath: string): DatabaseSync {
     )
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_worktrees_job ON worktrees(job_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_worktrees_branch ON worktrees(branch, cleaned_at)');
 
   // ── Feature 1: Mid-Task Nudge ─────────────────────────────────────────────
   db.exec(`

@@ -1129,6 +1129,12 @@ export function listRepos(): Repo[] {
   return db.prepare('SELECT * FROM repos ORDER BY name ASC').all().map(r => cast<Repo>(r));
 }
 
+export function getRepoByName(name: string): Repo | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM repos WHERE name = ?').get(name);
+  return row ? cast<Repo>(row) : null;
+}
+
 export function deleteRepo(id: string): void {
   const db = getDb();
   db.prepare('DELETE FROM repos WHERE id = ?').run(id);
@@ -1144,6 +1150,12 @@ export function insertWorktree(wt: { id: string; agent_id: string; job_id: strin
     VALUES (?, ?, ?, ?, ?, ?, NULL)
   `).run(wt.id, wt.agent_id, wt.job_id, wt.path, wt.branch, now);
   return cast<Worktree>(db.prepare('SELECT * FROM worktrees WHERE id = ?').get(wt.id));
+}
+
+export function getWorktreeByBranch(branch: string): Worktree | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM worktrees WHERE branch = ? AND cleaned_at IS NULL ORDER BY created_at DESC LIMIT 1').get(branch);
+  return row ? cast<Worktree>(row) : null;
 }
 
 export function getWorktreeById(id: string): Worktree | null {

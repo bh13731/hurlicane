@@ -17,13 +17,19 @@ router.get('/', (_req, res) => {
   res.json(worktrees);
 });
 
+router.get('/by-branch/:branch(*)', (req, res) => {
+  const wt = queries.getWorktreeByBranch(req.params.branch);
+  if (!wt) { res.status(404).json({ error: 'no active worktree for branch' }); return; }
+  res.json(wt);
+});
+
 router.post('/cleanup', (_req, res) => {
   const cleaned = runCleanupNow();
   res.json({ cleaned });
 });
 
 router.post('/', (req, res) => {
-  const { branch, repoDir: reqRepoDir } = req.body;
+  const { branch, repoDir: reqRepoDir, trackExisting } = req.body;
   if (!branch || typeof branch !== 'string') {
     res.status(400).json({ error: 'branch is required' });
     return;
@@ -44,10 +50,19 @@ router.post('/', (req, res) => {
     }
     const worktreeDir = path.resolve(repoDir, '..', '.orchestrator-worktrees', shortId);
 
-    execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branch)}`, {
-      cwd: repoDir,
-      timeout: 30_000,
-    });
+    if (trackExisting) {
+      // Fetch the branch from origin, then check out the existing branch
+      execSync('git fetch origin', { cwd: repoDir, timeout: 30_000 });
+      execSync(`git worktree add ${JSON.stringify(worktreeDir)} ${JSON.stringify(branch)}`, {
+        cwd: repoDir,
+        timeout: 30_000,
+      });
+    } else {
+      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branch)}`, {
+        cwd: repoDir,
+        timeout: 30_000,
+      });
+    }
 
     const wt = queries.insertWorktree({
       id: shortId,
