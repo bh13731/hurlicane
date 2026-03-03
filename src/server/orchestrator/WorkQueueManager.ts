@@ -105,7 +105,8 @@ async function tick(): Promise<void> {
  * with work_dir pointing to the new worktree.
  */
 function createWorktree(job: Job, agentId: string): Job {
-  const repoDir = (job as any).work_dir ?? process.cwd();
+  const repoDir = (job as any).work_dir;
+  if (!repoDir) throw new Error('work_dir is required for worktree creation');
   const shortId = agentId.slice(0, 8);
 
   // Slugify job title for the branch name
@@ -119,8 +120,8 @@ function createWorktree(job: Job, agentId: string): Job {
   // Place worktrees in a sibling directory to keep the source repo clean
   const worktreeDir = path.resolve(repoDir, '..', '.orchestrator-worktrees', shortId);
 
-  console.log(`[queue] creating worktree: ${worktreeDir} (branch: ${branchName})`);
-  execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branchName)}`, {
+  console.log(`[queue] creating worktree: ${worktreeDir} (branch: ${branchName}, base: main)`);
+  execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branchName)} main`, {
     cwd: repoDir,
     timeout: 30000,
   });

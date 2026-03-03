@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { CreateJobRequest, Job, Template, RetryPolicy, ReviewConfig } from '@shared/types';
+import type { CreateJobRequest, Job, Template, RetryPolicy, ReviewConfig, Worktree, Repo } from '@shared/types';
 import { TemplateModelStats } from './TemplateModelStats';
 
 interface JobFormProps {
@@ -11,14 +11,12 @@ interface JobFormProps {
 export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [workDir, setWorkDir] = useState('');
   const [priority, setPriority] = useState(0);
   const [model, setModel] = useState('');
   const [templateId, setTemplateId] = useState('');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   const [interactive, setInteractive] = useState(true);
-  const [useWorktree, setUseWorktree] = useState(false);
   const [repeatSeconds, setRepeatSeconds] = useState<number | ''>('');
   const [retryPolicy, setRetryPolicy] = useState<RetryPolicy>('none');
   const [maxRetries, setMaxRetries] = useState(3);
@@ -31,6 +29,16 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Work location: either 'directory' (pick a path) or 'worktree-branch' (create worktree)
+  const [workMode, setWorkMode] = useState<'directory' | 'worktree-branch'>('directory');
+  const [workDir, setWorkDir] = useState('');
+  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
+  const [workDirCustom, setWorkDirCustom] = useState(false);
+  // Worktree-branch mode state
+  const [branchName, setBranchName] = useState('');
+  const [branchRepoId, setBranchRepoId] = useState('');
+  const [repos, setRepos] = useState<Repo[]>([]);
+
   const pendingJobs = availableJobs.filter(
     j => j.status === 'queued' || j.status === 'assigned' || j.status === 'running'
   );
@@ -41,6 +49,8 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
 
   useEffect(() => {
     fetch('/api/templates').then(r => r.json()).then(setTemplates).catch(console.error);
+    fetch('/api/worktrees').then(r => r.json()).then(setWorktrees).catch(() => {});
+    fetch('/api/repos').then(r => r.json()).then(setRepos).catch(() => {});
   }, []);
 
   const selectedTemplate = templates.find(t => t.id === templateId) ?? null;
@@ -49,7 +59,9 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
     setTemplateId(newTemplateId);
     const tpl = templates.find(t => t.id === newTemplateId);
     if (tpl?.work_dir) {
+      setWorkMode('directory');
       setWorkDir(tpl.work_dir);
+      setWorkDirCustom(!worktrees.some(w => w.path === tpl.work_dir));
     }
     if (tpl?.model) {
       setModel(tpl.model);
@@ -71,16 +83,28 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         ? { models: reviewModels, auto: reviewAuto }
         : undefined;
 
+      let resolvedWorkDir: string | undefined;
+      let resolvedUseWorktree: boolean | undefined;
+
+      if (workMode === 'worktree-branch') {
+        // Worktree-branch mode always creates a worktree
+        const selectedRepo = repos.find(r => r.id === branchRepoId);
+        resolvedWorkDir = selectedRepo?.path || undefined;
+        resolvedUseWorktree = true;
+      } else {
+        resolvedWorkDir = workDir.trim() || undefined;
+      }
+
       await onSubmit({
         title: title.trim() || undefined,
         description: description.trim(),
-        workDir: workDir.trim() || undefined,
+        workDir: resolvedWorkDir,
         priority,
         model: model.trim() || undefined,
         templateId: templateId || undefined,
         dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
         interactive: interactive || undefined,
-        useWorktree: useWorktree || undefined,
+        useWorktree: resolvedUseWorktree,
         repeatIntervalMs: repeatSeconds ? (repeatSeconds as number) * 1000 : undefined,
         retryPolicy: retryPolicy !== 'none' ? retryPolicy : undefined,
         maxRetries: retryPolicy !== 'none' ? maxRetries : undefined,
@@ -151,24 +175,106 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
             />
           </div>
 
-          <div className="form-row">
-            <div className="form-group">
-              <label htmlFor="workDir">Working Directory</label>
-              <input
-                id="workDir"
-                type="text"
-                value={workDir}
-                onChange={e => setWorkDir(e.target.value)}
-                placeholder="/path/to/project (optional)"
-              />
+          <div className="form-group">
+            <label>Work Location</label>
+            <div style={{ display: 'flex', gap: 1, background: 'var(--border)', borderRadius: 6, overflow: 'hidden', marginBottom: 8, width: 'fit-content' }}>
+              <button
+                type="button"
+                className="header-btn"
+                style={{ background: workMode === 'directory' ? 'var(--border)' : undefined, color: workMode === 'directory' ? 'var(--text-primary)' : undefined }}
+                onClick={() => setWorkMode('directory')}
+              >Directory</button>
+              <button
+                type="button"
+                className="header-btn"
+                style={{ background: workMode === 'worktree-branch' ? 'var(--border)' : undefined, color: workMode === 'worktree-branch' ? 'var(--text-primary)' : undefined }}
+                onClick={() => setWorkMode('worktree-branch')}
+              >Worktree Branch</button>
             </div>
+
+            {workMode !== 'worktree-branch' ? (
+              <>
+                {worktrees.length > 0 ? (
+                  <>
+                    <select
+                      value={workDirCustom ? '_custom' : workDir}
+                      onChange={e => {
+                        if (e.target.value === '_custom') {
+                          setWorkDirCustom(true);
+                          setWorkDir('');
+                        } else {
+                          setWorkDirCustom(false);
+                          setWorkDir(e.target.value);
+                        }
+                      }}
+                    >
+                      <option value="">Default (project root)</option>
+                      {worktrees.map(w => (
+                        <option key={w.id} value={w.path}>
+                          {w.branch} — {w.path}
+                        </option>
+                      ))}
+                      <option value="_custom">Custom path...</option>
+                    </select>
+                    {workDirCustom && (
+                      <input
+                        type="text"
+                        value={workDir}
+                        onChange={e => setWorkDir(e.target.value)}
+                        placeholder="/path/to/project"
+                        style={{ marginTop: 6 }}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <input
+                    type="text"
+                    value={workDir}
+                    onChange={e => setWorkDir(e.target.value)}
+                    placeholder="/path/to/project (optional)"
+                  />
+                )}
+              </>
+            ) : (
+              <>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Branch</label>
+                    <input
+                      type="text"
+                      value={branchName}
+                      onChange={e => setBranchName(e.target.value)}
+                      placeholder="feature/my-branch"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Repo</label>
+                    <select
+                      value={branchRepoId}
+                      onChange={e => setBranchRepoId(e.target.value)}
+                    >
+                      {repos.length === 0 ? (
+                        <option value="" disabled>No repos registered</option>
+                      ) : (
+                        <>
+                          <option value="">Select a repo</option>
+                          {repos.map(r => (
+                            <option key={r.id} value={r.id}>{r.name}</option>
+                          ))}
+                        </>
+                      )}
+                    </select>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="form-row">
             <div className="form-group form-group-sm">
               <label htmlFor="priority">
                 Priority
-                <span
-                  className="tooltip-icon"
-                  data-tip="Controls dispatch order when multiple jobs are waiting. Higher = started sooner (range: −10 to 10). If agent slots are free, all jobs start immediately regardless of priority."
-                >?</span>
+                <span className="tooltip-icon" data-tip="Controls dispatch order when multiple jobs are waiting. Higher = started sooner (range: −10 to 10). If agent slots are free, all jobs start immediately regardless of priority.">?</span>
               </label>
               <input
                 id="priority"
@@ -233,18 +339,6 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               />
               Interactive session
               <span className="tooltip-icon" data-tip="Keeps terminal open for direct conversation">?</span>
-            </label>
-          </div>
-
-          <div className="form-group">
-            <label className="form-checkbox-label">
-              <input
-                type="checkbox"
-                checked={useWorktree}
-                onChange={e => setUseWorktree(e.target.checked)}
-              />
-              Use worktree
-              <span className="tooltip-icon" data-tip="Creates a git worktree so the agent works in an isolated checkout on a new branch">?</span>
             </label>
           </div>
 
