@@ -21,13 +21,31 @@ On `main`, git is loosely integrated — repos are registered by local directory
 - **Sub-agent worktree reuse** — when an agent spawns a sub-job (retry, continuation, debate stage), the sub-agent detects the `work_dir` is already a worktree and reuses it instead of trying to create a new one.
 - **PR-based auto-cleanup** — worktrees are only auto-cleaned when their PR is merged or closed (checked via `gh pr view`), not when the job finishes. This keeps worktrees alive for follow-up work.
 
-#### Eye Updates
+#### Eye — GitHub Webhook Automation
 
-Eye (the GitHub webhook listener in `eye/`) is updated for the new repo/worktree model:
+Eye (`eye/`) is a built-in GitHub webhook listener that automatically creates orchestrator jobs in response to GitHub events. It runs as a child process launched from the dashboard's Eye panel.
 
-- **Worktree creation uses `repoId`** instead of `repoDir` — `eye/orchestrator.ts` and `eye/worktree.ts` pass the repo's database ID to `POST /api/worktrees` instead of a filesystem path, matching the new API contract.
-- **Quieter logging** — removed redundant "ignored" log entries for events that produce no job (PR owner mismatch, disabled event types, null processEvent results). Only events that actually create a job or debate are logged.
-- **Worktree resolution failure is fatal** — if Eye can't create a worktree for a branch, it returns `null` instead of falling back to the bare repo path (which no longer makes sense since all jobs require worktrees).
+**What it does:** Point a GitHub webhook at Eye's URL and it watches for CI failures, PR reviews, and comments on your PRs — then automatically creates jobs (or debates) to fix them.
+
+**Supported events:**
+
+| Event | Trigger | Action |
+|-------|---------|--------|
+| `check_suite` | CI suite fails on your PR | Creates a "Fix CI" job |
+| `check_run` | Individual check run fails on your PR | Creates a "Fix CI" job |
+| `pull_request_review` | Someone requests changes or leaves a comment | Creates a job to address the review |
+| `issue_comment` | Someone comments on your PR | Creates a job to respond |
+| `pull_request` (close/sync) | PR closed or new push | Cleans up worktrees, resets dedup, cancels running jobs |
+
+**How it works:**
+
+1. GitHub sends a webhook to `http://<your-host>:4567/webhook`
+2. Eye verifies the signature, filters to events on PRs owned by the configured author
+3. Evaluates complexity — simple events become jobs, complex ones (e.g. 3+ failing checks, long review comments) become debates
+4. Resolves or creates a worktree for the PR branch
+5. Assigns the configured template and dispatches to the orchestrator
+
+**Configuration:** Eye is launched from the Eye panel in the dashboard UI, where you set the webhook secret, GitHub author to watch, port, and template. Event types can be individually disabled. Duplicate events within 10 minutes are automatically deduplicated.
 
 #### System Prompt Appendix
 
