@@ -36,6 +36,7 @@ COPY --from=build /app/dist/ dist/
 COPY --from=build /app/node_modules/ node_modules/
 COPY package.json ./
 COPY scripts/ scripts/
+COPY eye/ eye/
 
 # Create data directory for SQLite DB, logs, repos
 RUN mkdir -p data
