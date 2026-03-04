@@ -15,6 +15,9 @@ COPY tsconfig.json tsconfig.server.json vite.config.ts ./
 COPY src/ src/
 RUN npm run build
 
+# tsc doesn't copy non-TS files; copy them manually
+RUN cp src/server/db/schema.sql dist/server/db/schema.sql
+
 # Stage 2 — Runtime
 FROM node:22-bookworm-slim
 
