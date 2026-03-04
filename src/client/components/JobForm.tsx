@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { CreateJobRequest, Job, Template, RetryPolicy, ReviewConfig, Repo } from '@shared/types';
+import type { CreateJobRequest, Job, Template, RetryPolicy, ReviewConfig, Repo, Worktree } from '@shared/types';
 import { TemplateModelStats } from './TemplateModelStats';
 
 interface JobFormProps {
@@ -30,9 +30,12 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [error, setError] = useState<string | null>(null);
 
   // Worktree-branch state
+  const [branchMode, setBranchMode] = useState<'existing' | 'new'>('new');
+  const [selectedWorktreeId, setSelectedWorktreeId] = useState('');
   const [branchName, setBranchName] = useState('');
   const [branchRepoId, setBranchRepoId] = useState('');
   const [repos, setRepos] = useState<Repo[]>([]);
+  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
 
   const pendingJobs = availableJobs.filter(
     j => j.status === 'queued' || j.status === 'assigned' || j.status === 'running'
@@ -45,6 +48,11 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   useEffect(() => {
     fetch('/api/templates').then(r => r.json()).then(setTemplates).catch(console.error);
     fetch('/api/repos').then(r => r.json()).then(setRepos).catch(() => {});
+    fetch('/api/worktrees').then(r => r.json()).then((wts: Worktree[]) => {
+      setWorktrees(wts);
+      // Default to existing worktree mode if any exist
+      if (wts.length > 0) setBranchMode('existing');
+    }).catch(() => {});
   }, []);
 
   const selectedTemplate = templates.find(t => t.id === templateId) ?? null;
@@ -72,12 +80,17 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         ? { models: reviewModels, auto: reviewAuto }
         : undefined;
 
+      const selectedWorktree = worktrees.find(w => w.id === selectedWorktreeId);
       const selectedRepo = repos.find(r => r.id === branchRepoId);
+      // If using an existing worktree, pass its path as workDir so the job runs there
+      const workDir = branchMode === 'existing' && selectedWorktree
+        ? selectedWorktree.path
+        : selectedRepo?.path || undefined;
 
       await onSubmit({
         title: title.trim() || undefined,
         description: description.trim(),
-        workDir: selectedRepo?.path || undefined,
+        workDir,
         priority,
         model: model.trim() || undefined,
         templateId: templateId || undefined,
@@ -156,35 +169,73 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
 
           <div className="form-group">
             <label>Worktree</label>
-            <div className="form-row">
-              <div className="form-group">
-                <label>Repo</label>
-                <select
-                  value={branchRepoId}
-                  onChange={e => setBranchRepoId(e.target.value)}
-                >
-                  {repos.length === 0 ? (
-                    <option value="" disabled>No repos registered</option>
-                  ) : (
-                    <>
-                      <option value="">Select a repo</option>
-                      {repos.map(r => (
-                        <option key={r.id} value={r.id}>{r.name}</option>
-                      ))}
-                    </>
-                  )}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>Branch <span className="form-label-hint">(optional, auto-generated if blank)</span></label>
+            <div className="form-row" style={{ marginBottom: 8 }}>
+              <label className="form-checkbox-label">
                 <input
-                  type="text"
-                  value={branchName}
-                  onChange={e => setBranchName(e.target.value)}
-                  placeholder="auto-generated from title"
+                  type="radio"
+                  name="branchMode"
+                  checked={branchMode === 'existing'}
+                  onChange={() => setBranchMode('existing')}
+                  disabled={worktrees.length === 0}
                 />
-              </div>
+                Existing branch
+              </label>
+              <label className="form-checkbox-label">
+                <input
+                  type="radio"
+                  name="branchMode"
+                  checked={branchMode === 'new'}
+                  onChange={() => setBranchMode('new')}
+                />
+                New branch
+              </label>
             </div>
+            {branchMode === 'existing' ? (
+              <select
+                value={selectedWorktreeId}
+                onChange={e => setSelectedWorktreeId(e.target.value)}
+              >
+                <option value="">Select a branch</option>
+                {worktrees.map(wt => {
+                  const repo = repos.find(r => r.id === wt.repo_id);
+                  return (
+                    <option key={wt.id} value={wt.id}>
+                      {wt.branch}{repo ? ` (${repo.name})` : ''}
+                    </option>
+                  );
+                })}
+              </select>
+            ) : (
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Repo</label>
+                  <select
+                    value={branchRepoId}
+                    onChange={e => setBranchRepoId(e.target.value)}
+                  >
+                    {repos.length === 0 ? (
+                      <option value="" disabled>No repos registered</option>
+                    ) : (
+                      <>
+                        <option value="">Select a repo</option>
+                        {repos.map(r => (
+                          <option key={r.id} value={r.id}>{r.name}</option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Branch <span className="form-label-hint">(optional, auto-generated if blank)</span></label>
+                  <input
+                    type="text"
+                    value={branchName}
+                    onChange={e => setBranchName(e.target.value)}
+                    placeholder="auto-generated from title"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="form-row">
