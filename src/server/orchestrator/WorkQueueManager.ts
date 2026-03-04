@@ -108,7 +108,14 @@ function createWorktree(job: Job, agentId: string): Job {
   const repoDir = (job as any).work_dir;
   if (!repoDir) throw new Error('work_dir is required for worktree creation');
 
-  // Look up the repo record so we know the bare repo path and id
+  // If work_dir is already a worktree, reuse it instead of creating a new one
+  const existingWt = queries.getWorktreeByPath(repoDir);
+  if (existingWt) {
+    console.log(`[queue] work_dir is already worktree ${existingWt.id} (branch: ${existingWt.branch}), reusing`);
+    return job;
+  }
+
+  // Look up the repo record so we know the repo path and id
   const repo = queries.getRepoByPath(repoDir);
   if (!repo) throw new Error(`No registered repo found for path: ${repoDir}`);
 
