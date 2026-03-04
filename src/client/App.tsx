@@ -375,6 +375,7 @@ export default function App() {
           />
         ) : leftTab === 'worktrees' && selectedWorktree ? (
           <WorktreeDetail
+            key={selectedWorktree.id}
             worktree={selectedWorktree}
             onDeleted={() => setSelectedWorktree(null)}
           />

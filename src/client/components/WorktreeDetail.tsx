@@ -34,14 +34,16 @@ export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
 
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
-  const fetchStatus = useCallback(() => {
-    fetch(`/api/worktrees/${worktree.id}/status`)
+  const fetchStatus = useCallback((signal?: AbortSignal) => {
+    fetch(`/api/worktrees/${worktree.id}/status`, { signal })
       .then(res => res.ok ? res.json() : null)
       .then(data => { if (data) setStatus(data); })
-      .catch(() => {});
+      .catch(err => { if (err.name !== 'AbortError') { /* ignore */ } });
   }, [worktree.id]);
 
   useEffect(() => {
+    const controller = new AbortController();
+
     setLoading(true);
     setError(null);
     setDiff('');
@@ -53,7 +55,7 @@ export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
     setAutomergeState('idle');
     setDeleteConfirm(false);
 
-    fetch(`/api/worktrees/${worktree.id}/diff`)
+    fetch(`/api/worktrees/${worktree.id}/diff`, { signal: controller.signal })
       .then(async res => {
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -65,10 +67,12 @@ export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
         setDiff(data.diff);
         setCommits(data.commits);
       })
-      .catch(err => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch(err => { if (err.name !== 'AbortError') setError(err.message); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
 
-    fetchStatus();
+    fetchStatus(controller.signal);
+
+    return () => controller.abort();
   }, [worktree.id, fetchStatus]);
 
   const handlePush = async () => {
