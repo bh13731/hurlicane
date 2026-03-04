@@ -155,6 +155,9 @@ body {
   display: flex;
   gap: 6px;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .header-btn-group {
@@ -1531,6 +1534,10 @@ body {
   outline: none;
   font-family: inherit;
   cursor: pointer;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .form-label-hint {
@@ -1609,7 +1616,7 @@ body {
   gap: 12px;
 }
 
-.form-row .form-group { flex: 1; }
+.form-row .form-group { flex: 1; min-width: 0; }
 .form-group-sm { flex: 0 0 100px !important; }
 
 .form-error {
@@ -3208,6 +3215,17 @@ body {
 
 .worktree-action-delete--confirm {
   background: var(--danger-bg);
+}
+
+.worktree-action-automerge {
+  border-color: var(--accent-muted);
+  color: var(--accent);
+}
+
+.worktree-action-btn--active {
+  border-color: var(--success-text);
+  color: var(--success-text);
+  opacity: 0.85;
 }
 
 .worktree-error {

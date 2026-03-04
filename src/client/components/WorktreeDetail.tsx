@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { DiffViewer } from './DiffViewer';
 import type { Worktree } from '@shared/types';
 
@@ -7,28 +7,50 @@ interface WorktreeDetailProps {
   onDeleted: () => void;
 }
 
+interface WorktreeStatus {
+  synced: boolean;
+  prUrl: string | null;
+  prState: string | null;
+  autoMerge: boolean;
+}
+
 export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
   const [diff, setDiff] = useState('');
   const [commits, setCommits] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [status, setStatus] = useState<WorktreeStatus | null>(null);
+
   const [pushState, setPushState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [pushError, setPushError] = useState('');
 
-  const [prState, setPrState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [prUrl, setPrUrl] = useState('');
-  const [prError, setPrError] = useState('');
+  const [prActionState, setPrActionState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [prActionUrl, setPrActionUrl] = useState('');
+  const [prActionError, setPrActionError] = useState('');
+
+  const [automergeState, setAutomergeState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [automergeError, setAutomergeError] = useState('');
 
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+
+  const fetchStatus = useCallback(() => {
+    fetch(`/api/worktrees/${worktree.id}/status`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (data) setStatus(data); })
+      .catch(() => {});
+  }, [worktree.id]);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
     setDiff('');
     setCommits('');
+    setStatus(null);
     setPushState('idle');
-    setPrState('idle');
+    setPrActionState('idle');
+    setPrActionUrl('');
+    setAutomergeState('idle');
     setDeleteConfirm(false);
 
     fetch(`/api/worktrees/${worktree.id}/diff`)
@@ -45,7 +67,9 @@ export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
-  }, [worktree.id]);
+
+    fetchStatus();
+  }, [worktree.id, fetchStatus]);
 
   const handlePush = async () => {
     setPushState('loading');
@@ -57,16 +81,17 @@ export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
         throw new Error(data.error || 'Push failed');
       }
       setPushState('success');
+      fetchStatus();
     } catch (err: any) {
       setPushError(err.message);
       setPushState('error');
     }
   };
 
-  const handlePR = async () => {
-    setPrState('loading');
-    setPrError('');
-    setPrUrl('');
+  const handleCreatePR = async () => {
+    setPrActionState('loading');
+    setPrActionError('');
+    setPrActionUrl('');
     try {
       const res = await fetch(`/api/worktrees/${worktree.id}/pr`, { method: 'POST' });
       if (!res.ok) {
@@ -74,11 +99,29 @@ export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
         throw new Error(data.error || 'Failed to create PR');
       }
       const data = await res.json();
-      setPrUrl(data.url);
-      setPrState('success');
+      setPrActionUrl(data.url);
+      setPrActionState('success');
+      fetchStatus();
     } catch (err: any) {
-      setPrError(err.message);
-      setPrState('error');
+      setPrActionError(err.message);
+      setPrActionState('error');
+    }
+  };
+
+  const handleAutomerge = async () => {
+    setAutomergeState('loading');
+    setAutomergeError('');
+    try {
+      const res = await fetch(`/api/worktrees/${worktree.id}/automerge`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to enable auto-merge');
+      }
+      setAutomergeState('idle');
+      fetchStatus();
+    } catch (err: any) {
+      setAutomergeError(err.message);
+      setAutomergeState('error');
     }
   };
 
@@ -89,6 +132,10 @@ export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
     } catch { /* ignore */ }
   };
 
+  const isSynced = status?.synced === true;
+  const hasPR = status?.prUrl != null;
+  const isAutoMerge = status?.autoMerge === true;
+
   return (
     <div className="worktree-detail">
       <div className="worktree-detail-header">
@@ -98,20 +145,47 @@ export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
 
       <div className="worktree-actions">
         <button
-          className="worktree-action-btn worktree-action-push"
+          className={`worktree-action-btn worktree-action-push${isSynced ? ' worktree-action-btn--active' : ''}`}
           onClick={handlePush}
-          disabled={pushState === 'loading'}
+          disabled={pushState === 'loading' || isSynced}
         >
-          {pushState === 'loading' ? 'Pushing...' : pushState === 'success' ? 'Pushed' : 'Push'}
+          {pushState === 'loading' ? 'Pushing...' : isSynced ? 'Pushed' : pushState === 'success' ? 'Pushed' : 'Push'}
         </button>
 
-        <button
-          className="worktree-action-btn worktree-action-pr"
-          onClick={handlePR}
-          disabled={prState === 'loading'}
-        >
-          {prState === 'loading' ? 'Creating...' : 'Create PR'}
-        </button>
+        {hasPR ? (
+          <a
+            className="worktree-action-btn worktree-action-pr worktree-action-btn--active"
+            href={status!.prUrl!}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            View PR
+          </a>
+        ) : (
+          <button
+            className="worktree-action-btn worktree-action-pr"
+            onClick={handleCreatePR}
+            disabled={prActionState === 'loading'}
+          >
+            {prActionState === 'loading' ? 'Creating...' : 'Create PR'}
+          </button>
+        )}
+
+        {hasPR && (
+          isAutoMerge ? (
+            <span className="worktree-action-btn worktree-action-automerge worktree-action-btn--active" style={{ cursor: 'default' }}>
+              Auto-merge On
+            </span>
+          ) : (
+            <button
+              className="worktree-action-btn worktree-action-automerge"
+              onClick={handleAutomerge}
+              disabled={automergeState === 'loading'}
+            >
+              {automergeState === 'loading' ? 'Enabling...' : 'Set Automerge'}
+            </button>
+          )
+        )}
 
         {!deleteConfirm ? (
           <button
@@ -131,12 +205,13 @@ export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
       </div>
 
       {pushState === 'error' && <div className="worktree-error">{pushError}</div>}
-      {prState === 'success' && prUrl && (
+      {prActionState === 'success' && prActionUrl && (
         <div className="worktree-pr-link">
-          PR created: <a href={prUrl} target="_blank" rel="noopener noreferrer">{prUrl}</a>
+          PR created: <a href={prActionUrl} target="_blank" rel="noopener noreferrer">{prActionUrl}</a>
         </div>
       )}
-      {prState === 'error' && <div className="worktree-error">{prError}</div>}
+      {prActionState === 'error' && <div className="worktree-error">{prActionError}</div>}
+      {automergeState === 'error' && <div className="worktree-error">{automergeError}</div>}
 
       {commits && (
         <div className="worktree-commits">

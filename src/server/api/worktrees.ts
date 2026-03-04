@@ -240,6 +240,66 @@ router.post('/:id/pr', (req, res) => {
   }
 });
 
+router.get('/:id/status', (req, res) => {
+  const wt = queries.getWorktreeById(req.params.id);
+  if (!wt) { res.status(404).json({ error: 'Worktree not found' }); return; }
+
+  try {
+    // Check if local HEAD matches remote
+    let synced = false;
+    try {
+      execSync(`git fetch origin ${JSON.stringify(wt.branch)}`, {
+        cwd: wt.path,
+        timeout: 30_000,
+        stdio: 'pipe',
+      });
+      const localHead = execSync('git rev-parse HEAD', { cwd: wt.path, timeout: 5_000, stdio: 'pipe' }).toString().trim();
+      const remoteHead = execSync(`git rev-parse origin/${wt.branch}`, { cwd: wt.path, timeout: 5_000, stdio: 'pipe' }).toString().trim();
+      synced = localHead === remoteHead;
+    } catch {
+      // Remote branch doesn't exist yet — not synced
+      synced = false;
+    }
+
+    // Check PR status via gh CLI
+    let prUrl: string | null = null;
+    let prState: string | null = null;
+    let autoMerge = false;
+    try {
+      const ghOutput = execSync(
+        `gh pr view ${JSON.stringify(wt.branch)} --json url,state,autoMergeRequest`,
+        { cwd: wt.path, timeout: 15_000, stdio: 'pipe' },
+      ).toString().trim();
+      const prData = JSON.parse(ghOutput);
+      prUrl = prData.url || null;
+      prState = prData.state || null;
+      autoMerge = prData.autoMergeRequest != null;
+    } catch {
+      // No PR exists for this branch
+    }
+
+    res.json({ synced, prUrl, prState, autoMerge });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to get status' });
+  }
+});
+
+router.post('/:id/automerge', (req, res) => {
+  const wt = queries.getWorktreeById(req.params.id);
+  if (!wt) { res.status(404).json({ error: 'Worktree not found' }); return; }
+
+  try {
+    execSync(`gh pr merge ${JSON.stringify(wt.branch)} --auto --squash`, {
+      cwd: wt.path,
+      timeout: 15_000,
+      stdio: 'pipe',
+    });
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to enable auto-merge' });
+  }
+});
+
 router.delete('/:id', (req, res) => {
   const wt = queries.getWorktreeById(req.params.id);
   if (!wt) {

@@ -13,8 +13,12 @@ import debatesRouter from './debates.js';
 import worktreesRouter from './worktrees.js';
 import statsRouter from './stats.js';
 import knowledgeBaseRouter from './knowledgeBase.js';
+import reposRouter from './repos.js';
+import eyeRouter from './eye.js';
 
 const router = Router();
+
+router.use('/repos', reposRouter);
 
 router.use('/jobs', jobsRouter);
 router.use('/agents', agentsRouter);
@@ -30,5 +34,6 @@ router.use('/debates', debatesRouter);
 router.use('/worktrees', worktreesRouter);
 router.use('/stats', statsRouter);
 router.use('/knowledge-base', knowledgeBaseRouter);
+router.use('/eye', eyeRouter);
 
 export default router;
