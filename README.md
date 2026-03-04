@@ -2,6 +2,21 @@
 
 A web-based dashboard for running multiple Claude Code (and Codex) agents in parallel. Agents can coordinate through file locks, spawn sub-agents, ask the user questions, share data via a scratchpad, learn from past tasks through a persistent knowledge base, and engage in structured multi-round debates — all visible in a real-time UI.
 
+## Branches
+
+| Branch | Description |
+|--------|-------------|
+| `main` | Stable base. Repos registered by local path, worktrees optional, no branch protection. |
+| `aaryaman-main` | Active development. Adds the features below on top of `main`. |
+
+### What `aaryaman-main` adds
+
+- **URL-based repo registration** — repos are registered by git URL and cloned to `data/repos/` (with a live progress bar), replacing the local-path approach on `main`.
+- **Mandatory worktrees** — all jobs must run in a worktree. The "work directory" option is removed; the job form shows a dropdown of existing worktree branches or lets you create a new one.
+- **Branch protection** — a `PreToolUse` hook prevents agents from switching branches, creating branches, or renaming branches. Agents can only work on their assigned worktree branch.
+- **Sub-agent worktree reuse** — when an agent spawns a sub-job (retry, continuation, debate stage), the sub-agent reuses the parent's worktree instead of failing to create a new one.
+- **PR-based auto-cleanup** — worktrees are only auto-cleaned when their PR is merged or closed (checked via `gh pr view`), instead of being removed when the job finishes.
+
 ## Requirements
 
 - **Node.js ≥ 22** — uses the experimental `node:sqlite` module
@@ -74,10 +89,9 @@ Click **New Job** in the header to open the job form. Fill in:
 - **Title** — auto-generated from the description if left blank
 - **Priority** — -10 to +10; higher priority jobs are dispatched first
 - **Model** — leave blank to auto-classify (see [Model Auto-Classification](#model-auto-classification)), or specify a model ID (Claude or Codex)
-- **Work directory** — defaults to the server's working directory
+- **Worktree** — pick an existing worktree branch or create a new one (see [Git Worktree Support](#git-worktree-support))
 - **Max turns** — cap on conversation turns before the agent stops
 - **Depends on** — job IDs that must complete first
-- **Use worktree** — create an isolated git worktree for this job (see below)
 - **Interactive** — run in a tmux PTY instead of batch mode
 - **Context** — extra key/value data injected into the agent's prompt
 - **Template** — pick a saved prompt template to pre-fill the description
@@ -380,9 +394,37 @@ Use repeat jobs for ongoing tasks like periodic audits, health checks, or schedu
 
 ## Git Worktree Support
 
-Enable **Use worktree** on any job to give that agent an isolated git checkout. The orchestrator runs `git worktree add` before spawning the agent and sets the agent's working directory to the new worktree. This lets multiple agents work on the same repository simultaneously without interfering with each other or with your working tree.
+All jobs run in isolated git worktrees. Repos are registered by URL and cloned to `data/repos/`; worktrees are created under `data/worktrees/` on branches named `orchestrator/<job-title>-<shortId>`.
 
-Worktrees are created under `.orchestrator-worktrees/<agentId>` relative to the repository root, on a branch named `orchestrator/<job-title>-<agentId>`. They are automatically cleaned up after the job reaches a terminal state.
+### Repo Registration
+
+Click the git icon in the header to register a repo by URL. The orchestrator clones it (with a progress bar streamed via Socket.io) and stores it locally. Before each worktree is created, `git pull origin main` runs to ensure the latest code.
+
+### Creating Jobs on Worktrees
+
+The job form offers two modes:
+
+- **Existing branch** — a dropdown of active worktree branches. The job runs in the existing worktree alongside any prior work on that branch.
+- **New branch** — select a repo and optionally name the branch (auto-generated from the job title if blank). A fresh worktree is created from `main`.
+
+Sub-jobs spawned by agents (retries, continuations, debate stages) automatically reuse their parent's worktree rather than creating new ones.
+
+### Branch Protection
+
+Agents are restricted to their assigned worktree branch. A `PreToolUse` hook (`scripts/check-branch-hook.mjs`) intercepts Bash tool calls and blocks:
+
+- `git checkout <branch>` (branch switching)
+- `git checkout -b` / `-B` (branch creation)
+- `git switch` (branch switching)
+- `git branch -m` / `-M` (branch renaming)
+
+File-restore operations (`git checkout -- <file>`) are allowed. The assigned branch is passed to agents via the `ORCHESTRATOR_BRANCH` environment variable at spawn time, so it works for all agents including sub-agents.
+
+### Worktree Cleanup
+
+- **Auto-cleanup** — every 5 minutes, the cleanup daemon checks each active worktree's PR status via `gh pr view`. Worktrees whose PR has been merged or closed are automatically removed along with their branches.
+- **Manual cleanup** — `POST /api/worktrees/cleanup` removes worktrees for jobs in terminal states (done, failed, cancelled).
+- **Orphan cleanup** — directories in `data/worktrees/` not tracked in the database are removed automatically.
 
 ## Codex CLI Support
 
@@ -501,6 +543,7 @@ Click the settings icon in the header to open the Settings modal. Currently conf
 | `DB_PATH` | `data/orchestrator.db` | SQLite database location |
 | `CLAUDE_BIN` | `$(which claude)` | Path to the Claude Code CLI |
 | `ORCHESTRATOR_AGENT_ID` | *(set automatically)* | Agent identity; used by the lock hook |
+| `ORCHESTRATOR_BRANCH` | *(set automatically)* | Assigned worktree branch; used by the branch-enforcement hook |
 | `ORCHESTRATOR_API_URL` | `http://localhost:3000` | Base URL for lock verification |
 
 ## Project Structure
@@ -518,7 +561,8 @@ src/
   shared/
     types.ts       Types shared between server and client
 scripts/
-  check-lock-hook.mjs   Pre-tool-use hook that enforces file locks
+  check-lock-hook.mjs     Pre-tool-use hook that enforces file locks
+  check-branch-hook.mjs   Pre-tool-use hook that enforces branch protection
 data/
   orchestrator.db        SQLite database (auto-created on first run)
   agent-logs/            NDJSON output and stderr logs per agent
