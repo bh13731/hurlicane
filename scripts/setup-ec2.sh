@@ -132,6 +132,7 @@ install_gh() {
 setup_github_auth() {
   # Check if already authenticated
   if gh auth status &>/dev/null; then
+    gh auth setup-git
     ok "GitHub CLI already authenticated"
     return
   fi
@@ -146,7 +147,8 @@ setup_github_auth() {
 
   if [ -n "$gh_token" ]; then
     echo "$gh_token" | gh auth login --with-token
-    ok "GitHub CLI authenticated"
+    gh auth setup-git
+    ok "GitHub CLI authenticated (git credential helper configured)"
   else
     warn "Skipping GitHub auth — clone and PR features may not work"
   fi
