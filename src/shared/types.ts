@@ -21,6 +21,7 @@ export interface Job {
   depends_on: string | null;  // JSON array of job IDs this job must wait for
   flagged: number;            // 0=not flagged, 1=flagged for review
   is_interactive: number;     // 0=batch, 1=interactive tmux session
+  is_readonly: number;        // 0=normal, 1=read-only (no file edits allowed)
   use_worktree: number;       // 0=normal, 1=create git worktree
   project_id: string | null;  // FK → projects.id
   debate_id: string | null;   // FK → debates.id
@@ -261,6 +262,7 @@ export interface CreateJobRequest {
   templateId?: string;
   dependsOn?: string[]; // job IDs this job must wait for before running
   interactive?: boolean;
+  readonly?: boolean;
   useWorktree?: boolean;
   projectId?: string;
   repeatIntervalMs?: number;
@@ -301,6 +303,7 @@ export interface Template {
   name: string;
   content: string;
   model: string | null;
+  is_readonly: number;  // 0=normal, 1=jobs using this template are forced readonly
   created_at: number;
   updated_at: number;
 }
@@ -309,12 +312,14 @@ export interface CreateTemplateRequest {
   name: string;
   content: string;
   model?: string;
+  is_readonly?: boolean;
 }
 
 export interface UpdateTemplateRequest {
   name?: string;
   content?: string;
   model?: string | null;
+  is_readonly?: boolean;
 }
 
 // ─── Projects ──────────────────────────────────────────────────────────────────

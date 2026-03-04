@@ -15,6 +15,7 @@ import { watchNotesHandler, watchNotesSchema } from './tools/watchNotes.js';
 import { searchKBHandler, searchKBSchema } from './tools/knowledgeBase.js';
 import { reportLearningsHandler, reportLearningsSchema } from './tools/reportLearnings.js';
 import { finishJobHandler, finishJobSchema } from './tools/finishJob.js';
+import { createWorktreeHandler, createWorktreeSchema } from './tools/createWorktree.js';
 
 // agentId → { sessionId → transport }
 const agentTransports: Map<string, Map<string, StreamableHTTPServerTransport>> = new Map();
@@ -269,6 +270,20 @@ function buildMcpServer(agentId: string): MCP {
     },
     async (input) => {
       const result = await createJobHandler(agentId, input as any);
+      return { content: [{ type: 'text', text: result }] };
+    }
+  );
+
+  server.tool(
+    'create_worktree',
+    'Create a git worktree (new branch from main, or checkout of an existing remote branch). Returns { worktree_path, branch }. Pass the worktree_path as work_dir to create_job so the child job runs in that worktree.',
+    {
+      repo_name: createWorktreeSchema.shape.repo_name,
+      branch: createWorktreeSchema.shape.branch,
+      from_remote: createWorktreeSchema.shape.from_remote,
+    },
+    async (input) => {
+      const result = await createWorktreeHandler(agentId, input as any);
       return { content: [{ type: 'text', text: result }] };
     }
   );

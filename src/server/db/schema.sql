@@ -1,11 +1,12 @@
 CREATE TABLE IF NOT EXISTS templates (
-  id         TEXT PRIMARY KEY,
-  name       TEXT NOT NULL,
-  content    TEXT NOT NULL,
-  work_dir   TEXT,
-  model      TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  content     TEXT NOT NULL,
+  work_dir    TEXT,
+  model       TEXT,
+  is_readonly INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS jobs (
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   max_turns   INTEGER NOT NULL DEFAULT 50,
   model       TEXT,
   template_id TEXT REFERENCES templates(id),
+  is_readonly        INTEGER NOT NULL DEFAULT 0,
   use_worktree       INTEGER NOT NULL DEFAULT 0,
   scheduled_at       INTEGER,
   repeat_interval_ms INTEGER,

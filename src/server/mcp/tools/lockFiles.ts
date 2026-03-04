@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { getFileLockRegistry } from '../../orchestrator/FileLockRegistry.js';
+import * as queries from '../../db/queries.js';
 
 export const lockFilesSchema = z.object({
   files: z.array(z.string()).describe('List of file paths to lock'),
@@ -9,6 +10,15 @@ export const lockFilesSchema = z.object({
 });
 
 export async function lockFilesHandler(agentId: string, input: z.infer<typeof lockFilesSchema>): Promise<string> {
+  // Reject lock requests from readonly agents
+  const agent = queries.getAgentById(agentId);
+  if (agent) {
+    const job = queries.getJobById(agent.job_id);
+    if (job?.is_readonly) {
+      return JSON.stringify({ success: false, error: 'This is a read-only job. File locking is not allowed.' });
+    }
+  }
+
   const { files, reason, ttl_ms = 600000, timeout_ms = 660000 } = input;
   const registry = getFileLockRegistry();
   const result = await registry.acquire(agentId, files, reason ?? null, ttl_ms, timeout_ms);

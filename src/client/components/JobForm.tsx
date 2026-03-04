@@ -26,16 +26,24 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [reviewEnabled, setReviewEnabled] = useState(false);
   const [reviewModels, setReviewModels] = useState<string[]>([]);
   const [reviewAuto, setReviewAuto] = useState(true);
+  const [readonly, setReadonly] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Worktree-branch state
-  const [branchMode, setBranchMode] = useState<'existing' | 'new'>('new');
+  const [branchMode, setBranchMode] = useState<'existing' | 'new' | 'remote'>('new');
   const [selectedWorktreeId, setSelectedWorktreeId] = useState('');
   const [branchName, setBranchName] = useState('');
   const [branchRepoId, setBranchRepoId] = useState('');
   const [repos, setRepos] = useState<Repo[]>([]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
+
+  // Remote branch state
+  const [remoteBranches, setRemoteBranches] = useState<string[]>([]);
+  const [remoteBranchLoading, setRemoteBranchLoading] = useState(false);
+  const [selectedRemoteBranch, setSelectedRemoteBranch] = useState('');
+  const [remoteBranchFilter, setRemoteBranchFilter] = useState('');
+  const [remoteBranchDropdownOpen, setRemoteBranchDropdownOpen] = useState(false);
 
   const pendingJobs = availableJobs.filter(
     j => j.status === 'queued' || j.status === 'assigned' || j.status === 'running'
@@ -55,6 +63,24 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
     }).catch(() => {});
   }, []);
 
+  // Fetch remote branches when repo changes in remote mode
+  useEffect(() => {
+    if (branchMode !== 'remote' || !branchRepoId) {
+      setRemoteBranches([]);
+      setSelectedRemoteBranch('');
+      return;
+    }
+    setRemoteBranchLoading(true);
+    fetch(`/api/repos/${branchRepoId}/branches`)
+      .then(r => r.json())
+      .then((branches: string[]) => {
+        setRemoteBranches(branches);
+        setSelectedRemoteBranch('');
+      })
+      .catch(() => setRemoteBranches([]))
+      .finally(() => setRemoteBranchLoading(false));
+  }, [branchMode, branchRepoId]);
+
   const selectedTemplate = templates.find(t => t.id === templateId) ?? null;
 
   const handleTemplateChange = (newTemplateId: string) => {
@@ -62,6 +88,12 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
     const tpl = templates.find(t => t.id === newTemplateId);
     if (tpl?.model) {
       setModel(tpl.model);
+    }
+    // Auto-set readonly when template is marked readonly
+    if (tpl?.is_readonly) {
+      setReadonly(true);
+    } else if (!newTemplateId) {
+      // Clearing template — don't force readonly off (user may have set it manually)
     }
   };
 
@@ -82,10 +114,29 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
 
       const selectedWorktree = worktrees.find(w => w.id === selectedWorktreeId);
       const selectedRepo = repos.find(r => r.id === branchRepoId);
-      // If using an existing worktree, pass its path as workDir so the job runs there
-      const workDir = branchMode === 'existing' && selectedWorktree
-        ? selectedWorktree.path
-        : selectedRepo?.path || undefined;
+
+      let workDir: string | undefined;
+      if (readonly) {
+        // Readonly jobs run directly in the repo — use first repo's path
+        workDir = repos[0]?.path || undefined;
+      } else if (branchMode === 'existing' && selectedWorktree) {
+        workDir = selectedWorktree.path;
+      } else if (branchMode === 'remote' && selectedRemoteBranch && branchRepoId) {
+        // Create a worktree tracking the remote branch
+        const wtRes = await fetch('/api/worktrees', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ branch: selectedRemoteBranch, repoId: branchRepoId, trackExisting: true }),
+        });
+        if (!wtRes.ok) {
+          const err = await wtRes.json();
+          throw new Error(err.error || 'Failed to create worktree from remote branch');
+        }
+        const wt = await wtRes.json();
+        workDir = wt.path;
+      } else {
+        workDir = selectedRepo?.path || undefined;
+      }
 
       await onSubmit({
         title: title.trim() || undefined,
@@ -96,7 +147,8 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         templateId: templateId || undefined,
         dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
         interactive: interactive || undefined,
-        useWorktree: true,
+        readonly: readonly || undefined,
+        useWorktree: readonly ? false : true,
         repeatIntervalMs: repeatSeconds ? (repeatSeconds as number) * 1000 : undefined,
         retryPolicy: retryPolicy !== 'none' ? retryPolicy : undefined,
         maxRetries: retryPolicy !== 'none' ? maxRetries : undefined,
@@ -168,6 +220,20 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
           </div>
 
           <div className="form-group">
+            <label className="form-checkbox-label">
+              <input
+                type="checkbox"
+                checked={readonly}
+                onChange={e => setReadonly(e.target.checked)}
+                disabled={!!selectedTemplate?.is_readonly}
+              />
+              Readonly (no file edits)
+              {selectedTemplate?.is_readonly ? <span className="form-label-hint"> (enforced by template)</span> : null}
+              <span className="tooltip-icon" data-tip="Runs directly in the repo without a worktree. The agent is blocked from modifying any files. Useful for research, analysis, and code review.">?</span>
+            </label>
+          </div>
+
+          {!readonly && <div className="form-group">
             <label>Worktree</label>
             <div className="form-row" style={{ marginBottom: 8 }}>
               <label className="form-checkbox-label">
@@ -189,6 +255,15 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
                 />
                 New branch
               </label>
+              <label className="form-checkbox-label">
+                <input
+                  type="radio"
+                  name="branchMode"
+                  checked={branchMode === 'remote'}
+                  onChange={() => setBranchMode('remote')}
+                />
+                Remote branch
+              </label>
             </div>
             {branchMode === 'existing' ? (
               <select
@@ -205,6 +280,82 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
                   );
                 })}
               </select>
+            ) : branchMode === 'remote' ? (
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Repo</label>
+                  <select
+                    value={branchRepoId}
+                    onChange={e => setBranchRepoId(e.target.value)}
+                  >
+                    {repos.length === 0 ? (
+                      <option value="" disabled>No repos registered</option>
+                    ) : (
+                      <>
+                        <option value="">Select a repo</option>
+                        {repos.map(r => (
+                          <option key={r.id} value={r.id}>{r.name}</option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                </div>
+                <div className="form-group" style={{ position: 'relative' }}>
+                  <label>Branch</label>
+                  <input
+                    type="text"
+                    value={selectedRemoteBranch || remoteBranchFilter}
+                    onChange={e => {
+                      setRemoteBranchFilter(e.target.value);
+                      setSelectedRemoteBranch('');
+                      setRemoteBranchDropdownOpen(true);
+                    }}
+                    onFocus={() => setRemoteBranchDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setRemoteBranchDropdownOpen(false), 150)}
+                    placeholder={remoteBranchLoading ? 'Loading branches...' : !branchRepoId ? 'Select a repo first' : 'Type to filter branches...'}
+                    disabled={remoteBranchLoading || !branchRepoId}
+                  />
+                  {remoteBranchDropdownOpen && remoteBranches.length > 0 && (
+                    <div
+                      className="branch-dropdown"
+                      style={{
+                        position: 'absolute',
+                        top: '100%',
+                        left: 0,
+                        right: 0,
+                        maxHeight: 200,
+                        overflowY: 'auto',
+                        background: 'var(--bg-secondary, #1e1e1e)',
+                        border: '1px solid var(--border-color, #333)',
+                        borderRadius: 4,
+                        zIndex: 10,
+                      }}
+                    >
+                      {remoteBranches
+                        .filter(b => b.toLowerCase().includes(remoteBranchFilter.toLowerCase()))
+                        .map(b => (
+                          <div
+                            key={b}
+                            style={{
+                              padding: '6px 10px',
+                              cursor: 'pointer',
+                              fontSize: '0.85rem',
+                            }}
+                            className="branch-dropdown-item"
+                            onMouseDown={e => {
+                              e.preventDefault();
+                              setSelectedRemoteBranch(b);
+                              setRemoteBranchFilter('');
+                              setRemoteBranchDropdownOpen(false);
+                            }}
+                          >
+                            {b}
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             ) : (
               <div className="form-row">
                 <div className="form-group">
@@ -236,7 +387,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
                 </div>
               </div>
             )}
-          </div>
+          </div>}
 
           <div className="form-row">
             <div className="form-group form-group-sm">

@@ -74,8 +74,9 @@ async function tick(): Promise<void> {
     queries.insertAgent({ id: agentId, job_id: job.id, status: 'starting', parent_agent_id: (readyJob as any).created_by_agent_id ?? undefined });
     socket.emitAgentNew(queries.getAgentWithJob(agentId)!);
 
+    // Readonly jobs skip worktree creation and run directly in the repo
     // If worktree requested, create one and override the working directory
-    const dispatchJob = readyJob.use_worktree
+    const dispatchJob = (readyJob.use_worktree && !readyJob.is_readonly)
       ? createWorktree(readyJob, agentId)
       : readyJob;
 

@@ -48,6 +48,9 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!jobCols.includes('use_worktree')) {
     db.exec('ALTER TABLE jobs ADD COLUMN use_worktree INTEGER NOT NULL DEFAULT 0');
   }
+  if (!jobCols.includes('is_readonly')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN is_readonly INTEGER NOT NULL DEFAULT 0');
+  }
 
   // Projects table
   db.exec(`
@@ -102,6 +105,9 @@ export function initDb(dbPath: string): DatabaseSync {
   }
   if (!tplCols.includes('model')) {
     db.exec('ALTER TABLE templates ADD COLUMN model TEXT');
+  }
+  if (!tplCols.includes('is_readonly')) {
+    db.exec('ALTER TABLE templates ADD COLUMN is_readonly INTEGER NOT NULL DEFAULT 0');
   }
 
   // Batch templates

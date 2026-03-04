@@ -48,11 +48,14 @@ router.post('/', async (req, res) => {
 
   const explicitTitle = body.title?.trim();
   let titleSource = body.description;
-  if (!titleSource && body.templateId) {
-    const tpl = queries.getTemplateById(body.templateId);
-    titleSource = tpl?.content ?? '';
+  const tpl = body.templateId ? queries.getTemplateById(body.templateId) : null;
+  if (!titleSource && tpl) {
+    titleSource = tpl.content ?? '';
   }
   const title = explicitTitle || (titleSource ? await generateSmartTitle(titleSource) : 'Untitled');
+
+  // If template is marked readonly, force the job to be readonly regardless of request
+  const isReadonly = (body.readonly || !!tpl?.is_readonly) ? 1 : 0;
 
   const job = queries.insertJob({
     id: randomUUID(),
@@ -66,7 +69,8 @@ router.post('/', async (req, res) => {
     template_id: body.templateId ?? null,
     depends_on: body.dependsOn?.length ? JSON.stringify(body.dependsOn) : null,
     is_interactive: body.interactive ? 1 : 0,
-    use_worktree: body.useWorktree ? 1 : 0,
+    is_readonly: isReadonly,
+    use_worktree: isReadonly ? 0 : (body.useWorktree ? 1 : 0),
     project_id: body.projectId ?? null,
     scheduled_at: body.scheduledAt ?? null,
     repeat_interval_ms: body.repeatIntervalMs ?? null,

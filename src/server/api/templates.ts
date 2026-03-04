@@ -21,6 +21,7 @@ router.post('/', (req, res) => {
     name: body.name.trim(),
     content: body.content.trim(),
     model: body.model?.trim() || null,
+    is_readonly: body.is_readonly ? 1 : 0,
     created_at: now,
     updated_at: now,
   });
@@ -35,6 +36,7 @@ router.put('/:id', (req, res) => {
     ...(body.name !== undefined ? { name: body.name.trim() } : {}),
     ...(body.content !== undefined ? { content: body.content.trim() } : {}),
     ...(body.model !== undefined ? { model: body.model?.trim() || null } : {}),
+    ...(body.is_readonly !== undefined ? { is_readonly: body.is_readonly ? 1 : 0 } : {}),
   });
   res.json(updated);
 });

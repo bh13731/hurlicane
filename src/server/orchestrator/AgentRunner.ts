@@ -46,9 +46,13 @@ COORDINATION:
   - ask_user(question): Ask the human a question and WAIT for their answer before continuing.
 
 ORCHESTRATION (spawn and coordinate sub-agents):
+  - create_worktree(repo_name?, branch?, from_remote?):
+      Create a git worktree with a new branch (from main) or check out an existing remote branch.
+      Returns { worktree_path, branch }. Pass worktree_path as work_dir to create_job.
   - create_job(description, title?, priority?, work_dir?, max_turns?, model?, depends_on?):
       Create a new job that will be run by another agent. Returns { job_id, title, status }.
-      work_dir defaults to your own working directory.
+      work_dir defaults to your own working directory. Pass a worktree_path from create_worktree
+      to run the job on a specific branch.
   - wait_for_jobs(job_ids, timeout_ms?):
       Block until all specified jobs finish. Returns an array of { job_id, title, status, result_text }.
       Each call returns after at most ~90s. If some jobs still have non-terminal status (queued/running),
@@ -195,6 +199,7 @@ export function runAgent(options: RunOptions): void {
       delete env['CLAUDECODE'];
       env['ORCHESTRATOR_AGENT_ID'] = agentId;
       env['ORCHESTRATOR_API_URL'] = `http://localhost:${process.env.PORT ?? 3000}`;
+      if (job.is_readonly) env['ORCHESTRATOR_READONLY'] = 'true';
       // Set assigned branch so the branch-enforcement hook works for all agents
       const wt = queries.getWorktreeByPath(workDir);
       if (wt?.branch) env['ORCHESTRATOR_BRANCH'] = wt.branch;
@@ -707,6 +712,10 @@ function buildPrompt(job: Job): string {
   // Codex has no --append-system-prompt flag, so prepend it to the prompt
   if (isCodexModel(model)) {
     prompt += getSystemPrompt() + '\n\n---\n\n';
+  }
+
+  if (job.is_readonly) {
+    prompt += `# READ-ONLY JOB\nThis is a READ-ONLY job. You must NOT modify, create, or delete any files. Do not use Edit, Write, MultiEdit, or NotebookEdit tools. You may only read, search, and analyze code.\n\n`;
   }
 
   prompt += `# Task: ${job.title}\n\n`;

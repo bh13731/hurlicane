@@ -136,6 +136,10 @@ router.post('/:id/run', (req, res) => {
     res.status(201).json({ project, jobs: allJobs, debates: allDebates });
   } else {
     // Normal mode: create one job per item
+    // Check if the selected template enforces readonly
+    const tpl = body.templateId ? queries.getTemplateById(body.templateId) : null;
+    const isReadonly = tpl?.is_readonly ? 1 : 0;
+
     const jobs = bt.items.map(item => {
       const job = queries.insertJob({
         id: randomUUID(),
@@ -146,7 +150,8 @@ router.post('/:id/run', (req, res) => {
         model: body.model ?? null,
         template_id: body.templateId ?? null,
         is_interactive: body.interactive ? 1 : 0,
-        use_worktree: 1,
+        is_readonly: isReadonly,
+        use_worktree: isReadonly ? 0 : 1,
         work_dir: body.workDir ?? null,
         max_turns: body.maxTurns ?? 50,
         project_id: project.id,

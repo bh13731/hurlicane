@@ -12,6 +12,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
   const [model, setModel] = useState('');
+  const [isReadonly, setIsReadonly] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteTpl, setConfirmDeleteTpl] = useState<Template | null>(null);
 
@@ -24,6 +25,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
     setName('');
     setContent('');
     setModel('');
+    setIsReadonly(false);
     setCreating(true);
   }
 
@@ -33,6 +35,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
     setName(t.name);
     setContent(t.content);
     setModel(t.model ?? '');
+    setIsReadonly(!!t.is_readonly);
   }
 
   function cancelForm() {
@@ -49,7 +52,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
         const res = await fetch(`/api/templates/${editing.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), content: content.trim(), model: model.trim() || null }),
+          body: JSON.stringify({ name: name.trim(), content: content.trim(), model: model.trim() || null, is_readonly: isReadonly }),
         });
         const updated: Template = await res.json();
         setTemplates(prev => prev.map(t => t.id === updated.id ? updated : t));
@@ -57,7 +60,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
         const res = await fetch('/api/templates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), content: content.trim(), model: model.trim() || undefined }),
+          body: JSON.stringify({ name: name.trim(), content: content.trim(), model: model.trim() || undefined, is_readonly: isReadonly }),
         });
         const created: Template = await res.json();
         setTemplates(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
@@ -144,6 +147,17 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
                     <option value="codex-gpt-5.2">codex — gpt-5.2</option>
                     <option value="codex-gpt-5.1-codex-mini">codex — gpt-5.1-codex-mini</option>
                   </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={isReadonly}
+                      onChange={e => setIsReadonly(e.target.checked)}
+                    />
+                    Readonly (no file edits)
+                    <span className="tooltip-icon" data-tip="Jobs using this template will be forced into readonly mode — no worktree, no file edits allowed.">?</span>
+                  </label>
                 </div>
                 <div className="form-group template-content-group">
                   <label htmlFor="tpl-content">Content</label>

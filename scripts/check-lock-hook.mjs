@@ -23,6 +23,12 @@ process.on('unhandledRejection', () => process.exit(0));
 const agentId = process.env.ORCHESTRATOR_AGENT_ID;
 if (!agentId) process.exit(0);
 
+// Readonly agents are unconditionally blocked from all file edits.
+if (process.env.ORCHESTRATOR_READONLY === 'true') {
+  process.stdout.write('This is a read-only job. File modifications are not allowed.');
+  process.exit(2);
+}
+
 // Safety valve: if no data arrives within 2s, fail open.
 const noDataTimer = setTimeout(() => process.exit(0), 2000);
 

@@ -24,6 +24,7 @@ export function insertJob(job: {
   template_id?: string | null;
   depends_on?: string | null;
   is_interactive?: number;
+  is_readonly?: number;
   use_worktree?: number;
   project_id?: string | null;
   debate_id?: string | null;
@@ -45,8 +46,8 @@ export function insertJob(job: {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_loop, debate_round, debate_role, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_by_agent_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, is_readonly, use_worktree, project_id, debate_id, debate_loop, debate_round, debate_role, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_by_agent_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     job.id, job.title, job.description, job.context,
     job.status ?? 'queued', job.priority,
@@ -55,6 +56,7 @@ export function insertJob(job: {
     job.template_id ?? null,
     job.depends_on ?? null,
     job.is_interactive ?? 0,
+    job.is_readonly ?? 0,
     job.use_worktree ?? 0,
     job.project_id ?? null,
     job.debate_id ?? null,
@@ -837,9 +839,9 @@ export function getActiveLocksForFiles(filePaths: string[]): FileLock[] {
 export function insertTemplate(template: Template): Template {
   const db = getDb();
   db.prepare(`
-    INSERT INTO templates (id, name, content, work_dir, model, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(template.id, template.name, template.content, null, template.model ?? null, template.created_at, template.updated_at);
+    INSERT INTO templates (id, name, content, work_dir, model, is_readonly, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(template.id, template.name, template.content, null, template.model ?? null, template.is_readonly ?? 0, template.created_at, template.updated_at);
   return getTemplateById(template.id)!;
 }
 
@@ -855,7 +857,7 @@ export function listTemplates(): Template[] {
   return rows.map(r => cast<Template>(r));
 }
 
-export function updateTemplate(id: string, fields: Partial<Pick<Template, 'name' | 'content' | 'model'>>): Template | null {
+export function updateTemplate(id: string, fields: Partial<Pick<Template, 'name' | 'content' | 'model' | 'is_readonly'>>): Template | null {
   const db = getDb();
   const sets: string[] = ['updated_at = ?'];
   const values: unknown[] = [Date.now()];

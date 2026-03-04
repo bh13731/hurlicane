@@ -18,10 +18,11 @@ export const createJobSchema = z.object({
 export async function createJobHandler(agentId: string, input: z.infer<typeof createJobSchema>): Promise<string> {
   const { description, title, priority, work_dir, max_turns, model, depends_on, use_worktree, repeat_interval_ms } = input;
 
-  // Inherit work_dir, project_id, and model from calling agent's job if not specified
+  // Inherit work_dir, project_id, model, and is_readonly from calling agent's job if not specified
   let resolvedWorkDir = work_dir ?? null;
   let inheritedProjectId: string | null = null;
   let inheritedModel: string | null = null;
+  let inheritedReadonly = 0;
   const agent = queries.getAgentById(agentId);
   if (agent) {
     const parentJob = queries.getJobById(agent.job_id);
@@ -29,6 +30,7 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
       if (!resolvedWorkDir) resolvedWorkDir = (parentJob as any)?.work_dir ?? null;
       inheritedProjectId = parentJob.project_id ?? null;
       inheritedModel = parentJob.model ?? null;
+      inheritedReadonly = parentJob.is_readonly ?? 0;
     }
   }
 
@@ -65,7 +67,8 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     model: model ?? inheritedModel,
     template_id: null,
     depends_on: depends_on?.length ? JSON.stringify(depends_on) : null,
-    use_worktree: 1,
+    is_readonly: inheritedReadonly,
+    use_worktree: inheritedReadonly ? 0 : 1,
     project_id: inheritedProjectId,
     repeat_interval_ms: repeat_interval_ms ?? null,
     retry_policy: retryPolicy,

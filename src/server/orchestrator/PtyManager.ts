@@ -210,6 +210,7 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
     '#!/bin/sh',
     `export ORCHESTRATOR_AGENT_ID=${JSON.stringify(agentId)}`,
     `export ORCHESTRATOR_API_URL=${JSON.stringify(`http://localhost:${process.env.PORT ?? 3000}`)}`,
+    ...(job.is_readonly ? [`export ORCHESTRATOR_READONLY=true`] : []),
     ...(assignedBranch ? [`export ORCHESTRATOR_BRANCH=${JSON.stringify(assignedBranch)}`] : []),
     `unset CLAUDECODE`,
     nicedExecLine,
@@ -520,6 +521,10 @@ function buildInteractivePrompt(job: Job): string {
   // Codex has no --append-system-prompt flag, so prepend it to the prompt
   if (isCodexModel(model)) {
     prompt += getSystemPrompt() + '\n\n---\n\n';
+  }
+
+  if (job.is_readonly) {
+    prompt += `# READ-ONLY JOB\nThis is a READ-ONLY job. You must NOT modify, create, or delete any files. Do not use Edit, Write, MultiEdit, or NotebookEdit tools. You may only read, search, and analyze code.\n\n`;
   }
 
   prompt += `# Task: ${job.title}\n\n`;
