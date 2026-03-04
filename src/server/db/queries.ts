@@ -40,12 +40,13 @@ export function insertJob(job: {
   review_config?: string | null;
   review_status?: ReviewStatus | null;
   review_parent_job_id?: string | null;
+  created_by_agent_id?: string | null;
 }): Job {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_loop, debate_round, debate_role, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_loop, debate_round, debate_role, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_by_agent_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     job.id, job.title, job.description, job.context,
     job.status ?? 'queued', job.priority,
@@ -70,6 +71,7 @@ export function insertJob(job: {
     job.review_config ?? null,
     job.review_status ?? null,
     job.review_parent_job_id ?? null,
+    job.created_by_agent_id ?? null,
     now, now
   );
   return getJobById(job.id)!;
@@ -475,6 +477,11 @@ export function getAgentFullOutput(agentId: string, tailLines?: number): AgentOu
   while (current) {
     chain.unshift(current);
     if (!current.parent_agent_id) break;
+    // MCP sub-agents have parent_agent_id set to the spawning agent, but their
+    // job was created via create_job (created_by_agent_id is set). Their output
+    // is independent — don't prepend the parent's transcript.
+    const currentJob = getJobById(current.job_id);
+    if (currentJob?.created_by_agent_id) break;
     current = getAgentById(current.parent_agent_id);
   }
 

@@ -411,7 +411,7 @@ export function WorkQueueSidebar({
             title="Cancel job"
           >✕</button>
         )}
-        {sectionKey === 'done' && onArchiveJob && (
+        {['done', 'failed', 'cancelled'].includes(sectionKey) && onArchiveJob && (
           <button
             className="sidebar-job-cancel"
             onClick={e => { e.stopPropagation(); onArchiveJob(job); }}

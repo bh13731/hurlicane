@@ -9,8 +9,7 @@
     "server:dev": "NODE_OPTIONS='--experimental-sqlite' tsx watch --ignore './data/**' src/server/index.ts",
     "client:dev": "vite",
     "build": "tsc -p tsconfig.server.json && vite build",
-    "server:start": "node dist/server/index.js",
-    "eye:dev": "tsx watch eye/index.ts"
+    "server:start": "node dist/server/index.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

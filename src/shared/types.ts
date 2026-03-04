@@ -37,6 +37,7 @@ export interface Job {
   review_config: string | null;         // JSON: ReviewConfig
   review_status: ReviewStatus | null;
   review_parent_job_id: string | null;  // for review jobs, links to parent
+  created_by_agent_id: string | null;   // agent that created this job via create_job MCP tool
   archived_at: number | null;
   created_at: number;
   updated_at: number;

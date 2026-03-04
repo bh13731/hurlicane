@@ -70,6 +70,27 @@ export function createMcpApp(): express.Application {
   app.post('/mcp/:agentId', async (req, res) => {
     try {
       const { agentId } = req.params;
+
+      // MCP SDK 1.26+ requires Accept header to include both application/json and
+      // text/event-stream. rmcp (Codex's Rust MCP client) only sends application/json,
+      // so normalize the header here to avoid 406 responses.
+      //
+      // IMPORTANT: The MCP SDK uses Hono's getRequestListener which reads req.rawHeaders
+      // (the raw socket header array), NOT req.headers. Both must be updated.
+      const accept = req.headers['accept'] ?? '';
+      if (!accept.includes('text/event-stream')) {
+        const newAccept = accept ? `${accept}, text/event-stream` : 'application/json, text/event-stream';
+        req.headers['accept'] = newAccept;
+        // Also patch rawHeaders — Hono reads rawHeaders when converting Node.js req
+        // to a Web Standard Request, so req.headers changes alone are ignored.
+        const ri = req.rawHeaders.findIndex((h, i) => i % 2 === 0 && h.toLowerCase() === 'accept');
+        if (ri >= 0) {
+          req.rawHeaders[ri + 1] = newAccept;
+        } else {
+          req.rawHeaders.push('Accept', newAccept);
+        }
+      }
+
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
       let transportMap = agentTransports.get(agentId);
@@ -116,9 +137,25 @@ export function createMcpApp(): express.Application {
         const server = buildMcpServer(agentId);
         await server.connect(transport);
       } else {
-        // Unknown session, non-initialize request — 404 tells MCP client to re-initialize
-        res.status(404).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Session not found — please re-initialize' }, id: null });
-        return;
+        // Unknown session, non-initialize request (e.g. after server restart).
+        // Claude Code and rmcp don't auto-reinitialize, so route to an existing
+        // initialized transport for this agent if one exists. If not, return an
+        // error — the agent is stuck and needs to be restarted.
+        const existingTransport = transportMap.size > 0
+          ? transportMap.values().next().value as StreamableHTTPServerTransport
+          : undefined;
+
+        if (existingTransport) {
+          // Route stale session to existing transport and alias the old ID
+          console.warn(`[mcp] session not found: agent ${agentId} session ${sessionId ?? '(none)'} — routing to existing transport`);
+          if (sessionId) transportMap.set(sessionId, existingTransport);
+          transport = existingTransport;
+        } else {
+          // No transport at all — return error. Agent needs restart.
+          console.warn(`[mcp] session not found: agent ${agentId} session ${sessionId ?? '(none)'} — no active transport, returning error`);
+          res.status(200).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Session not found — please re-initialize' }, id: (req.body as any)?.id ?? null });
+          return;
+        }
       }
 
       await transport!.handleRequest(req, res, req.body);

@@ -39,13 +39,16 @@ export async function triageLearnings(agentId: string, job: Job): Promise<void> 
   }
 
   const projectId: string | null = (job as any).project_id ?? null;
+  const workDir: string | null = (job as any).work_dir ?? null;
+  // Use work_dir as fallback scoping key so learnings from different codebases don't mix
+  const effectiveProjectId: string | null = projectId ?? workDir ?? null;
 
   // Find similar existing KB entries using FTS on each learning's title
-  const candidates = findCandidateMatches(learnings, projectId);
+  const candidates = findCandidateMatches(learnings, effectiveProjectId);
 
   let classifications: TriageResult[];
   try {
-    classifications = await classifyLearnings(learnings, candidates, job.title);
+    classifications = await classifyLearnings(learnings, candidates, job.title, workDir);
   } catch (err) {
     console.error(`[memory-triage] API call failed for agent ${agentId}, storing all as project-scoped:`, err);
     classifications = learnings.map((_, i) => ({ index: i, classification: 'project' as const }));
@@ -58,7 +61,7 @@ export async function triageLearnings(agentId: string, job: Job): Promise<void> 
     const learning = learnings[result.index];
     if (!learning) continue;
 
-    const entryProjectId = result.classification === 'global' ? null : projectId;
+    const entryProjectId = result.classification === 'global' ? null : effectiveProjectId;
 
     // If this learning supersedes an existing entry, update it instead of creating a duplicate
     if (result.supersedes) {
@@ -130,6 +133,7 @@ async function classifyLearnings(
   learnings: Learning[],
   candidates: CandidateEntry[],
   jobTitle: string,
+  workDir?: string | null,
 ): Promise<TriageResult[]> {
   const learningsList = learnings.map((l, i) =>
     `${i}. "${l.title}": ${l.content.slice(0, 200)}${l.scope ? ` [hint: ${l.scope}]` : ''}`
@@ -139,19 +143,23 @@ async function classifyLearnings(
     ? `\nExisting KB entries (check for duplicates — compare CONTENT, not just titles):\n${candidates.map(c => `- [${c.id}] "${c.title}": ${c.excerpt}`).join('\n')}`
     : '';
 
+  const workDirLine = workDir ? `\nCodebase directory: ${workDir}` : '';
+
   const prompt = `You are triaging learnings from an AI coding agent into a knowledge base.
-Job completed: "${jobTitle}"
+Job completed: "${jobTitle}"${workDirLine}
 
 Learnings to classify:
 ${learningsList}
 ${existingList}
 
 For each learning, classify as:
-- "project" — specific to this codebase (build commands, file locations, API quirks, project conventions)
-- "global" — universally useful (language patterns, tool usage tips, general debugging strategies)
+- "project" — specific to this codebase (build commands, file locations, API quirks, project conventions, tool/framework patterns specific to this project)
+- "global" — useful across ANY codebase regardless of language or framework (e.g., git strategies, general debugging principles)
 - "discard" — too vague, trivially obvious, or duplicates an existing entry
 
-IMPORTANT: Two entries are duplicates if they encode the SAME fact, even if worded differently.
+IMPORTANT: When in doubt, classify as "project" not "global". Only use "global" for knowledge that would genuinely apply to a completely unrelated codebase. If a learning mentions specific tools, frameworks, services, or directories from this project, it is "project"-scoped.
+
+Two entries are duplicates if they encode the SAME fact, even if worded differently.
 If a new learning improves on or updates an existing entry, set "supersedes" to that entry's ID
 instead of discarding — the existing entry will be updated with the new content.
 

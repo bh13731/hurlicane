@@ -12,22 +12,19 @@ router.get('/', (_req, res) => {
 });
 
 router.put('/', (req, res) => {
-  const { maxConcurrentAgents } = req.body;
-  if (maxConcurrentAgents !== undefined) {
-    if (typeof maxConcurrentAgents !== 'number' || maxConcurrentAgents < 1 || maxConcurrentAgents > 100) {
-      res.status(400).json({ error: 'maxConcurrentAgents must be a number between 1 and 100' });
-      return;
-    }
-    const n = Math.floor(maxConcurrentAgents);
-    setMaxConcurrent(n);
-    queries.upsertNote('setting:maxConcurrentAgents', String(n), null);
+  const { maxConcurrentAgents, systemPromptAppendix } = req.body;
+  if (typeof maxConcurrentAgents !== 'number' || maxConcurrentAgents < 1 || maxConcurrentAgents > 100) {
+    res.status(400).json({ error: 'maxConcurrentAgents must be a number between 1 and 100' });
+    return;
   }
-  const { systemPromptAppendix } = req.body;
+  const n = Math.floor(maxConcurrentAgents);
+  setMaxConcurrent(n);
+  queries.upsertNote('setting:maxConcurrentAgents', String(n), null);
   if (typeof systemPromptAppendix === 'string') {
     queries.upsertNote('setting:systemPromptAppendix', systemPromptAppendix, null);
   }
   res.json({
-    maxConcurrentAgents: getMaxConcurrent(),
+    maxConcurrentAgents: n,
     systemPromptAppendix: queries.getNote('setting:systemPromptAppendix')?.value ?? '',
   });
 });

@@ -144,7 +144,17 @@ export async function waitForJobsHandler(
           : null,
       };
     });
-    return JSON.stringify(results);
+    const stillPendingIds = jobs
+      .filter(j => j && !TERMINAL.includes(j!.status))
+      .map(j => j!.id);
+    return JSON.stringify({
+      timeout: true,
+      message: stillPendingIds.length > 0
+        ? `Timeout reached. ${stillPendingIds.length} job(s) still pending. You MUST call wait_for_jobs again with still_pending_ids to continue waiting.`
+        : 'Timeout reached. All jobs are now in terminal states.',
+      still_pending_ids: stillPendingIds,
+      results,
+    });
   } finally {
     activeWaits.delete(agentId);
     activeWaitAborts.delete(agentId);

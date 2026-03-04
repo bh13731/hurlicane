@@ -476,29 +476,108 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
         termRef.current = null;
       };
     } else {
-      // Batch mode: stream-json rendering
+      // Batch mode: try rendered stream-json output first (clean, parsed).
+      // Fall back to PTY snapshot for sub-agents spawned via create_job that
+      // have no agent_output rows but do have tmux PTY data.
       const TAIL = 5000;
+      const TERMINAL_STATUSES = ['done', 'failed', 'cancelled'];
 
-      // Helper to render segments into the terminal
-      const writeSegments = (segments: AgentOutputSegment[]) => {
-        let combined = '';
-        for (let i = 0; i < segments.length; i++) {
-          const seg = segments[i];
-          if (i > 0) {
-            combined += `\r\n\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n`;
-            combined += `\x1b[2m↩ ${seg.job_description}\x1b[0m\r\n`;
-            combined += `\x1b[2m\x1b[36m${'─'.repeat(40)}\x1b[0m\r\n\r\n`;
+      // Disposables we need to clean up — populated by whichever path succeeds
+      const disposables: Array<() => void> = [];
+
+      term.write('\x1b[2mLoading output…\x1b[0m');
+
+      // Try rendered stream-json first (preferred — clean output)
+      fetch(`/api/agents/${agent.id}/rendered-output?tail=${TAIL}`)
+        .then(r => r.json())
+        .then((result: { text: string; truncated: boolean }) => {
+          // If rendered output is trivially small (e.g. just a "Done" result line),
+          // the real output is likely in the PTY log — fall through to PTY path.
+          if (!result.text || result.text.length < 100) throw new Error('no rendered output');
+
+          // Stream-json path
+          term.clear();
+          if (result.truncated) {
+            term.write(`\x1b[2m[showing last ${TAIL} lines — scroll to top to load more]\x1b[0m\r\n`);
           }
-          for (const line of seg.output) {
+          term.write(result.text);
+          setIsTruncated(result.truncated);
+
+          // Stream live stream-json output
+          let pendingOutput = '';
+          let rafId: number | null = null;
+          const flushPending = () => {
+            rafId = null;
+            if (pendingOutput) {
+              term.write(pendingOutput);
+              pendingOutput = '';
+            }
+          };
+          const outputHandler = ({ agent_id, line }: { agent_id: string; line: AgentOutput }) => {
+            if (agent_id !== agent.id) return;
             const rendered = renderAnyEvent(line.content);
-            if (rendered) combined += rendered;
-          }
-        }
-        if (combined) term.write(combined);
-      };
+            if (!rendered) return;
+            pendingOutput += rendered;
+            if (rafId === null) rafId = requestAnimationFrame(flushPending);
+          };
+          socket.on('agent:output', outputHandler);
+          disposables.push(() => {
+            socket.off('agent:output', outputHandler);
+            if (rafId !== null) cancelAnimationFrame(rafId);
+          });
+        })
+        .catch(() => {
+          // No stream-json output — fall back to PTY snapshot (sub-agents)
+          term.clear();
+          fetch(`/api/agents/${agent.id}/pty-history`)
+            .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+            .then((response: { mode?: string; snapshot?: string; chunks?: string[] }) => {
+              const hasData = (response.mode === 'snapshot' && response.snapshot) ||
+                              (response.chunks && response.chunks.length > 0);
+              if (!hasData) { term.write('\x1b[2mNo output available.\x1b[0m\r\n'); return; }
 
-      // Wire up load-full-history for this term instance — called by both the
-      // button and the scroll-near-top handler below.
+              term.options.convertEol = false;
+              if (response.mode === 'snapshot' && response.snapshot) {
+                term.write(response.snapshot.replace(/\n/g, '\r\n'));
+              } else {
+                const chunks = response.chunks ?? [];
+                const isCompleted = TERMINAL_STATUSES.includes(agent.status);
+                const STRIP_FOR_REPLAY_RE = /\x1b\[\?(?:1049|47|1047|1000|1002|1003|1006|1005|1004)[hl]|\x1b\[3J/g;
+                const combined = isCompleted
+                  ? chunks.map(c => c.replace(STRIP_FOR_REPLAY_RE, '')).join('')
+                  : chunks.join('');
+                term.write(combined);
+              }
+
+              if (TERMINAL_STATUSES.includes(agent.status)) {
+                term.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1005l');
+                term.write('\x1b[r');
+                term.scrollToTop();
+                term.write('\r\n\x1b[2m[session ended]\x1b[0m\r\n');
+              }
+
+              // Stream live PTY data
+              const ptyDataHandler = ({ agent_id, data }: { agent_id: string; data: string }) => {
+                if (agent_id !== agent.id) return;
+                term.write(data);
+              };
+              const ptyClosedHandler = ({ agent_id }: { agent_id: string }) => {
+                if (agent_id !== agent.id) return;
+                term.write('\r\n\x1b[2m[session ended]\x1b[0m\r\n');
+              };
+              socket.on('pty:data', ptyDataHandler);
+              socket.on('pty:closed', ptyClosedHandler);
+              disposables.push(() => {
+                socket.off('pty:data', ptyDataHandler);
+                socket.off('pty:closed', ptyClosedHandler);
+              });
+            })
+            .catch(() => {
+              term.write('\x1b[2mNo output available.\x1b[0m\r\n');
+            });
+        });
+
+      // Wire up load-full-history
       loadFullHistoryRef.current = () => {
         if (!isTruncatedRef.current) return;
         isTruncatedRef.current = false;
@@ -515,46 +594,9 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
           .catch(console.error);
       };
 
-      // Auto-load full history when the user scrolls near the top of the buffer
       const scrollDispose = term.onScroll((position) => {
         if (position < 50) loadFullHistoryRef.current();
       });
-
-      // Load historical output using pre-rendered endpoint (server does JSON
-      // parse + ANSI rendering so we just term.write the result — much faster)
-      term.write('\x1b[2mLoading output…\x1b[0m');
-      fetch(`/api/agents/${agent.id}/rendered-output?tail=${TAIL}`)
-        .then(r => r.json())
-        .then((result: { text: string; truncated: boolean }) => {
-          term.clear();
-          if (result.truncated) {
-            term.write(`\x1b[2m[showing last ${TAIL} lines — scroll to top to load more]\x1b[0m\r\n`);
-          }
-          if (result.text) term.write(result.text);
-          setIsTruncated(result.truncated);
-        })
-        .catch(console.error);
-
-      // Stream live output — batch writes on requestAnimationFrame to avoid
-      // starving the browser main thread when many events arrive under CPU load
-      let pendingOutput = '';
-      let rafId: number | null = null;
-      const flushPending = () => {
-        rafId = null;
-        if (pendingOutput) {
-          term.write(pendingOutput);
-          pendingOutput = '';
-        }
-      };
-      const outputHandler = ({ agent_id, line }: { agent_id: string; line: AgentOutput }) => {
-        if (agent_id !== agent.id) return;
-        const rendered = renderAnyEvent(line.content);
-        if (!rendered) return;
-        pendingOutput += rendered;
-        if (rafId === null) rafId = requestAnimationFrame(flushPending);
-      };
-
-      socket.on('agent:output', outputHandler);
 
       // Handle resize (debounced)
       let resizeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -567,8 +609,7 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
       if (containerRef.current) resizeObserver.observe(containerRef.current);
 
       return () => {
-        socket.off('agent:output', outputHandler);
-        if (rafId !== null) cancelAnimationFrame(rafId);
+        for (const d of disposables) d();
         scrollDispose.dispose();
         if (resizeTimer) clearTimeout(resizeTimer);
         resizeObserver.disconnect();
@@ -657,7 +698,14 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
       </div>
 
       <div className="job-request-section">
-        <div className="job-request-label">Request</div>
+        <div className="job-request-header">
+          <div className="job-request-label">Request</div>
+          {agent.job.model && (
+            <span className="agent-stat agent-stat-model" title={agent.job.model}>
+              {agent.job.model.replace('claude-', '')}
+            </span>
+          )}
+        </div>
         <div className="job-request-description">{agent.job.description}</div>
         {(agent.cost_usd != null || agent.duration_ms != null || agent.num_turns != null) && (
           <div className="agent-run-stats">

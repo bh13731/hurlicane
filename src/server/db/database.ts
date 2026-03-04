@@ -310,6 +310,9 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!jobCols.includes('archived_at')) {
     db.exec('ALTER TABLE jobs ADD COLUMN archived_at INTEGER');
   }
+  if (!jobCols.includes('created_by_agent_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN created_by_agent_id TEXT');
+  }
 
   _db = db;
   return db;

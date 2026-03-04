@@ -12,8 +12,6 @@ interface HeaderProps {
   onSettings: () => void;
   onDebate: () => void;
   onKnowledgeBase: () => void;
-  onEye: () => void;
-  onGit: () => void;
   onHome: () => void;
   currentProjectName?: string | null;
   onClearProject?: () => void;
@@ -48,7 +46,7 @@ function HurlicaLogo() {
   );
 }
 
-export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onKnowledgeBase, onEye, onGit, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate }: HeaderProps) {
+export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onKnowledgeBase, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate }: HeaderProps) {
   const hasCost = (todayClaudeCost != null && todayClaudeCost > 0) || (todayCodexCost != null && todayCodexCost > 0);
   return (
     <header className="header">
@@ -77,8 +75,8 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
             <span style={{ opacity: 0.6, marginLeft: 4 }}>today</span>
             {onToggleCostAutoUpdate && (
               <label style={{ marginLeft: 8, opacity: 0.6, cursor: 'pointer', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: 3 }} title="Auto-refresh cost display every 60s">
-                <input type="checkbox" checked={costAutoUpdate ?? true} onChange={onToggleCostAutoUpdate} style={{ margin: 0 }} />
-                auto
+                <input type="checkbox" checked={costAutoUpdate ?? false} onChange={onToggleCostAutoUpdate} style={{ margin: 0 }} />
+                auto update
               </label>
             )}
           </div>
@@ -105,8 +103,6 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
           <button className="header-btn" onClick={onBatchTemplates}>Batches</button>
           <button className="header-btn" onClick={onDebate}>Debate</button>
           <button className="header-btn" onClick={onKnowledgeBase}>Memory</button>
-          <button className="header-btn" onClick={onEye}>Eye</button>
-          <button className="header-btn" onClick={onGit}>Git</button>
         </div>
         <span className="header-divider" />
         <button className="btn-icon" onClick={onSettings} title="Settings" aria-label="Settings">

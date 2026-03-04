@@ -71,7 +71,7 @@ async function tick(): Promise<void> {
     const readyJob = queries.getJobById(job.id)!;
 
     const agentId = randomUUID();
-    queries.insertAgent({ id: agentId, job_id: job.id, status: 'starting' });
+    queries.insertAgent({ id: agentId, job_id: job.id, status: 'starting', parent_agent_id: (readyJob as any).created_by_agent_id ?? undefined });
     socket.emitAgentNew(queries.getAgentWithJob(agentId)!);
 
     // If worktree requested, create one and override the working directory

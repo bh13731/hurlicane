@@ -141,7 +141,7 @@ export function AgentCard({ agent, onClick, onSelectParent, onArchiveJob, onInte
           />
           ⌨
         </label>
-        {onArchiveJob && ['done', 'failed', 'cancelled'].includes(agent.status) && (
+        {onArchiveJob && ['done', 'failed', 'cancelled'].includes(agent.job?.status) && (
           <button
             className="archive-btn"
             onClick={e => { e.stopPropagation(); onArchiveJob(); }}

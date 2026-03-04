@@ -195,7 +195,7 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, onArchiveJob
           )}
           {onArchiveAll && (() => {
             const finishedJobs = agents
-              .filter(a => a.status === 'done' || a.status === 'failed' || a.status === 'cancelled')
+              .filter(a => a.job?.status === 'done' || a.job?.status === 'failed' || a.job?.status === 'cancelled')
               .map(a => a.job);
             return finishedJobs.length > 0 ? (
               <button

@@ -155,9 +155,6 @@ body {
   display: flex;
   gap: 6px;
   align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  min-width: 0;
 }
 
 .header-btn-group {
@@ -1089,13 +1086,19 @@ body {
   overflow-y: auto;
 }
 
+.job-request-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
 .job-request-label {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
   font-weight: 600;
-  margin-bottom: 6px;
 }
 
 .job-request-description {
@@ -1528,10 +1531,6 @@ body {
   outline: none;
   font-family: inherit;
   cursor: pointer;
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .form-label-hint {
@@ -1610,7 +1609,7 @@ body {
   gap: 12px;
 }
 
-.form-row .form-group { flex: 1; min-width: 0; }
+.form-row .form-group { flex: 1; }
 .form-group-sm { flex: 0 0 100px !important; }
 
 .form-error {
@@ -2718,6 +2717,7 @@ body {
   gap: 8px;
   justify-content: flex-end;
 }
+
 
 /* ─── Eye Dashboard ───────────────────────────────────────────────────────── */
 

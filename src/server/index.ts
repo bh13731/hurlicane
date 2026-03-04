@@ -96,10 +96,16 @@ async function main() {
     console.log(`[server] MCP server listening on :${MCP_PORT}`);
   });
   // Disable idle timeouts on the MCP server. Node.js defaults (keepAliveTimeout=5s,
-  // headersTimeout=60s) close SSE connections mid-flight on long-running tools
-  // like wait_for_jobs, silently dropping the result and leaving agents hung.
+  // headersTimeout=60s, requestTimeout=300s) close HTTP connections mid-flight on
+  // long-running tools like wait_for_jobs, leaving agents hung.
   mcpServer.keepAliveTimeout = 0;
   mcpServer.headersTimeout = 0;
+  mcpServer.requestTimeout = 0;
+  // Enable TCP keepalive probes so the OS doesn't silently drop idle connections
+  // during long wait_for_jobs polls (no bytes flow while the server-side loop runs).
+  mcpServer.on('connection', (socket) => {
+    socket.setKeepAlive(true, 30_000);
+  });
 
   // 6. Start work queue + stuck-job watchdog
   startWorkQueue();

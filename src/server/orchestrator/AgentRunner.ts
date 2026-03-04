@@ -559,6 +559,43 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
     finished_at: Date.now(),
   });
 
+  // Auto-resume: if the agent marked itself done but sub-jobs it spawned are
+  // still running, it finished prematurely — re-spawn with --resume.
+  if (status === 'done') {
+    const waitedIds = findLastWaitForJobsIds(agentId);
+    if (waitedIds && waitedIds.length > 0) {
+      const TERMINAL_S = ['done', 'failed', 'cancelled'];
+      const waitedJobs = waitedIds.map(id => queries.getJobById(id));
+      const stillPending = waitedJobs.filter(j => j && !TERMINAL_S.includes(j.status));
+      if (stillPending.length > 0) {
+        console.log(`[agent ${agentId}] marked done but ${stillPending.length} sub-jobs still pending: [${stillPending.map(j => j!.id).join(', ')}] — auto-resuming`);
+        const agentRec2 = queries.getAgentById(agentId);
+        const sessionId = agentRec2?.session_id ?? null;
+
+        queries.updateAgent(agentId, {
+          status: 'failed',
+          exit_code: exitCode ?? -1,
+          error_message: 'Agent finished prematurely while sub-jobs still pending; watchdog auto-resumed.',
+          finished_at: Date.now(),
+        });
+        queries.releaseLocksForAgent(agentId);
+        getFileLockRegistry().releaseAll(agentId);
+
+        const newAgentId = randomUUID();
+        queries.insertAgent({ id: newAgentId, job_id: job.id, status: 'starting' });
+        queries.updateJobStatus(job.id, 'assigned');
+
+        const newAgentWithJob = queries.getAgentWithJob(newAgentId);
+        if (newAgentWithJob) socket.emitAgentNew(newAgentWithJob);
+        const updatedJob2 = queries.getJobById(job.id);
+        if (updatedJob2) socket.emitJobUpdate(updatedJob2);
+
+        runAgent({ agentId: newAgentId, job, resumeSessionId: sessionId ?? undefined });
+        return;
+      }
+    }
+  }
+
   // Auto-resume: if the agent died while stuck in wait_for_jobs and all the
   // awaited jobs are now done, re-spawn with --resume rather than failing.
   if (status === 'failed') {
@@ -718,7 +755,9 @@ export const MEMORY_BUDGET = 2000;
 
 export function buildMemorySection(job: Job): string {
   const projectId: string | null = (job as any).project_id ?? null;
-  const memories = queries.getMemoryForJob(projectId, job.title, job.description);
+  const workDir: string | null = (job as any).work_dir ?? null;
+  const effectiveProjectId: string | null = projectId ?? workDir ?? null;
+  const memories = queries.getMemoryForJob(effectiveProjectId, job.title, job.description);
   if (memories.length === 0) return '';
 
   let section = '\n\n## Memory\nRelevant learnings from previous tasks:\n';

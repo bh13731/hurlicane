@@ -73,6 +73,7 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     retry_count: retryCount,
     original_job_id: originalJobId,
     completion_checks: completionChecks,
+    created_by_agent_id: agentId,
   });
 
   socket.emitJobNew(job);

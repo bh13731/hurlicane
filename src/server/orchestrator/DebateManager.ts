@@ -601,9 +601,13 @@ function buildVerificationReviewPrompt(
   prompt += `## Implementation by ${implementerLabel}\n`;
   prompt += implementationResult ?? '(No implementation output available)';
   prompt += `\n\n`;
+  if (debate.post_action_prompt) {
+    prompt += `## Implementation Instructions\n`;
+    prompt += `The implementer was given the following instructions (including any test/verification steps):\n\n${debate.post_action_prompt}\n\n`;
+  }
   prompt += `## Your Review\n`;
-  prompt += `Please review the implementation above. Examine the actual code/files in the working directory. Evaluate:\n`;
-  prompt += `1. **Correctness** — does the implementation address the task properly?\n`;
+  prompt += `Please review the implementation above. Examine the actual code/files in the working directory. Run any relevant tests or checks specified in the implementation instructions above. Evaluate:\n`;
+  prompt += `1. **Correctness** — does the implementation address the task properly? Run the tests to confirm.\n`;
   prompt += `2. **Completeness** — is anything missing or incomplete?\n`;
   prompt += `3. **Quality** — any improvements you would suggest?\n\n`;
   prompt += `Be specific and actionable. List any concrete issues found.\n\n`;
