@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import socket from '../socket';
 
 interface Worktree {
   id: string;
+  repo_id: string;
   agent_id: string;
   job_id: string;
   path: string;
@@ -13,6 +15,7 @@ interface Worktree {
 interface Repo {
   id: string;
   name: string;
+  url: string;
   path: string;
   created_at: number;
 }
@@ -33,10 +36,15 @@ export function GitModal({ onClose }: GitModalProps) {
 
   // Repos state
   const [repos, setRepos] = useState<Repo[]>([]);
-  const [newRepoPath, setNewRepoPath] = useState('');
+  const [newRepoUrl, setNewRepoUrl] = useState('');
   const [addingRepo, setAddingRepo] = useState(false);
   const [deletingRepoId, setDeletingRepoId] = useState<string | null>(null);
   const [repoError, setRepoError] = useState<string | null>(null);
+
+  // Clone progress
+  const [clonePhase, setClonePhase] = useState('');
+  const [clonePercent, setClonePercent] = useState<number | null>(null);
+  const cloneRepoIdRef = useRef<string | null>(null);
 
   const fetchRepos = () => {
     fetch('/api/repos')
@@ -59,6 +67,15 @@ export function GitModal({ onClose }: GitModalProps) {
   useEffect(() => {
     fetchRepos();
     fetchWorktrees();
+
+    const handleProgress = (payload: { repo_id: string; phase: string; percent: number | null }) => {
+      if (cloneRepoIdRef.current && payload.repo_id === cloneRepoIdRef.current) {
+        setClonePhase(payload.phase);
+        setClonePercent(payload.percent);
+      }
+    };
+    socket.on('repo:clone-progress', handleProgress);
+    return () => { socket.off('repo:clone-progress', handleProgress); };
   }, []);
 
   const handleCleanup = async () => {
@@ -72,15 +89,14 @@ export function GitModal({ onClose }: GitModalProps) {
   };
 
   const handleCreate = async () => {
-    if (!newBranch.trim()) return;
+    if (!newBranch.trim() || !newRepoId) return;
     setCreating(true);
     setError(null);
     try {
-      const selectedRepo = repos.find(r => r.id === newRepoId);
       const res = await fetch('/api/worktrees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ branch: newBranch.trim(), repoDir: selectedRepo?.path || undefined }),
+        body: JSON.stringify({ branch: newBranch.trim(), repoId: newRepoId }),
       });
       if (res.ok) {
         setNewBranch('');
@@ -115,17 +131,38 @@ export function GitModal({ onClose }: GitModalProps) {
   };
 
   const handleAddRepo = async () => {
-    if (!newRepoPath.trim()) return;
+    if (!newRepoUrl.trim()) return;
     setAddingRepo(true);
     setRepoError(null);
+    setClonePhase('Starting clone...');
+    setClonePercent(null);
+
+    // Generate a predictable ID so we can match socket events.
+    // The server generates the real ID, but we listen for any clone progress.
+    // We'll track whatever clone is in flight.
+    cloneRepoIdRef.current = null;
+
     try {
+      // We need to know the repo ID before the response arrives so we can
+      // match socket events. Listen for ANY clone-progress event while we're
+      // the one cloning (only one clone at a time from this modal).
+      const catchAll = (payload: { repo_id: string; phase: string; percent: number | null }) => {
+        cloneRepoIdRef.current = payload.repo_id;
+        setClonePhase(payload.phase);
+        setClonePercent(payload.percent);
+      };
+      socket.on('repo:clone-progress', catchAll);
+
       const res = await fetch('/api/repos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: newRepoPath.trim() }),
+        body: JSON.stringify({ url: newRepoUrl.trim() }),
       });
+
+      socket.off('repo:clone-progress', catchAll);
+
       if (res.ok) {
-        setNewRepoPath('');
+        setNewRepoUrl('');
         fetchRepos();
       } else {
         const data = await res.json();
@@ -135,6 +172,9 @@ export function GitModal({ onClose }: GitModalProps) {
       setRepoError('Failed to add repo');
     } finally {
       setAddingRepo(false);
+      cloneRepoIdRef.current = null;
+      setClonePhase('');
+      setClonePercent(null);
     }
   };
 
@@ -182,7 +222,7 @@ export function GitModal({ onClose }: GitModalProps) {
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <span style={{ fontWeight: 500 }}>{repo.name}</span>
                       <span style={{ color: 'var(--text-secondary)', marginLeft: 8, fontSize: 12 }}>
-                        {repo.path}
+                        {repo.url}
                       </span>
                     </div>
                     <button
@@ -201,20 +241,52 @@ export function GitModal({ onClose }: GitModalProps) {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <input
                 type="text"
-                placeholder="Path (e.g. /home/user/myrepo)"
-                value={newRepoPath}
-                onChange={e => setNewRepoPath(e.target.value)}
+                placeholder="Clone URL (e.g. git@github.com:owner/repo.git)"
+                value={newRepoUrl}
+                onChange={e => setNewRepoUrl(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleAddRepo()}
                 style={{ flex: 2, minWidth: 160 }}
+                disabled={addingRepo}
               />
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={handleAddRepo}
-                disabled={addingRepo || !newRepoPath.trim()}
+                disabled={addingRepo || !newRepoUrl.trim()}
               >
-                {addingRepo ? 'Adding...' : 'Add'}
+                {addingRepo ? 'Cloning...' : 'Add'}
               </button>
             </div>
+
+            {addingRepo && (
+              <div style={{ marginTop: 6 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 3 }}>
+                  {clonePhase || 'Connecting...'}
+                  {clonePercent != null && ` ${clonePercent}%`}
+                </div>
+                <div style={{
+                  height: 4,
+                  borderRadius: 2,
+                  background: 'var(--border)',
+                  overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%',
+                    borderRadius: 2,
+                    background: 'var(--accent, #4f8ff7)',
+                    width: clonePercent != null ? `${clonePercent}%` : '100%',
+                    transition: clonePercent != null ? 'width 0.3s ease' : 'none',
+                    animation: clonePercent == null ? 'clone-indeterminate 1.5s ease-in-out infinite' : 'none',
+                  }} />
+                </div>
+                <style>{`
+                  @keyframes clone-indeterminate {
+                    0% { width: 0%; margin-left: 0%; }
+                    50% { width: 40%; margin-left: 30%; }
+                    100% { width: 0%; margin-left: 100%; }
+                  }
+                `}</style>
+              </div>
+            )}
 
             {repoError && (
               <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>{repoError}</div>
@@ -282,7 +354,7 @@ export function GitModal({ onClose }: GitModalProps) {
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={handleCreate}
-                disabled={creating || !newBranch.trim()}
+                disabled={creating || !newBranch.trim() || !newRepoId}
               >
                 {creating ? 'Creating...' : 'Create'}
               </button>

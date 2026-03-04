@@ -228,30 +228,18 @@ export function initDb(dbPath: string): DatabaseSync {
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_agent_warnings_agent ON agent_warnings(agent_id, dismissed)');
 
-  // ── Repos ──────────────────────────────────────────────────────────────────
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS repos (
-      id         TEXT PRIMARY KEY,
-      name       TEXT NOT NULL,
-      path       TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    )
-  `);
+  // ── Repos — additive migrations ────────────────────────────────────────────
+  const repoCols: string[] = (db.prepare('PRAGMA table_info(repos)').all() as any[]).map((r: any) => r.name);
+  if (!repoCols.includes('url')) {
+    db.exec("ALTER TABLE repos ADD COLUMN url TEXT NOT NULL DEFAULT ''");
+  }
 
-  // ── Feature 4: Worktree Cleanup ───────────────────────────────────────────
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS worktrees (
-      id         TEXT PRIMARY KEY,
-      agent_id   TEXT NOT NULL,
-      job_id     TEXT NOT NULL,
-      path       TEXT NOT NULL,
-      branch     TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      cleaned_at INTEGER
-    )
-  `);
-  db.exec('CREATE INDEX IF NOT EXISTS idx_worktrees_job ON worktrees(job_id)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_worktrees_branch ON worktrees(branch, cleaned_at)');
+  // ── Worktrees — additive migrations ───────────────────────────────────────
+  const wtCols: string[] = (db.prepare('PRAGMA table_info(worktrees)').all() as any[]).map((r: any) => r.name);
+  if (!wtCols.includes('repo_id')) {
+    db.exec("ALTER TABLE worktrees ADD COLUMN repo_id TEXT NOT NULL DEFAULT ''");
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_worktrees_repo ON worktrees(repo_id)');
 
   // ── Feature 1: Mid-Task Nudge ─────────────────────────────────────────────
   db.exec(`

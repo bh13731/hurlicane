@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents, startTailing, stopTailing, readClaudeMd, buildMemorySection } from './AgentRunner.js';
+import { getSystemPrompt, HOOK_SETTINGS, handleJobCompletion, cancelledAgents, startTailing, stopTailing, readClaudeMd, buildMemorySection } from './AgentRunner.js';
 import type { Job } from '../../shared/types.js';
 import { isCodexModel, codexModelName } from '../../shared/types.js';
 
@@ -186,9 +186,9 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
       // and (b) the clean stream-json lands in a .ndjson file the UI can display properly.
       // Can't use `exec` with a pipe — the shell stays alive until claude + tee both finish.
       const ndjsonPath = path.join(PTY_LOG_DIR, `${agentId}.ndjson`);
-      execLine = `${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''} --print --output-format stream-json --verbose${resumeFlag} "$(cat ${JSON.stringify(pFile)})" | tee ${JSON.stringify(ndjsonPath)}`;
+      execLine = `${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(getSystemPrompt())}${model ? ` --model ${JSON.stringify(model)}` : ''} --print --output-format stream-json --verbose${resumeFlag} "$(cat ${JSON.stringify(pFile)})" | tee ${JSON.stringify(ndjsonPath)}`;
     } else {
-      execLine = `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(SYSTEM_PROMPT)}${model ? ` --model ${JSON.stringify(model)}` : ''}${resumeFlag} "$(cat ${JSON.stringify(pFile)})"`;
+      execLine = `exec ${JSON.stringify(CLAUDE)} --dangerously-skip-permissions --settings ${JSON.stringify(HOOK_SETTINGS)} --mcp-config ${JSON.stringify(mcpConfig)} --append-system-prompt ${JSON.stringify(getSystemPrompt())}${model ? ` --model ${JSON.stringify(model)}` : ''}${resumeFlag} "$(cat ${JSON.stringify(pFile)})"`;
     }
   }
 
@@ -511,7 +511,7 @@ function buildInteractivePrompt(job: Job): string {
 
   // Codex has no --append-system-prompt flag, so prepend it to the prompt
   if (isCodexModel(model)) {
-    prompt += SYSTEM_PROMPT + '\n\n---\n\n';
+    prompt += getSystemPrompt() + '\n\n---\n\n';
   }
 
   prompt += `# Task: ${job.title}\n\n`;

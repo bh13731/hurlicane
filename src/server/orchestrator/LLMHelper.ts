@@ -11,9 +11,6 @@ export function callClaude(prompt: string, opts?: { model?: string; maxTokens?: 
 
   return new Promise((resolve, reject) => {
     const args = ['--print', '--model', model, '--no-session-persistence'];
-    if (opts?.maxTokens) {
-      args.push('--max-tokens', String(opts.maxTokens));
-    }
 
     const proc = spawn('claude', args, { timeout, stdio: ['pipe', 'pipe', 'pipe'] });
     const chunks: Buffer[] = [];

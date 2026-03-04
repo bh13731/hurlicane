@@ -45,17 +45,12 @@ export function WorktreesSidebar({ selectedWorktreeId, onSelectWorktree }: Workt
     });
   };
 
-  // Group worktrees by repo: worktree path is <repoDir>/../.orchestrator-worktrees/<id>
-  // So resolve(wt.path, '..', '..') gives the repo dir
+  // Group worktrees by repo_id
   const grouped = new Map<string, { repo: Repo; worktrees: Worktree[] }>();
   const ungrouped: Worktree[] = [];
 
   for (const wt of worktrees) {
-    // Extract repo dir: /path/to/repo/../.orchestrator-worktrees/abc -> /path/to/repo (2 levels up)
-    const parts = wt.path.split('/');
-    // Remove last 2 segments (.orchestrator-worktrees/<id>)
-    const repoDir = parts.slice(0, -2).join('/');
-    const repo = repos.find(r => r.path === repoDir);
+    const repo = repos.find(r => r.id === wt.repo_id);
     if (repo) {
       if (!grouped.has(repo.id)) grouped.set(repo.id, { repo, worktrees: [] });
       grouped.get(repo.id)!.worktrees.push(wt);

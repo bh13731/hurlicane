@@ -173,6 +173,7 @@ export interface ServerToClientEvents {
   'debate:new': (payload: { debate: Debate }) => void;
   'debate:update': (payload: { debate: Debate }) => void;
   'warning:new': (payload: { warning: AgentWarning }) => void;
+  'repo:clone-progress': (payload: { repo_id: string; phase: string; percent: number | null }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -415,6 +416,7 @@ export interface AgentWarning {
 export interface Repo {
   id: string;
   name: string;
+  url: string;
   path: string;
   created_at: number;
 }
@@ -423,6 +425,7 @@ export interface Repo {
 
 export interface Worktree {
   id: string;
+  repo_id: string;
   agent_id: string;
   job_id: string;
   path: string;

@@ -84,3 +84,7 @@ export function emitDebateUpdate(debate: Debate): void {
 export function emitWarningNew(warning: AgentWarning): void {
   getIo().emit('warning:new', { warning });
 }
+
+export function emitRepoCloneProgress(repoId: string, phase: string, percent: number | null): void {
+  getIo().emit('repo:clone-progress', { repo_id: repoId, phase, percent });
+}

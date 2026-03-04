@@ -32,10 +32,10 @@ export async function resolveWorktree(
   }
 
   // 3. Create a new worktree (trackExisting=true to check out the remote branch)
-  const wt = await client.createWorktree(branch, repo.path, true);
+  const wt = await client.createWorktree(branch, repo.id, true);
   if (!wt) {
-    console.log(`[eye] worktree creation failed for ${branch}, falling back to repo path`);
-    return { workDir: repo.path, branch, isNew: false };
+    console.log(`[eye] worktree creation failed for ${branch}`);
+    return null;
   }
 
   return { workDir: wt.path, branch: wt.branch, isNew: true };

@@ -28,7 +28,7 @@ export const HOOK_SETTINGS = JSON.stringify({
   }
 });
 
-export const SYSTEM_PROMPT = `You are a Claude Code agent in a multi-agent orchestration system.
+export const BASE_SYSTEM_PROMPT = `You are a Claude Code agent in a multi-agent orchestration system.
 Use these MCP tools from the 'orchestrator' server:
 
 FILE LOCKING (required before any edits):
@@ -89,6 +89,14 @@ ORCHESTRATION PATTERN (for decomposing large tasks):
 COMPLETION (automated jobs only):
   - finish_job(result?): Signal task completion and close this session. Only call this when your
     task prompt explicitly tells you to. Do NOT call this in interactive sessions.`;
+
+export function getSystemPrompt(): string {
+  const appendix = queries.getNote('setting:systemPromptAppendix')?.value ?? '';
+  if (appendix.trim()) {
+    return BASE_SYSTEM_PROMPT + '\n\n' + appendix;
+  }
+  return BASE_SYSTEM_PROMPT;
+}
 
 export interface RunOptions {
   agentId: string;
@@ -166,7 +174,7 @@ export function runAgent(options: RunOptions): void {
       '--dangerously-skip-permissions',
       '--settings', HOOK_SETTINGS,
       '--mcp-config', mcpConfig,
-      '--append-system-prompt', SYSTEM_PROMPT,
+      '--append-system-prompt', getSystemPrompt(),
       '--max-turns', String(maxTurns),
       ...(model ? ['--model', model] : []),
       ...(options.resumeSessionId ? ['--resume', options.resumeSessionId] : []),
@@ -658,7 +666,7 @@ function buildPrompt(job: Job): string {
 
   // Codex has no --append-system-prompt flag, so prepend it to the prompt
   if (isCodexModel(model)) {
-    prompt += SYSTEM_PROMPT + '\n\n---\n\n';
+    prompt += getSystemPrompt() + '\n\n---\n\n';
   }
 
   prompt += `# Task: ${job.title}\n\n`;

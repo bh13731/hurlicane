@@ -77,3 +77,25 @@ CREATE INDEX IF NOT EXISTS idx_agents_status   ON agents(status);
 CREATE INDEX IF NOT EXISTS idx_output_agent    ON agent_output(agent_id, seq);
 CREATE INDEX IF NOT EXISTS idx_questions_agent ON questions(agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_locks_active    ON file_locks(file_path, released_at);
+
+CREATE TABLE IF NOT EXISTS repos (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  url        TEXT NOT NULL DEFAULT '',
+  path       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS worktrees (
+  id         TEXT PRIMARY KEY,
+  repo_id    TEXT NOT NULL DEFAULT '',
+  agent_id   TEXT NOT NULL,
+  job_id     TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  branch     TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  cleaned_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_worktrees_job    ON worktrees(job_id);
+CREATE INDEX IF NOT EXISTS idx_worktrees_branch ON worktrees(branch, cleaned_at);

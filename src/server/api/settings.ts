@@ -7,6 +7,7 @@ const router = Router();
 router.get('/', (_req, res) => {
   res.json({
     maxConcurrentAgents: getMaxConcurrent(),
+    systemPromptAppendix: queries.getNote('setting:systemPromptAppendix')?.value ?? '',
   });
 });
 
@@ -21,8 +22,13 @@ router.put('/', (req, res) => {
     setMaxConcurrent(n);
     queries.upsertNote('setting:maxConcurrentAgents', String(n), null);
   }
+  const { systemPromptAppendix } = req.body;
+  if (typeof systemPromptAppendix === 'string') {
+    queries.upsertNote('setting:systemPromptAppendix', systemPromptAppendix, null);
+  }
   res.json({
     maxConcurrentAgents: getMaxConcurrent(),
+    systemPromptAppendix: queries.getNote('setting:systemPromptAppendix')?.value ?? '',
   });
 });
 

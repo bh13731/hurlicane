@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as queries from '../db/queries.js';
 
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;  // 5 minutes
+const WORKTREES_DIR = path.resolve('data', 'worktrees');
 let _timer: NodeJS.Timeout | null = null;
 
 export function startWorktreeCleanup(): void {
@@ -20,51 +21,61 @@ export function stopWorktreeCleanup(): void {
 }
 
 function tick(): void {
+  // Auto-clean worktrees whose branch PR has been merged or closed
   const active = queries.listActiveWorktrees();
   let cleaned = 0;
 
   for (const wt of active) {
-    const job = queries.getJobById(wt.job_id);
-    if (!job) continue;
-    // Only clean up worktrees whose jobs are terminal
-    if (job.status !== 'done' && job.status !== 'failed' && job.status !== 'cancelled') continue;
+    const repo = queries.getRepoById(wt.repo_id);
+    if (!repo) continue;
 
     try {
-      removeWorktree(wt.path, wt.branch);
-      queries.markWorktreeCleaned(wt.id);
-      cleaned++;
-    } catch (err) {
-      console.warn(`[worktree-cleanup] failed to clean ${wt.path}:`, err);
+      // Check if a PR exists for this branch and its state
+      const state = execSync(
+        `gh pr view ${JSON.stringify(wt.branch)} --json state --jq .state`,
+        { cwd: wt.path, timeout: 15_000, stdio: 'pipe' },
+      ).toString().trim();
+
+      if (state === 'MERGED' || state === 'CLOSED') {
+        console.log(`[worktree-cleanup] branch ${wt.branch} PR is ${state}, cleaning up`);
+        removeWorktree(wt.path, wt.branch, repo.path);
+        queries.markWorktreeCleaned(wt.id);
+        cleaned++;
+      }
+    } catch {
+      // No PR for this branch or gh failed — leave it alone
     }
   }
 
-  // Also clean orphaned worktrees not tracked in DB
-  cleanupOrphanedWorktrees();
-
   if (cleaned > 0) {
-    console.log(`[worktree-cleanup] cleaned ${cleaned} worktrees`);
+    console.log(`[worktree-cleanup] auto-cleaned ${cleaned} merged/closed worktrees`);
   }
+
+  cleanupOrphanedWorktrees();
 }
 
-function removeWorktree(wtPath: string, branch: string): void {
-  const repoDir = process.cwd();
-
+function removeWorktree(wtPath: string, branch: string, repoDir: string | null): void {
   // Remove the worktree
   if (fs.existsSync(wtPath)) {
-    try {
-      execSync(`git worktree remove --force ${JSON.stringify(wtPath)}`, {
-        cwd: repoDir,
-        timeout: 30000,
-      });
-    } catch {
-      // If git worktree remove fails, try manual cleanup
+    if (repoDir) {
+      try {
+        execSync(`git worktree remove --force ${JSON.stringify(wtPath)}`, {
+          cwd: repoDir,
+          timeout: 30000,
+        });
+      } catch {
+        // If git worktree remove fails, try manual cleanup
+        try { fs.rmSync(wtPath, { recursive: true, force: true }); } catch { /* ignore */ }
+        try { execSync('git worktree prune', { cwd: repoDir, timeout: 10000 }); } catch { /* ignore */ }
+      }
+    } else {
+      // No repo reference — just remove the directory
       try { fs.rmSync(wtPath, { recursive: true, force: true }); } catch { /* ignore */ }
-      try { execSync('git worktree prune', { cwd: repoDir, timeout: 10000 }); } catch { /* ignore */ }
     }
   }
 
   // Delete the branch
-  if (branch) {
+  if (branch && repoDir) {
     try {
       execSync(`git branch -D ${JSON.stringify(branch)}`, {
         cwd: repoDir,
@@ -75,39 +86,32 @@ function removeWorktree(wtPath: string, branch: string): void {
 }
 
 function cleanupOrphanedWorktrees(): void {
-  const repoDir = process.cwd();
-  const worktreeBase = path.resolve(repoDir, '..', '.orchestrator-worktrees');
-
-  if (!fs.existsSync(worktreeBase)) return;
+  if (!fs.existsSync(WORKTREES_DIR)) return;
 
   const tracked = new Set(queries.listActiveWorktrees().map(w => w.path));
   let cleaned = 0;
 
   try {
-    const entries = fs.readdirSync(worktreeBase);
+    const entries = fs.readdirSync(WORKTREES_DIR);
     for (const entry of entries) {
-      const fullPath = path.join(worktreeBase, entry);
+      const fullPath = path.join(WORKTREES_DIR, entry);
       if (!fs.statSync(fullPath).isDirectory()) continue;
       if (tracked.has(fullPath)) continue;
 
       // Orphaned directory — remove it
       try {
-        execSync(`git worktree remove --force ${JSON.stringify(fullPath)}`, {
-          cwd: repoDir,
-          timeout: 30000,
-        });
+        fs.rmSync(fullPath, { recursive: true, force: true });
         cleaned++;
-      } catch {
-        try {
-          fs.rmSync(fullPath, { recursive: true, force: true });
-          cleaned++;
-        } catch { /* ignore */ }
-      }
+      } catch { /* ignore */ }
     }
   } catch { /* directory listing may fail */ }
 
+  // Prune worktree references in all registered repos
   if (cleaned > 0) {
-    try { execSync('git worktree prune', { cwd: repoDir, timeout: 10000 }); } catch { /* ignore */ }
+    const repos = queries.listRepos();
+    for (const repo of repos) {
+      try { execSync('git worktree prune', { cwd: repo.path, timeout: 10000 }); } catch { /* ignore */ }
+    }
     console.log(`[worktree-cleanup] cleaned ${cleaned} orphaned worktrees`);
   }
 }
@@ -123,7 +127,8 @@ export function runCleanupNow(): number {
     if (job.status !== 'done' && job.status !== 'failed' && job.status !== 'cancelled') continue;
 
     try {
-      removeWorktree(wt.path, wt.branch);
+      const repo = queries.getRepoById(wt.repo_id);
+      removeWorktree(wt.path, wt.branch, repo?.path ?? null);
       queries.markWorktreeCleaned(wt.id);
       cleaned++;
     } catch { /* skip */ }

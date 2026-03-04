@@ -146,7 +146,7 @@ router.post('/:id/run', (req, res) => {
         model: body.model ?? null,
         template_id: body.templateId ?? null,
         is_interactive: body.interactive ? 1 : 0,
-        use_worktree: body.useWorktree ? 1 : 0,
+        use_worktree: 1,
         work_dir: body.workDir ?? null,
         max_turns: body.maxTurns ?? 50,
         project_id: project.id,

@@ -11,7 +11,7 @@ export const createJobSchema = z.object({
   max_turns: z.number().optional().describe('Max agent turns (default: 50)'),
   model: z.string().optional().describe('Model override, e.g. "claude-opus-4-6" (default: auto-classify)'),
   depends_on: z.array(z.string()).optional().describe('Job IDs that must complete before this job runs'),
-  use_worktree: z.boolean().optional().describe('Create a git worktree so the agent works in an isolated checkout'),
+  use_worktree: z.boolean().optional().describe('Create a git worktree so the agent works in an isolated checkout (always true)'),
   repeat_interval_ms: z.number().optional().describe('Re-queue the job automatically after it completes; value is the delay in ms before the next run'),
 });
 
@@ -65,7 +65,7 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     model: model ?? inheritedModel,
     template_id: null,
     depends_on: depends_on?.length ? JSON.stringify(depends_on) : null,
-    use_worktree: use_worktree ? 1 : 0,
+    use_worktree: 1,
     project_id: inheritedProjectId,
     repeat_interval_ms: repeat_interval_ms ?? null,
     retry_policy: retryPolicy,

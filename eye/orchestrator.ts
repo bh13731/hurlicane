@@ -11,7 +11,7 @@ export interface OrchestratorClient {
   createDebate(req: CreateDebateRequest): Promise<CreateDebateResponse | null>;
   getRepoByName(name: string): Promise<Repo | null>;
   getWorktreeByBranch(branch: string): Promise<Worktree | null>;
-  createWorktree(branch: string, repoDir: string, trackExisting?: boolean): Promise<Worktree | null>;
+  createWorktree(branch: string, repoId: string, trackExisting?: boolean): Promise<Worktree | null>;
   cleanupBranch(branch: string): Promise<{ found: boolean; cancelledJobs: number } | null>;
   getPrompts(): Promise<EyePrompts>;
 }
@@ -119,12 +119,12 @@ export function createOrchestratorClient(baseUrl: string): OrchestratorClient {
       }
     },
 
-    async createWorktree(branch: string, repoDir: string, trackExisting = true): Promise<Worktree | null> {
+    async createWorktree(branch: string, repoId: string, trackExisting = true): Promise<Worktree | null> {
       try {
         const res = await fetch(`${baseUrl}/api/worktrees`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ branch, repoDir, trackExisting }),
+          body: JSON.stringify({ branch, repoId, trackExisting }),
         });
         if (!res.ok) {
           console.error(`[eye] orchestrator POST /api/worktrees failed: ${res.status} ${await res.text()}`);

@@ -41,6 +41,10 @@ router.post('/', async (req, res) => {
     res.status(400).json({ error: 'description is required (or select a template)' });
     return;
   }
+  if (!body.useWorktree || !body.workDir) {
+    res.status(400).json({ error: 'A repo and worktree are required for all jobs' });
+    return;
+  }
 
   const explicitTitle = body.title?.trim();
   let titleSource = body.description;

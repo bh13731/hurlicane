@@ -265,11 +265,9 @@ export function EyeModal({ onClose }: EyeModalProps) {
 
   // ─── Derived ────────────────────────────────────────────────────────────
 
-  const [showAll, setShowAll] = useState(false);
-
   const isRunning = eyeConnected === true;
   const allEvents = eyeStatus?.recent_events ? [...eyeStatus.recent_events].reverse() : [];
-  const events = showAll ? allEvents : allEvents.filter(ev => ev.decision === 'ran' || ev.decision === 'debated' || ev.decision === 'skipped');
+  const events = allEvents;
   const canLaunch = !!webhookSecret && !!author;
 
   return (
@@ -360,13 +358,9 @@ export function EyeModal({ onClose }: EyeModalProps) {
             <div className="eye-events-section">
               <div className="eye-events-header">
                 <span>
-                  {showAll ? 'All Events' : 'Matched Events'}
+                  Events
                   <span className="eye-events-count">{events.length}</span>
                 </span>
-                <label style={{ fontSize: 12, fontWeight: 400, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: 'var(--text-secondary)' }}>
-                  <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />
-                  Show all
-                </label>
               </div>
               <div className="eye-events-list">
                 {events.length === 0 && (
@@ -402,11 +396,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
                       {ev.decision === 'ignored' && (
                         <>
                           <span className="eye-event-decision eye-event-decision--ignored">ignored</span>
-                          {' '}{ev.detail
-                            ? ev.detail
-                            : <><span className="eye-event-action">{ev.event_type}</span>
-                              {ev.action && <span className="eye-event-action"> / {ev.action}</span>}</>
-                          }
+                          {' '}{ev.detail}
                           {ev.repo && <span className="eye-event-repo"> on {ev.repo}</span>}
                         </>
                       )}

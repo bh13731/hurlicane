@@ -51,6 +51,13 @@ router.get('/:id', (req, res) => {
   res.json(agent);
 });
 
+// Lightweight endpoint for the branch-enforcement hook
+router.get('/:id/branch', (req, res) => {
+  const wt = queries.getWorktreeByAgentId(req.params.id);
+  if (!wt) { res.json({ branch: null }); return; }
+  res.json({ branch: wt.branch });
+});
+
 router.get('/:id/output', (req, res) => {
   const agent = queries.getAgentById(req.params.id);
   if (!agent) { res.status(404).json({ error: 'not found' }); return; }

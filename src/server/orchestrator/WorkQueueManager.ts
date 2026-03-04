@@ -107,6 +107,11 @@ async function tick(): Promise<void> {
 function createWorktree(job: Job, agentId: string): Job {
   const repoDir = (job as any).work_dir;
   if (!repoDir) throw new Error('work_dir is required for worktree creation');
+
+  // Look up the repo record so we know the bare repo path and id
+  const repo = queries.getRepoByPath(repoDir);
+  if (!repo) throw new Error(`No registered repo found for path: ${repoDir}`);
+
   const shortId = agentId.slice(0, 8);
 
   // Slugify job title for the branch name
@@ -117,19 +122,29 @@ function createWorktree(job: Job, agentId: string): Job {
     .slice(0, 40);
   const branchName = `orchestrator/${slug}-${shortId}`;
 
-  // Place worktrees in a sibling directory to keep the source repo clean
-  const worktreeDir = path.resolve(repoDir, '..', '.orchestrator-worktrees', shortId);
+  const worktreeDir = path.resolve('data', 'worktrees', shortId);
+
+  // Pull latest main so the worktree branches from the newest commit
+  try { execSync('git pull origin main', { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+
+  // If main has no commits yet (empty repo), create an initial empty commit
+  try {
+    execSync('git rev-parse main', { cwd: repo.path, timeout: 5_000, stdio: 'pipe' });
+  } catch {
+    execSync('git commit --allow-empty -m "Initial commit"', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' });
+  }
 
   console.log(`[queue] creating worktree: ${worktreeDir} (branch: ${branchName}, base: main)`);
   execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branchName)} main`, {
-    cwd: repoDir,
-    timeout: 30000,
+    cwd: repo.path,
+    timeout: 30_000,
   });
 
   // Record worktree in DB for cleanup tracking
   try {
     queries.insertWorktree({
       id: randomUUID(),
+      repo_id: repo.id,
       agent_id: agentId,
       job_id: job.id,
       path: worktreeDir,

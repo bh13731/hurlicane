@@ -6,6 +6,7 @@ interface SettingsModalProps {
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [maxConcurrent, setMaxConcurrent] = useState<number>(20);
+  const [systemPromptAppendix, setSystemPromptAppendix] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -13,6 +14,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       .then(r => r.json())
       .then(data => {
         setMaxConcurrent(data.maxConcurrentAgents);
+        setSystemPromptAppendix(data.systemPromptAppendix ?? '');
       })
       .catch(() => {});
   }, []);
@@ -23,7 +25,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent }),
+        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent, systemPromptAppendix }),
       });
       if (res.ok) onClose();
     } finally {
@@ -48,6 +50,16 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               value={maxConcurrent}
               onChange={e => setMaxConcurrent(Number(e.target.value))}
               style={{ width: 80 }}
+            />
+          </div>
+          <div className="form-group">
+            <label>System Prompt Appendix</label>
+            <textarea
+              value={systemPromptAppendix}
+              onChange={e => setSystemPromptAppendix(e.target.value)}
+              placeholder="Additional instructions appended to every agent's system prompt..."
+              rows={6}
+              style={{ width: '100%', resize: 'vertical', fontFamily: 'monospace', fontSize: 13 }}
             />
           </div>
         </div>

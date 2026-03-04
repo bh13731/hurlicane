@@ -318,33 +318,18 @@ export async function dispatch(
 
   // Handle PR meta events (dedup resets + worktree cleanup) — no job creation
   if (eventType === 'pull_request') {
-    const result = await handlePullRequestMeta(payload, config, client);
-    if (result) {
-      logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: result });
-    }
-    return result;
+    return await handlePullRequestMeta(payload, config, client);
   }
 
   // Skip events on branches/PRs not owned by the configured author
   const prOwner = payload.pull_request?.user?.login ?? payload.issue?.user?.login;
   if (prOwner && prOwner !== config.author) {
-    logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: `PR owner "${prOwner}" is not author` });
     return null;
   }
 
   // Check if this event type is disabled via config toggles
   const prompts = await client.getPrompts();
   if (prompts.disabledEvents.includes(eventType)) {
-    logEvent({
-      ts: Date.now(),
-      event_type: eventType,
-      action,
-      repo,
-      author,
-      decision: 'ignored',
-      job_title: null,
-      detail: `${eventType} is disabled`,
-    });
     return null;
   }
 
@@ -387,16 +372,18 @@ export async function dispatch(
   // Pass through middleware: worktree resolution + complexity evaluation + dispatch
   const result = await processEvent(client, config, eventType, payload, jobReq);
 
-  logEvent({
-    ts: Date.now(),
-    event_type: eventType,
-    action,
-    repo,
-    author,
-    decision: !result ? 'ignored' : result.type === 'skipped' ? 'skipped' : result.type === 'debate' ? 'debated' : 'ran',
-    job_title: result && result.type !== 'skipped' ? result.title : null,
-    detail: !result ? 'processEvent returned null' : result.type === 'skipped' ? result.title : `type=${result.type}`,
-  });
+  if (result) {
+    logEvent({
+      ts: Date.now(),
+      event_type: eventType,
+      action,
+      repo,
+      author,
+      decision: result.type === 'skipped' ? 'skipped' : result.type === 'debate' ? 'debated' : 'ran',
+      job_title: result.type !== 'skipped' ? result.title : null,
+      detail: result.type === 'skipped' ? result.title : `type=${result.type}`,
+    });
+  }
 
   return result?.title ?? null;
 }

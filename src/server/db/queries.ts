@@ -1122,14 +1122,20 @@ export function hasUndismissedWarning(agentId: string, type: string): boolean {
 
 // ─── Repos ──────────────────────────────────────────────────────────────────
 
-export function insertRepo(repo: { id: string; name: string; path: string }): Repo {
+export function insertRepo(repo: { id: string; name: string; url: string; path: string }): Repo {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO repos (id, name, path, created_at)
-    VALUES (?, ?, ?, ?)
-  `).run(repo.id, repo.name, repo.path, now);
+    INSERT INTO repos (id, name, url, path, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(repo.id, repo.name, repo.url, repo.path, now);
   return cast<Repo>(db.prepare('SELECT * FROM repos WHERE id = ?').get(repo.id));
+}
+
+export function getRepoById(id: string): Repo | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM repos WHERE id = ?').get(id);
+  return row ? cast<Repo>(row) : null;
 }
 
 export function listRepos(): Repo[] {
@@ -1143,6 +1149,12 @@ export function getRepoByName(name: string): Repo | null {
   return row ? cast<Repo>(row) : null;
 }
 
+export function getRepoByPath(repoPath: string): Repo | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM repos WHERE path = ?').get(repoPath);
+  return row ? cast<Repo>(row) : null;
+}
+
 export function deleteRepo(id: string): void {
   const db = getDb();
   db.prepare('DELETE FROM repos WHERE id = ?').run(id);
@@ -1150,13 +1162,13 @@ export function deleteRepo(id: string): void {
 
 // ─── Worktrees (Feature 4) ──────────────────────────────────────────────────
 
-export function insertWorktree(wt: { id: string; agent_id: string; job_id: string; path: string; branch: string }): Worktree {
+export function insertWorktree(wt: { id: string; repo_id: string; agent_id: string; job_id: string; path: string; branch: string }): Worktree {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO worktrees (id, agent_id, job_id, path, branch, created_at, cleaned_at)
-    VALUES (?, ?, ?, ?, ?, ?, NULL)
-  `).run(wt.id, wt.agent_id, wt.job_id, wt.path, wt.branch, now);
+    INSERT INTO worktrees (id, repo_id, agent_id, job_id, path, branch, created_at, cleaned_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+  `).run(wt.id, wt.repo_id, wt.agent_id, wt.job_id, wt.path, wt.branch, now);
   return cast<Worktree>(db.prepare('SELECT * FROM worktrees WHERE id = ?').get(wt.id));
 }
 
@@ -1175,6 +1187,12 @@ export function getWorktreeById(id: string): Worktree | null {
 export function getWorktreeByJobId(jobId: string): Worktree | null {
   const db = getDb();
   const row = db.prepare('SELECT * FROM worktrees WHERE job_id = ? AND cleaned_at IS NULL ORDER BY created_at DESC LIMIT 1').get(jobId);
+  return row ? cast<Worktree>(row) : null;
+}
+
+export function getWorktreeByAgentId(agentId: string): Worktree | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM worktrees WHERE agent_id = ? AND cleaned_at IS NULL ORDER BY created_at DESC LIMIT 1').get(agentId);
   return row ? cast<Worktree>(row) : null;
 }
 

@@ -68,8 +68,6 @@ export function createApp(config: EyeConfig, client: OrchestratorClient): expres
       if (result) {
         jobsCreated++;
         console.log(`[eye] ${eventType}: ${result}`);
-      } else {
-        console.log(`[eye] ${eventType}: ignored (action=${payload.action ?? 'n/a'})`);
       }
     }).catch(err => {
       console.error(`[eye] error processing ${eventType}:`, err);
