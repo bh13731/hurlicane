@@ -1,0 +1,13 @@
+services:
+  orchestrator:
+    build: .
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    volumes:
+      - orchestrator-data:/app/data
+    restart: unless-stopped
+    stop_grace_period: 15s
+
+volumes:
+  orchestrator-data:
