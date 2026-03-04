@@ -832,7 +832,7 @@ export function insertTemplate(template: Template): Template {
   db.prepare(`
     INSERT INTO templates (id, name, content, work_dir, model, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(template.id, template.name, template.content, template.work_dir ?? null, template.model ?? null, template.created_at, template.updated_at);
+  `).run(template.id, template.name, template.content, null, template.model ?? null, template.created_at, template.updated_at);
   return getTemplateById(template.id)!;
 }
 
@@ -848,7 +848,7 @@ export function listTemplates(): Template[] {
   return rows.map(r => cast<Template>(r));
 }
 
-export function updateTemplate(id: string, fields: Partial<Pick<Template, 'name' | 'content' | 'work_dir' | 'model'>>): Template | null {
+export function updateTemplate(id: string, fields: Partial<Pick<Template, 'name' | 'content' | 'model'>>): Template | null {
   const db = getDb();
   const sets: string[] = ['updated_at = ?'];
   const values: unknown[] = [Date.now()];

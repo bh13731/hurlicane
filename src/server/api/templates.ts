@@ -20,7 +20,6 @@ router.post('/', (req, res) => {
     id: randomUUID(),
     name: body.name.trim(),
     content: body.content.trim(),
-    work_dir: body.workDir?.trim() || null,
     model: body.model?.trim() || null,
     created_at: now,
     updated_at: now,
@@ -35,7 +34,6 @@ router.put('/:id', (req, res) => {
   const updated = queries.updateTemplate(req.params.id, {
     ...(body.name !== undefined ? { name: body.name.trim() } : {}),
     ...(body.content !== undefined ? { content: body.content.trim() } : {}),
-    ...(body.workDir !== undefined ? { work_dir: body.workDir?.trim() || null } : {}),
     ...(body.model !== undefined ? { model: body.model?.trim() || null } : {}),
   });
   res.json(updated);

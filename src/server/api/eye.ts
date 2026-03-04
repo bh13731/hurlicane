@@ -33,16 +33,9 @@ interface EyeSettings {
   webhookSecret: string;
   author: string;
   port: number;
-  skipPrompt: string;
-  discussionPrompt: string;
+  templateId: string;
   disabledEvents: string[];
 }
-
-const DEFAULT_SKIP_PROMPT = 'Skip events from repos not registered in the orchestrator.';
-const DEFAULT_DISCUSSION_PROMPT = `Escalate to debate when:
-- CI suite has 3+ failing checks
-- Review requests changes with body longer than 500 characters
-Otherwise create a simple job.`;
 
 function loadSettings(): EyeSettings {
   let disabledEvents: string[] = [];
@@ -55,8 +48,7 @@ function loadSettings(): EyeSettings {
     webhookSecret: queries.getNote('setting:eye:webhookSecret')?.value ?? '',
     author: queries.getNote('setting:eye:author')?.value ?? '',
     port: Number(queries.getNote('setting:eye:port')?.value ?? '4567'),
-    skipPrompt: queries.getNote('setting:eye:skipPrompt')?.value ?? '',
-    discussionPrompt: queries.getNote('setting:eye:discussionPrompt')?.value ?? '',
+    templateId: queries.getNote('setting:eye:templateId')?.value ?? '',
     disabledEvents,
   };
 }
@@ -65,8 +57,7 @@ function saveSettings(settings: EyeSettings): void {
   queries.upsertNote('setting:eye:webhookSecret', settings.webhookSecret, null);
   queries.upsertNote('setting:eye:author', settings.author, null);
   queries.upsertNote('setting:eye:port', String(settings.port), null);
-  queries.upsertNote('setting:eye:skipPrompt', settings.skipPrompt, null);
-  queries.upsertNote('setting:eye:discussionPrompt', settings.discussionPrompt, null);
+  queries.upsertNote('setting:eye:templateId', settings.templateId, null);
   queries.upsertNote('setting:eye:disabledEvents', JSON.stringify(settings.disabledEvents), null);
 }
 
@@ -84,25 +75,23 @@ router.get('/', (_req, res) => {
 
 // PUT /api/eye — save config
 router.put('/', (req, res) => {
-  const { webhookSecret, author, port, skipPrompt, discussionPrompt, disabledEvents } = req.body;
+  const { webhookSecret, author, port, templateId, disabledEvents } = req.body;
   const settings: EyeSettings = {
     webhookSecret: String(webhookSecret ?? ''),
     author: String(author ?? ''),
     port: Number(port ?? 4567),
-    skipPrompt: String(skipPrompt ?? ''),
-    discussionPrompt: String(discussionPrompt ?? ''),
+    templateId: String(templateId ?? ''),
     disabledEvents: Array.isArray(disabledEvents) ? disabledEvents : [],
   };
   saveSettings(settings);
   res.json({ settings });
 });
 
-// GET /api/eye/prompts — return skip + discussion prompts (with defaults filled in)
+// GET /api/eye/prompts — return templateId + disabled events
 router.get('/prompts', (_req, res) => {
   const settings = loadSettings();
   res.json({
-    skipPrompt: settings.skipPrompt || DEFAULT_SKIP_PROMPT,
-    discussionPrompt: settings.discussionPrompt || DEFAULT_DISCUSSION_PROMPT,
+    templateId: settings.templateId,
     disabledEvents: settings.disabledEvents,
   });
 });
@@ -121,6 +110,10 @@ router.post('/start', (_req, res) => {
   }
   if (!settings.author) {
     res.status(400).json({ error: 'Author is required. Configure it first.' });
+    return;
+  }
+  if (!settings.templateId) {
+    res.status(400).json({ error: 'Template is required. Select a template first.' });
     return;
   }
 

@@ -299,7 +299,6 @@ export interface Template {
   id: string;
   name: string;
   content: string;
-  work_dir: string | null;
   model: string | null;
   created_at: number;
   updated_at: number;
@@ -308,14 +307,12 @@ export interface Template {
 export interface CreateTemplateRequest {
   name: string;
   content: string;
-  workDir?: string;
   model?: string;
 }
 
 export interface UpdateTemplateRequest {
   name?: string;
   content?: string;
-  workDir?: string | null;
   model?: string | null;
 }
 

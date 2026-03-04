@@ -167,7 +167,6 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
   const handleTemplateChange = (newTemplateId: string) => {
     setRunTemplateId(newTemplateId);
     const tpl = templates.find(t => t.id === newTemplateId);
-    if (tpl?.work_dir) setRunWorkDir(tpl.work_dir);
     if (tpl?.model) setRunModel(tpl.model);
   };
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type Decision = 'ignored' | 'skipped' | 'debated' | 'ran';
+type Decision = 'ignored' | 'debated' | 'ran';
 
 interface EyeEvent {
   ts: number;
@@ -31,9 +31,13 @@ interface EyeSettings {
   webhookSecret: string;
   author: string;
   port: number;
-  skipPrompt: string;
-  discussionPrompt: string;
+  templateId: string;
   disabledEvents: string[];
+}
+
+interface Template {
+  id: string;
+  name: string;
 }
 
 const EVENT_TYPES: { key: string; label: string; description: string }[] = [
@@ -86,12 +90,6 @@ function eventIcon(eventType: string): string {
   }
 }
 
-const DEFAULT_SKIP_PROMPT = 'Skip events from repos not registered in the orchestrator.';
-const DEFAULT_DISCUSSION_PROMPT = `Escalate to debate when:
-- CI suite has 3+ failing checks
-- Review requests changes with body longer than 500 characters
-Otherwise create a simple job.`;
-
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function EyeModal({ onClose }: EyeModalProps) {
@@ -106,8 +104,8 @@ export function EyeModal({ onClose }: EyeModalProps) {
   const [webhookSecret, setWebhookSecret] = useState('');
   const [author, setAuthor] = useState('');
   const [port, setPort] = useState(4567);
-  const [skipPrompt, setSkipPrompt] = useState('');
-  const [discussionPrompt, setDiscussionPrompt] = useState('');
+  const [templateId, setTemplateId] = useState('');
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [disabledEvents, setDisabledEvents] = useState<string[]>([]);
   const [showSecret, setShowSecret] = useState(false);
 
@@ -162,11 +160,14 @@ export function EyeModal({ onClose }: EyeModalProps) {
         setWebhookSecret(state.settings.webhookSecret);
         setAuthor(state.settings.author);
         setPort(state.settings.port || 4567);
-        setSkipPrompt(state.settings.skipPrompt ?? '');
-        setDiscussionPrompt(state.settings.discussionPrompt ?? '');
+        setTemplateId(state.settings.templateId ?? '');
         setDisabledEvents(state.settings.disabledEvents ?? []);
       }
     });
+    // Fetch available templates
+    fetch('/api/templates').then(res => res.ok ? res.json() : []).then(
+      (data: Template[]) => setTemplates(data)
+    ).catch(() => {});
     // Poll eye status
     fetchEyeStatus();
     intervalRef.current = setInterval(() => {
@@ -185,11 +186,10 @@ export function EyeModal({ onClose }: EyeModalProps) {
       webhookSecret !== s.webhookSecret ||
       author !== s.author ||
       port !== s.port ||
-      skipPrompt !== (s.skipPrompt ?? '') ||
-      discussionPrompt !== (s.discussionPrompt ?? '') ||
+      templateId !== (s.templateId ?? '') ||
       JSON.stringify(disabledEvents) !== JSON.stringify(s.disabledEvents ?? [])
     );
-  }, [apiState, webhookSecret, author, port, skipPrompt, discussionPrompt, disabledEvents]);
+  }, [apiState, webhookSecret, author, port, templateId, disabledEvents]);
 
   // ─── Actions ────────────────────────────────────────────────────────────
 
@@ -200,7 +200,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
       const res = await fetch('/api/eye', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhookSecret, author, port, skipPrompt, discussionPrompt, disabledEvents }),
+        body: JSON.stringify({ webhookSecret, author, port, templateId, disabledEvents }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -268,7 +268,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
   const isRunning = eyeConnected === true;
   const allEvents = eyeStatus?.recent_events ? [...eyeStatus.recent_events].reverse() : [];
   const events = allEvents;
-  const canLaunch = !!webhookSecret && !!author;
+  const canLaunch = !!webhookSecret && !!author && !!templateId;
 
   return (
     <div className="modal-overlay" onClick={onClose} onKeyDown={e => e.key === 'Escape' && onClose()}>
@@ -340,18 +340,11 @@ export function EyeModal({ onClose }: EyeModalProps) {
               )}
             </div>
 
-            {apiState?.settings && (apiState.settings.skipPrompt || apiState.settings.discussionPrompt) && (
+            {apiState?.settings?.templateId && (
               <div className="eye-prompts-display" style={{ padding: '8px 12px', margin: '0 0 8px', fontSize: 12, color: 'var(--text-secondary)', background: 'var(--bg-secondary)', borderRadius: 6 }}>
-                {apiState.settings.skipPrompt && (
-                  <div style={{ marginBottom: apiState.settings.discussionPrompt ? 6 : 0 }}>
-                    <span style={{ fontWeight: 600 }}>Skip:</span> {apiState.settings.skipPrompt}
-                  </div>
-                )}
-                {apiState.settings.discussionPrompt && (
-                  <div>
-                    <span style={{ fontWeight: 600 }}>Discussion:</span> {apiState.settings.discussionPrompt}
-                  </div>
-                )}
+                <div>
+                  <span style={{ fontWeight: 600 }}>Template:</span> {templates.find(t => t.id === apiState.settings.templateId)?.name ?? apiState.settings.templateId}
+                </div>
               </div>
             )}
 
@@ -384,13 +377,6 @@ export function EyeModal({ onClose }: EyeModalProps) {
                         <>
                           <span className="eye-event-decision eye-event-decision--debated">debated</span>
                           {' '}{ev.job_title}
-                        </>
-                      )}
-                      {ev.decision === 'skipped' && (
-                        <>
-                          <span className="eye-event-decision eye-event-decision--skipped">skipped</span>
-                          {' '}{ev.detail}
-                          {ev.repo && <span className="eye-event-repo"> on {ev.repo}</span>}
                         </>
                       )}
                       {ev.decision === 'ignored' && (
@@ -492,27 +478,18 @@ export function EyeModal({ onClose }: EyeModalProps) {
             </div>
 
             <div className="form-group" style={{ marginTop: 12 }}>
-              <label>Skip Filter Prompt</label>
-              <textarea
-                value={skipPrompt}
-                onChange={e => setSkipPrompt(e.target.value)}
-                placeholder={DEFAULT_SKIP_PROMPT}
-                rows={2}
-                style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 13 }}
-              />
-              <div className="eye-field-hint">Controls which events are skipped. Add lines like "Skip repos matching: org/*" for custom rules.</div>
-            </div>
-
-            <div className="form-group" style={{ marginTop: 8 }}>
-              <label>Discussion Filter Prompt</label>
-              <textarea
-                value={discussionPrompt}
-                onChange={e => setDiscussionPrompt(e.target.value)}
-                placeholder={DEFAULT_DISCUSSION_PROMPT}
-                rows={4}
-                style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 13 }}
-              />
-              <div className="eye-field-hint">Controls when events escalate to a debate. Thresholds are parsed from the text (e.g. "3+ failing checks", "500 characters").</div>
+              <label>Template <span style={{ color: 'var(--danger)' }}>*</span></label>
+              <select
+                value={templateId}
+                onChange={e => setTemplateId(e.target.value)}
+                style={{ width: '100%', fontSize: 13 }}
+              >
+                <option value="">Select a template...</option>
+                {templates.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              <div className="eye-field-hint">Template applied to all jobs created by Eye.</div>
             </div>
 
             {actionError && (
@@ -533,7 +510,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
                 className="btn btn-primary"
                 onClick={handleLaunch}
                 disabled={launching || !canLaunch}
-                title={canLaunch ? 'Start the Eye webhook listener' : 'Fill in the required fields first'}
+                title={canLaunch ? 'Start the Eye webhook listener' : 'Fill in all required fields first'}
               >
                 {launching ? 'Launching...' : 'Launch Eye'}
               </button>

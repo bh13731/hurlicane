@@ -1,8 +1,7 @@
 import type { CreateJobRequest, CreateDebateRequest, CreateDebateResponse, Repo, Worktree } from '../src/shared/types.js';
 
 export interface EyePrompts {
-  skipPrompt: string;
-  discussionPrompt: string;
+  templateId: string;
   disabledEvents: string[];
 }
 
@@ -17,11 +16,7 @@ export interface OrchestratorClient {
 }
 
 const DEFAULT_PROMPTS: EyePrompts = {
-  skipPrompt: 'Skip events from repos not registered in the orchestrator.',
-  discussionPrompt: `Escalate to debate when:
-- CI suite has 3+ failing checks
-- Review requests changes with body longer than 500 characters
-Otherwise create a simple job.`,
+  templateId: '',
   disabledEvents: [],
 };
 

@@ -11,7 +11,6 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
-  const [workDir, setWorkDir] = useState('');
   const [model, setModel] = useState('');
   const [saving, setSaving] = useState(false);
   const [confirmDeleteTpl, setConfirmDeleteTpl] = useState<Template | null>(null);
@@ -24,7 +23,6 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
     setEditing(null);
     setName('');
     setContent('');
-    setWorkDir('');
     setModel('');
     setCreating(true);
   }
@@ -34,7 +32,6 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
     setEditing(t);
     setName(t.name);
     setContent(t.content);
-    setWorkDir(t.work_dir ?? '');
     setModel(t.model ?? '');
   }
 
@@ -52,7 +49,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
         const res = await fetch(`/api/templates/${editing.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), content: content.trim(), workDir: workDir.trim() || null, model: model.trim() || null }),
+          body: JSON.stringify({ name: name.trim(), content: content.trim(), model: model.trim() || null }),
         });
         const updated: Template = await res.json();
         setTemplates(prev => prev.map(t => t.id === updated.id ? updated : t));
@@ -60,7 +57,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
         const res = await fetch('/api/templates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), content: content.trim(), workDir: workDir.trim() || undefined, model: model.trim() || undefined }),
+          body: JSON.stringify({ name: name.trim(), content: content.trim(), model: model.trim() || undefined }),
         });
         const created: Template = await res.json();
         setTemplates(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
@@ -127,16 +124,6 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
                     placeholder="e.g. Code review standards"
                     autoFocus
                     required
-                  />
-                </div>
-                <div className="form-group">
-                  <label htmlFor="tpl-workdir">Working Directory <span className="form-label-hint">(optional)</span></label>
-                  <input
-                    id="tpl-workdir"
-                    type="text"
-                    value={workDir}
-                    onChange={e => setWorkDir(e.target.value)}
-                    placeholder="/path/to/project"
                   />
                 </div>
                 <div className="form-group">

@@ -28,9 +28,6 @@ export function DebateForm({ onSubmit, onClose }: DebateFormProps) {
   const handleTemplateChange = (newTemplateId: string) => {
     setTemplateId(newTemplateId);
     const tpl = templates.find(t => t.id === newTemplateId);
-    if (tpl?.work_dir) {
-      setWorkDir(tpl.work_dir);
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
