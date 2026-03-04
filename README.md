@@ -6,16 +6,36 @@ A web-based dashboard for running multiple Claude Code (and Codex) agents in par
 
 | Branch | Description |
 |--------|-------------|
-| `main` | Stable base. Repos registered by local path, worktrees optional, no branch protection. |
-| `aaryaman-main` | Active development. Adds the features below on top of `main`. |
+| `main` | Stable base. Repos registered by local path, worktrees optional, agents can work anywhere. |
+| `aaryaman-main` | Active development. Tight git coupling, Eye updates, system prompt appendix. |
 
-### What `aaryaman-main` adds
+### What `aaryaman-main` changes
 
-- **URL-based repo registration** — repos are registered by git URL and cloned to `data/repos/` (with a live progress bar), replacing the local-path approach on `main`.
-- **Mandatory worktrees** — all jobs must run in a worktree. The "work directory" option is removed; the job form shows a dropdown of existing worktree branches or lets you create a new one.
-- **Branch protection** — a `PreToolUse` hook prevents agents from switching branches, creating branches, or renaming branches. Agents can only work on their assigned worktree branch.
-- **Sub-agent worktree reuse** — when an agent spawns a sub-job (retry, continuation, debate stage), the sub-agent reuses the parent's worktree instead of failing to create a new one.
-- **PR-based auto-cleanup** — worktrees are only auto-cleaned when their PR is merged or closed (checked via `gh pr view`), instead of being removed when the job finishes.
+#### Tight Git Coupling
+
+On `main`, git is loosely integrated — repos are registered by local directory path, worktrees are optional, and agents can freely run in any directory. On `aaryaman-main`, the entire job lifecycle is coupled to git:
+
+- **URL-based repo registration** — repos are registered by git URL and cloned to `data/repos/` with a live Socket.io progress bar. Local paths are no longer accepted.
+- **Mandatory worktrees** — every job must run in a worktree. The "work directory" option is removed from the job form. Instead, a radio toggle lets you pick an existing worktree branch (dropdown) or create a new one (repo + branch name).
+- **Branch protection** — a `PreToolUse` hook (`scripts/check-branch-hook.mjs`) blocks agents from switching branches (`git checkout`, `git switch`), creating branches (`-b`/`-B`), or renaming branches (`git branch -m`). The assigned branch is set via `ORCHESTRATOR_BRANCH` env var at spawn time, so it works for all agents including sub-agents.
+- **Sub-agent worktree reuse** — when an agent spawns a sub-job (retry, continuation, debate stage), the sub-agent detects the `work_dir` is already a worktree and reuses it instead of trying to create a new one.
+- **PR-based auto-cleanup** — worktrees are only auto-cleaned when their PR is merged or closed (checked via `gh pr view`), not when the job finishes. This keeps worktrees alive for follow-up work.
+
+#### Eye Updates
+
+Eye (the GitHub webhook listener in `eye/`) is updated for the new repo/worktree model:
+
+- **Worktree creation uses `repoId`** instead of `repoDir` — `eye/orchestrator.ts` and `eye/worktree.ts` pass the repo's database ID to `POST /api/worktrees` instead of a filesystem path, matching the new API contract.
+- **Quieter logging** — removed redundant "ignored" log entries for events that produce no job (PR owner mismatch, disabled event types, null processEvent results). Only events that actually create a job or debate are logged.
+- **Worktree resolution failure is fatal** — if Eye can't create a worktree for a branch, it returns `null` instead of falling back to the bare repo path (which no longer makes sense since all jobs require worktrees).
+
+#### System Prompt Appendix
+
+A new **System Prompt Appendix** setting lets you inject custom instructions into every agent's system prompt without editing code:
+
+- **Settings UI** — the Settings modal now has a monospace textarea for the appendix, saved to the database via `PUT /api/settings`.
+- **Injection** — `getSystemPrompt()` in `AgentRunner.ts` appends the stored text to the base system prompt. It's passed to Claude agents via `--append-system-prompt` and prepended to Codex agent prompts (which lack that flag).
+- **Use cases** — enforce coding conventions, add project-specific rules, restrict agent behavior globally (e.g., "Never modify package.json without asking").
 
 ## Requirements
 
