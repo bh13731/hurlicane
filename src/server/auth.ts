@@ -51,6 +51,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   if (!isAuthEnabled()) return next();
   if (hasValidCookie(req.headers.cookie)) return next();
 
+  // Allow localhost requests (internal service-to-service, e.g. Eye → orchestrator)
+  const ip = req.ip ?? req.socket.remoteAddress ?? '';
+  if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
+
   // API calls get JSON 401
   if (req.path.startsWith('/api/')) {
     res.status(401).json({ error: 'Unauthorized' });
