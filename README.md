@@ -57,54 +57,39 @@ A new **System Prompt Appendix** setting lets you inject custom instructions int
 
 ## Deploying on EC2
 
-### Prerequisites (Amazon Linux 2023)
+### One-Line Setup
+
+SSH into a fresh EC2 instance (Amazon Linux 2023 or Ubuntu) and run:
 
 ```bash
-# Node.js 22
-curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
-sudo yum install -y nodejs
-
-# Build tools (for node-pty native compilation)
-sudo yum groupinstall -y "Development Tools"
-sudo yum install -y python3
-
-# tmux and git
-sudo yum install -y tmux git
-
-# Claude Code CLI
-npm install -g @anthropic-ai/claude-code
+curl -fsSL https://raw.githubusercontent.com/lightsparkdev/hurlicane/aaryaman-main/scripts/setup-ec2.sh | bash
 ```
 
-### Setup
+This installs all system dependencies (Node.js 22, build tools, tmux, git), Claude Code CLI, clones the repo, installs npm packages, prompts for your `.env` config, and builds the project.
+
+If you already have the repo cloned, run it directly:
 
 ```bash
-git clone <repo-url> hurlicane
-cd hurlicane
-npm install
+./scripts/setup-ec2.sh
 ```
 
-Create a `.env` file with your configuration:
+### Starting the Server
 
 ```bash
-AUTH_PASSWORD=your-password-here
-ANTHROPIC_API_KEY=sk-ant-...
-# Optional: stable secret so sessions survive restarts
-AUTH_SECRET=some-random-string
+cd ~/hurlicane && ./scripts/start-ec2.sh
 ```
 
-### Running
-
-A startup script is provided:
+This loads `.env`, builds the project, and starts the server in a detached tmux session.
 
 ```bash
-./scripts/start-ec2.sh
+tmux attach -t hurlicane        # view logs (Ctrl-B D to detach)
+tmux kill-session -t hurlicane   # stop the server
 ```
 
-This loads `.env`, builds the project, and starts the server in a detached tmux session. To manage it:
+### Updating
 
 ```bash
-tmux attach -t hurlicane    # view logs (Ctrl-B D to detach)
-tmux kill-session -t hurlicane  # stop the server
+cd ~/hurlicane && git pull && ./scripts/start-ec2.sh
 ```
 
 ### EC2 Security Group
@@ -117,9 +102,16 @@ Open these inbound ports:
 | 4567 | Eye webhook listener (if using GitHub integration) |
 | 22   | SSH |
 
-### Password Protection
+### Environment Variables (.env)
 
-Set `AUTH_PASSWORD` in your `.env` to gate the UI, API, and Socket.io behind a login page. When unset, auth is disabled (for local dev). Internal service-to-service requests (Eye, MCP agents) on localhost bypass auth automatically.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | Anthropic API key for Claude agents |
+| `AUTH_PASSWORD` | Recommended | Gates UI/API/Socket.io behind a login page. Unset = no auth (for local dev) |
+| `AUTH_SECRET` | Optional | Stable HMAC secret so sessions survive server restarts |
+| `OPENAI_API_KEY` | Optional | For Codex agents |
+
+Internal service-to-service requests (Eye, MCP agents) on localhost bypass auth automatically.
 
 ## Requirements
 
