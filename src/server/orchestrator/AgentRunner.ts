@@ -195,6 +195,9 @@ export function runAgent(options: RunOptions): void {
       delete env['CLAUDECODE'];
       env['ORCHESTRATOR_AGENT_ID'] = agentId;
       env['ORCHESTRATOR_API_URL'] = `http://localhost:${process.env.PORT ?? 3000}`;
+      // Set assigned branch so the branch-enforcement hook works for all agents
+      const wt = queries.getWorktreeByPath(workDir);
+      if (wt?.branch) env['ORCHESTRATOR_BRANCH'] = wt.branch;
       return env;
     })(),
   });

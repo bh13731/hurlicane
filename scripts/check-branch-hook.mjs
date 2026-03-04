@@ -3,6 +3,9 @@
  * Claude Code PreToolUse hook — prevents agents from switching branches
  * or committing to any branch other than their assigned worktree branch.
  *
+ * Reads ORCHESTRATOR_BRANCH env var (set at agent spawn time) to know
+ * the assigned branch. No API calls needed.
+ *
  * Receives JSON on stdin (Claude Code hook protocol):
  *   { tool_name, tool_input: { command, ... } }
  *
@@ -15,9 +18,12 @@
 process.on('uncaughtException', () => process.exit(0));
 process.on('unhandledRejection', () => process.exit(0));
 
-// Only enforce inside orchestrator agent subprocesses.
+// Only enforce inside orchestrator agent subprocesses with an assigned branch.
 const agentId = process.env.ORCHESTRATOR_AGENT_ID;
 if (!agentId) process.exit(0);
+
+const assignedBranch = process.env.ORCHESTRATOR_BRANCH;
+if (!assignedBranch) process.exit(0);
 
 // Safety valve: if no data arrives within 2s, fail open.
 const noDataTimer = setTimeout(() => process.exit(0), 2000);
@@ -29,7 +35,7 @@ let debounce = null;
  * Check if a shell command contains a branch-switching git operation.
  * Returns a block message if forbidden, or null if allowed.
  */
-function checkCommand(command, assignedBranch) {
+function checkCommand(command) {
   // Normalise whitespace for easier matching
   const cmd = command.replace(/\s+/g, ' ').trim();
 
@@ -91,7 +97,7 @@ function checkCommand(command, assignedBranch) {
   return null; // all checks passed
 }
 
-async function processInput() {
+function processInput() {
   clearTimeout(noDataTimer);
 
   let data;
@@ -109,39 +115,21 @@ async function processInput() {
     process.exit(0);
   }
 
-  // Look up the agent's assigned branch (pass cwd as fallback for sub-agents)
-  const apiUrl = process.env.ORCHESTRATOR_API_URL ?? 'http://localhost:3000';
-  const cwd = process.cwd();
-  try {
-    const res = await fetch(
-      `${apiUrl}/api/agents/${encodeURIComponent(agentId)}/branch?cwd=${encodeURIComponent(cwd)}`
-    );
-    if (!res.ok) process.exit(0); // API error → fail open
-    const { branch } = await res.json();
-    if (!branch) process.exit(0); // No worktree assigned → fail open
-
-    const blockMsg = checkCommand(command, branch);
-    if (blockMsg) {
-      process.stdout.write(blockMsg);
-      process.exit(2);
-    }
-    process.exit(0);
-  } catch {
-    process.exit(0); // network error → fail open
+  const blockMsg = checkCommand(command);
+  if (blockMsg) {
+    process.stdout.write(blockMsg);
+    process.exit(2);
   }
-}
-
-function safeProcessInput() {
-  processInput().catch(() => process.exit(0));
+  process.exit(0);
 }
 
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => {
   input += chunk;
   clearTimeout(debounce);
-  debounce = setTimeout(safeProcessInput, 30);
+  debounce = setTimeout(processInput, 30);
 });
 process.stdin.on('end', () => {
   clearTimeout(debounce);
-  safeProcessInput();
+  processInput();
 });

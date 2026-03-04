@@ -199,10 +199,18 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
     ? `exec nice -n 10 ${execLine.slice(5)}`
     : `nice -n 10 ${execLine}`;
 
+  // Resolve the assigned branch from the worktree so the branch-enforcement hook
+  // works for sub-agents (retries, continuations, debate stages) that share a worktree.
+  const assignedBranch = (() => {
+    const wt = queries.getWorktreeByPath(workDir);
+    return wt?.branch ?? null;
+  })();
+
   const scriptLines = [
     '#!/bin/sh',
     `export ORCHESTRATOR_AGENT_ID=${JSON.stringify(agentId)}`,
     `export ORCHESTRATOR_API_URL=${JSON.stringify(`http://localhost:${process.env.PORT ?? 3000}`)}`,
+    ...(assignedBranch ? [`export ORCHESTRATOR_BRANCH=${JSON.stringify(assignedBranch)}`] : []),
     `unset CLAUDECODE`,
     nicedExecLine,
   ].join('\n') + '\n';

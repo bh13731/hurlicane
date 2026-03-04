@@ -51,19 +51,11 @@ router.get('/:id', (req, res) => {
   res.json(agent);
 });
 
-// Lightweight endpoint for the branch-enforcement hook.
-// Looks up the assigned branch by agent ID first, then falls back to cwd (worktree path)
-// so that sub-agents (retries, continuations) that share the same worktree are also enforced.
+// Look up the assigned branch for an agent's worktree
 router.get('/:id/branch', (req, res) => {
   const wt = queries.getWorktreeByAgentId(req.params.id);
-  if (wt) { res.json({ branch: wt.branch }); return; }
-  // Fallback: look up by cwd query param (the agent's working directory = worktree path)
-  const cwd = req.query.cwd as string | undefined;
-  if (cwd) {
-    const wtByCwd = queries.getWorktreeByPath(cwd);
-    if (wtByCwd) { res.json({ branch: wtByCwd.branch }); return; }
-  }
-  res.json({ branch: null });
+  if (!wt) { res.json({ branch: null }); return; }
+  res.json({ branch: wt.branch });
 });
 
 router.get('/:id/output', (req, res) => {
