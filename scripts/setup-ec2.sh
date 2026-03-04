@@ -47,7 +47,9 @@ install_system_deps() {
       info "Installing system packages via yum..."
       sudo yum update -y -q
       sudo yum groupinstall -y "Development Tools" 2>/dev/null || sudo yum install -y gcc gcc-c++ make
-      sudo yum install -y git tmux python3 curl
+      sudo yum install -y git tmux python3
+      # curl-minimal (AL2023 default) conflicts with full curl; only install if neither exists
+      command_exists curl || sudo yum install -y curl
       ;;
     ubuntu|debian)
       info "Installing system packages via apt..."
