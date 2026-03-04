@@ -48,6 +48,6 @@ ENV DB_PATH=./data/orchestrator.db
 EXPOSE 3000 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:3000/ || exit 1
+    CMD curl -f http://localhost:3000/healthz || exit 1
 
 CMD ["node", "dist/server/index.js"]

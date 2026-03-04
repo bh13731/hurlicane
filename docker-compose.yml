@@ -6,6 +6,8 @@ services:
       - "3001:3001"
     volumes:
       - orchestrator-data:/app/data
+    environment:
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-}
     restart: unless-stopped
     stop_grace_period: 15s
 

@@ -16,6 +16,7 @@ import { runRecovery } from './orchestrator/recovery.js';
 import { writeInput, resizePty } from './orchestrator/PtyManager.js';
 import { stopEyeProcess } from './api/eye.js';
 import * as queries from './db/queries.js';
+import { authMiddleware, handleLogin, handleLogout, isSocketAuthenticated, isAuthEnabled } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -53,6 +54,15 @@ async function main() {
   const app = express();
   app.use(cors());
   app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
+
+  // Unauthenticated routes
+  app.get('/healthz', (_req, res) => res.send('ok'));
+  app.post('/auth/login', handleLogin);
+  app.get('/auth/logout', handleLogout);
+
+  // Auth gate — everything below requires a valid session (when AUTH_PASSWORD is set)
+  app.use(authMiddleware);
 
   // REST API
   app.use('/api', apiRouter);
@@ -67,6 +77,12 @@ async function main() {
   // 4. HTTP server + Socket.io
   const httpServer = createServer(app);
   const io = initSocketManager(httpServer);
+
+  // Socket.io auth — reject unauthenticated connections when auth is enabled
+  io.use((socket, next) => {
+    if (isSocketAuthenticated(socket.handshake.headers.cookie)) return next();
+    next(new Error('Unauthorized'));
+  });
 
   // Send snapshot on connect; also respond to explicit re-requests (e.g. after StrictMode remount or HMR)
   io.on('connection', (socket) => {

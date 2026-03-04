@@ -14,5 +14,11 @@ socket.onAny((event, ...args) => {
 
 socket.on('connect', () => console.log('[socket] connected'));
 socket.on('disconnect', (reason) => console.log('[socket] disconnected:', reason));
+socket.on('connect_error', (err) => {
+  console.error('[socket] connect_error:', err.message);
+  if (err.message === 'Unauthorized') {
+    window.location.reload();
+  }
+});
 
 export default socket;
