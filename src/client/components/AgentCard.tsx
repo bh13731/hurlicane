@@ -1,5 +1,5 @@
 import React from 'react';
-import type { AgentWithJob } from '@shared/types';
+import type { AgentWithJob, Worktree } from '@shared/types';
 
 interface AgentCardProps {
   agent: AgentWithJob;
@@ -10,6 +10,8 @@ interface AgentCardProps {
   templateName?: string;
   isSelected?: boolean;
   isPtyIdle?: boolean;
+  worktree?: Worktree;
+  repoName?: string;
 }
 
 function ArchiveIcon() {
@@ -65,7 +67,7 @@ function getStatusLabel(agent: AgentWithJob, isPtyIdle?: boolean): React.ReactNo
   }
 }
 
-export function AgentCard({ agent, onClick, onSelectParent, onArchiveJob, onInteractiveChange, templateName, isSelected, isPtyIdle }: AgentCardProps) {
+export function AgentCard({ agent, onClick, onSelectParent, onArchiveJob, onInteractiveChange, templateName, isSelected, isPtyIdle, worktree, repoName }: AgentCardProps) {
   const borderColor = getBorderColor(agent, isPtyIdle);
   const isWaiting = agent.status === 'waiting_user';
 
@@ -174,6 +176,17 @@ export function AgentCard({ agent, onClick, onSelectParent, onArchiveJob, onInte
       {agent.job.model && (
         <div className="agent-model" title={agent.job.model}>
           {agent.job.model.replace('claude-', '')}
+        </div>
+      )}
+
+      {worktree && repoName && (
+        <div className="agent-repo-badge" title={repoName}>
+          {repoName}
+        </div>
+      )}
+      {worktree && (
+        <div className="agent-worktree-badge" title={`Worktree: ${worktree.path}`}>
+          ⑂ {worktree.branch}
         </div>
       )}
 

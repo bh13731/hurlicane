@@ -275,6 +275,19 @@ body {
   max-width: 80px;
 }
 
+.sidebar-job-worktree {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #7ee787;
+  background: rgba(126, 231, 135, 0.1);
+  border-radius: 3px;
+  padding: 1px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90px;
+}
+
 .sidebar-job-repeat {
   flex-shrink: 0;
   font-size: 10px;
@@ -878,6 +891,34 @@ body {
   color: var(--text-muted);
   font-family: var(--font-mono);
   margin-top: 2px;
+}
+
+.agent-repo-badge {
+  font-size: 10px;
+  color: #79c0ff;
+  background: rgba(121, 192, 255, 0.1);
+  border: 1px solid rgba(121, 192, 255, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-worktree-badge {
+  font-size: 10px;
+  color: #7ee787;
+  background: rgba(126, 231, 135, 0.1);
+  border: 1px solid rgba(126, 231, 135, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agent-debate-badge {
@@ -3150,9 +3191,29 @@ body {
 }
 
 .worktree-detail-header {
+  position: relative;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-surface);
+}
+
+.worktree-detail-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.worktree-detail-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-interactive);
 }
 
 .worktree-detail-title {

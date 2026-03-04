@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import type { Job, Project } from '@shared/types';
+import type { Job, Project, Worktree } from '@shared/types';
 
 function ArchiveIcon() {
   return (
@@ -15,6 +15,7 @@ function ArchiveIcon() {
 interface WorkQueueSidebarProps {
   jobs: Job[];
   projects?: Project[];
+  worktreesByJobId?: Map<string, Worktree>;
   onSelectJob?: (job: Job) => void;
   onCancelJob?: (job: Job) => void;
   onRunJobNow?: (job: Job) => void;
@@ -55,7 +56,7 @@ function loadStorage<T>(key: string, def: T): T {
 }
 
 export function WorkQueueSidebar({
-  jobs, projects = [], onSelectJob, onCancelJob, onRunJobNow, onArchiveJob,
+  jobs, projects = [], worktreesByJobId, onSelectJob, onCancelJob, onRunJobNow, onArchiveJob,
 }: WorkQueueSidebarProps) {
   const projectMap = Object.fromEntries(projects.map(p => [p.id, p.name]));
 
@@ -354,6 +355,16 @@ export function WorkQueueSidebar({
       <span className="sidebar-job-project">{projectMap[job.project_id]}</span>
     ) : null;
 
+  const WorktreeBadge = ({ job }: { job: Job }) => {
+    const wt = worktreesByJobId?.get(job.id);
+    if (!wt) return null;
+    return (
+      <span className="sidebar-job-worktree" title={`Branch: ${wt.branch}`}>
+        ⑂ {wt.branch}
+      </span>
+    );
+  };
+
   // ── Job row renderer ───────────────────────────────────────────────────────
   function jobRow(
     job: Job,
@@ -404,6 +415,7 @@ export function WorkQueueSidebar({
         <RetryBadge job={job} />
         <RepeatBadge job={job} />
         <ProjectTag job={job} />
+        <WorktreeBadge job={job} />
         {sectionKey === 'queued' && onCancelJob && (
           <button
             className="sidebar-job-cancel"

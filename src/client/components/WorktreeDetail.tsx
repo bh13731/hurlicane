@@ -5,6 +5,7 @@ import type { Worktree } from '@shared/types';
 interface WorktreeDetailProps {
   worktree: Worktree;
   onDeleted: () => void;
+  onClose?: () => void;
 }
 
 interface WorktreeStatus {
@@ -14,7 +15,7 @@ interface WorktreeStatus {
   autoMerge: boolean;
 }
 
-export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
+export function WorktreeDetail({ worktree, onDeleted, onClose }: WorktreeDetailProps) {
   const [diff, setDiff] = useState('');
   const [commits, setCommits] = useState('');
   const [loading, setLoading] = useState(true);
@@ -145,6 +146,9 @@ export function WorktreeDetail({ worktree, onDeleted }: WorktreeDetailProps) {
       <div className="worktree-detail-header">
         <div className="worktree-detail-title">{worktree.branch}</div>
         <div className="worktree-detail-path">{worktree.path}</div>
+        {onClose && (
+          <button className="worktree-detail-close" onClick={onClose} title="Close">✕</button>
+        )}
       </div>
 
       <div className="worktree-actions">

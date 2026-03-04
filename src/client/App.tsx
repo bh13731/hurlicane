@@ -30,7 +30,7 @@ import { useDebates } from './hooks/useDebates';
 import { useToasts } from './hooks/useToasts';
 import { ToastFeed } from './components/ToastFeed';
 import socket from './socket';
-import type { AgentWithJob, AgentOutput, CreateJobRequest, CreateDebateRequest, Job, Template, BatchTemplate, Worktree } from '@shared/types';
+import type { AgentWithJob, AgentOutput, CreateJobRequest, CreateDebateRequest, Job, Template, BatchTemplate, Worktree, Repo } from '@shared/types';
 
 export default function App() {
   const { agents, setInitial: setInitialAgents, addAgent, updateAgent } = useAgents();
@@ -59,11 +59,54 @@ export default function App() {
   const [archivedJobs, setArchivedJobs] = useState<Job[]>([]);
   const [leftTab, setLeftTab] = useState<'feed' | 'lineage' | 'worktrees'>('feed');
   const [selectedWorktree, setSelectedWorktree] = useState<Worktree | null>(null);
+  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
+  const [repos, setRepos] = useState<Repo[]>([]);
 
   const [todayClaudeCost, setTodayClaudeCost] = useState<number | null>(null);
   const [todayCodexCost, setTodayCodexCost] = useState<number | null>(null);
   const [costAutoUpdate, setCostAutoUpdate] = useState(false);
   const fetchingCost = useRef(false);
+
+  // Fetch worktrees and repos periodically for job→worktree mapping
+  useEffect(() => {
+    const fetchWorktreesAndRepos = () => {
+      fetch('/api/worktrees')
+        .then(r => r.ok ? r.json() : [])
+        .then((data: Worktree[]) => setWorktrees(data))
+        .catch(() => {});
+      fetch('/api/repos')
+        .then(r => r.ok ? r.json() : [])
+        .then((data: Repo[]) => setRepos(data))
+        .catch(() => {});
+    };
+    fetchWorktreesAndRepos();
+    const id = setInterval(fetchWorktreesAndRepos, 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const worktreesByJobId = useMemo(() => {
+    const map = new Map<string, Worktree>();
+    for (const wt of worktrees) {
+      map.set(wt.job_id, wt);
+    }
+    return map;
+  }, [worktrees]);
+
+  const worktreesByPath = useMemo(() => {
+    const map = new Map<string, Worktree>();
+    for (const wt of worktrees) {
+      map.set(wt.path, wt);
+    }
+    return map;
+  }, [worktrees]);
+
+  const repoById = useMemo(() => {
+    const map = new Map<string, Repo>();
+    for (const r of repos) {
+      map.set(r.id, r);
+    }
+    return map;
+  }, [repos]);
 
   // Track when PTY data was last received per agent (for idle detection)
   const lastPtyActivity = useRef<Map<string, number>>(new Map());
@@ -350,7 +393,7 @@ export default function App() {
               onSelectAgent={handleSelectAgent}
             />
           ) : (
-            <WorkQueueSidebar jobs={jobs} projects={projects} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} onArchiveJob={handleArchiveJob} />
+            <WorkQueueSidebar jobs={jobs} projects={projects} worktreesByJobId={worktreesByJobId} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} onArchiveJob={handleArchiveJob} />
           )}
           {leftTab !== 'worktrees' && (
             <RunningJobsPanel
@@ -363,7 +406,7 @@ export default function App() {
         </div>
 
         <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
-          <AgentGrid agents={filteredAgents} queuedJobs={filteredJobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} onArchiveJob={handleArchiveJob} onArchiveAll={handleArchiveAll} templates={templates} selectedAgentId={selectedAgent?.id ?? null} ptyIdleAgentIds={ptyIdleAgents} />
+          <AgentGrid agents={filteredAgents} queuedJobs={filteredJobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} onArchiveJob={handleArchiveJob} onArchiveAll={handleArchiveAll} templates={templates} selectedAgentId={selectedAgent?.id ?? null} ptyIdleAgentIds={ptyIdleAgents} worktreesByJobId={worktreesByJobId} worktreesByPath={worktreesByPath} repoById={repoById} />
         </main>
 
         {selectedAgent ? (
@@ -378,6 +421,7 @@ export default function App() {
             key={selectedWorktree.id}
             worktree={selectedWorktree}
             onDeleted={() => setSelectedWorktree(null)}
+            onClose={() => setSelectedWorktree(null)}
           />
         ) : (
           <FileLockMap locks={locks} />

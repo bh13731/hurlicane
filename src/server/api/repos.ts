@@ -121,6 +121,40 @@ router.post('/', (req, res) => {
   });
 });
 
+router.get('/:id/branches', (req, res) => {
+  const repo = queries.getRepoById(req.params.id);
+  if (!repo) { res.status(404).json({ error: 'repo not found' }); return; }
+
+  const fetch = spawn('git', ['fetch', 'origin', '--prune'], { cwd: repo.path, stdio: 'ignore' });
+  fetch.on('close', (fetchCode) => {
+    if (fetchCode !== 0) {
+      res.status(500).json({ error: 'git fetch failed' });
+      return;
+    }
+    const branchProc = spawn('git', ['branch', '-r', '--format=%(refname:short)'], {
+      cwd: repo.path,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    branchProc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    branchProc.on('close', (code) => {
+      if (code !== 0) {
+        res.status(500).json({ error: 'git branch -r failed' });
+        return;
+      }
+      const branches = stdout
+        .split('\n')
+        .map(b => b.trim())
+        .filter(b => b && !b.endsWith('/HEAD'))
+        .map(b => b.replace(/^origin\//, ''));
+      res.json(branches);
+    });
+  });
+  fetch.on('error', (err) => {
+    res.status(500).json({ error: `git fetch error: ${err.message}` });
+  });
+});
+
 router.delete('/:id', (req, res) => {
   const repo = queries.getRepoById(req.params.id);
   if (repo) {

@@ -22,6 +22,7 @@ export interface Job {
   flagged: number;            // 0=not flagged, 1=flagged for review
   is_interactive: number;     // 0=batch, 1=interactive tmux session
   is_readonly: number;        // 0=normal, 1=read-only (no file edits allowed)
+  work_dir: string | null;    // working directory override
   use_worktree: number;       // 0=normal, 1=create git worktree
   project_id: string | null;  // FK → projects.id
   debate_id: string | null;   // FK → debates.id

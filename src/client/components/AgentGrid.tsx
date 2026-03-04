@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { AgentCard } from './AgentCard';
-import type { AgentWithJob, AgentStatus, Job } from '@shared/types';
+import type { AgentWithJob, AgentStatus, Job, Worktree, Repo } from '@shared/types';
 
 interface AgentGridProps {
   agents: AgentWithJob[];
@@ -11,6 +11,9 @@ interface AgentGridProps {
   templates?: unknown;
   selectedAgentId?: string | null;
   ptyIdleAgentIds?: Set<string>;
+  worktreesByJobId?: Map<string, Worktree>;
+  worktreesByPath?: Map<string, Worktree>;
+  repoById?: Map<string, Repo>;
 }
 
 const ALL_STATUSES: AgentStatus[] = ['starting', 'running', 'waiting_user', 'done', 'failed', 'cancelled'];
@@ -32,7 +35,7 @@ function tilePriority(agent: AgentWithJob): number {
   return 4;
 }
 
-export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, onArchiveJob, onArchiveAll, selectedAgentId, ptyIdleAgentIds }: AgentGridProps) {
+export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, onArchiveJob, onArchiveAll, selectedAgentId, ptyIdleAgentIds, worktreesByJobId, worktreesByPath, repoById }: AgentGridProps) {
   const [activeFilters, setActiveFilters] = useState<Set<AgentStatus>>(new Set());
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const [customOrder, setCustomOrder] = useState<string[]>([]);
@@ -242,6 +245,11 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, onArchiveJob
                 templateName={agent.template_name ?? undefined}
                 isSelected={selectedAgentId === agent.id}
                 isPtyIdle={ptyIdleAgentIds?.has(agent.id)}
+                worktree={worktreesByJobId?.get(agent.job_id) ?? (agent.job.work_dir ? worktreesByPath?.get(agent.job.work_dir) : undefined)}
+                repoName={(() => {
+                  const wt = worktreesByJobId?.get(agent.job_id) ?? (agent.job.work_dir ? worktreesByPath?.get(agent.job.work_dir) : undefined);
+                  return wt ? repoById?.get(wt.repo_id)?.name : undefined;
+                })()}
               />
             </div>
           ))}

@@ -227,10 +227,20 @@ router.post('/:id/pr', (req, res) => {
       timeout: 60_000,
     });
 
-    const output = execSync(`gh pr create --fill --draft --head ${JSON.stringify(wt.branch)}`, {
-      cwd: wt.path,
-      timeout: 30_000,
-    }).toString().trim();
+    let output: string;
+    try {
+      output = execSync(`gh pr create --fill --draft --head ${JSON.stringify(wt.branch)}`, {
+        cwd: wt.path,
+        timeout: 30_000,
+      }).toString().trim();
+    } catch {
+      // --fill fails when there are no commits between base and head (e.g. remote branch tracking).
+      // Fall back to explicit title/body.
+      output = execSync(`gh pr create --draft --head ${JSON.stringify(wt.branch)} --title ${JSON.stringify(wt.branch)} --body ""`, {
+        cwd: wt.path,
+        timeout: 30_000,
+      }).toString().trim();
+    }
 
     const lines = output.split('\n');
     const url = lines[lines.length - 1];
