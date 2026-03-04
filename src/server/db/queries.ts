@@ -340,7 +340,7 @@ function enrichAgent(agent: Agent): AgentWithJob {
   const jobRow = db.prepare('SELECT * FROM jobs WHERE id = ?').get(agent.job_id);
   if (!jobRow) {
     // Job was deleted while agent still references it — return a stub
-    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_loop: null, debate_round: null, debate_role: null, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, review_config: null, review_status: null, review_parent_job_id: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
+    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, work_dir: null, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_loop: null, debate_round: null, debate_role: null, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, review_config: null, review_status: null, review_parent_job_id: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
     return { ...agent, job: stub, template_name: null, pending_question: null, active_locks: [], child_agents: [], warnings: [] };
   }
   const job = cast<Job>(jobRow);
