@@ -37,6 +37,72 @@ A new **System Prompt Appendix** setting lets you inject custom instructions int
 - **Injection** — `getSystemPrompt()` in `AgentRunner.ts` appends the stored text to the base system prompt. It's passed to Claude agents via `--append-system-prompt` and prepended to Codex agent prompts (which lack that flag).
 - **Use cases** — enforce coding conventions, add project-specific rules, restrict agent behavior globally (e.g., "Never modify package.json without asking").
 
+## Deploying on EC2
+
+### Prerequisites (Amazon Linux 2023)
+
+```bash
+# Node.js 22
+curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
+sudo yum install -y nodejs
+
+# Build tools (for node-pty native compilation)
+sudo yum groupinstall -y "Development Tools"
+sudo yum install -y python3
+
+# tmux and git
+sudo yum install -y tmux git
+
+# Claude Code CLI
+npm install -g @anthropic-ai/claude-code
+```
+
+### Setup
+
+```bash
+git clone <repo-url> hurlicane
+cd hurlicane
+npm install
+```
+
+Create a `.env` file with your configuration:
+
+```bash
+AUTH_PASSWORD=your-password-here
+ANTHROPIC_API_KEY=sk-ant-...
+# Optional: stable secret so sessions survive restarts
+AUTH_SECRET=some-random-string
+```
+
+### Running
+
+A startup script is provided:
+
+```bash
+./scripts/start-ec2.sh
+```
+
+This loads `.env`, builds the project, and starts the server in a detached tmux session. To manage it:
+
+```bash
+tmux attach -t hurlicane    # view logs (Ctrl-B D to detach)
+tmux kill-session -t hurlicane  # stop the server
+```
+
+### EC2 Security Group
+
+Open these inbound ports:
+
+| Port | Purpose |
+|------|---------|
+| 3000 | Orchestrator UI and API |
+| 4567 | Eye webhook listener (if using GitHub integration) |
+| 22   | SSH |
+
+### Password Protection
+
+Set `AUTH_PASSWORD` in your `.env` to gate the UI, API, and Socket.io behind a login page. When unset, auth is disabled (for local dev). Internal service-to-service requests (Eye, MCP agents) on localhost bypass auth automatically.
+
 ## Requirements
 
 - **Node.js ≥ 22** — uses the experimental `node:sqlite` module
