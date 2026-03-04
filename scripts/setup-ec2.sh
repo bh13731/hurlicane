@@ -103,6 +103,55 @@ load_nvm() {
   [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 }
 
+# ── GitHub CLI ───────────────────────────────────────────────────────────────
+
+install_gh() {
+  if command_exists gh; then
+    ok "GitHub CLI already installed"
+  else
+    info "Installing GitHub CLI..."
+    local os
+    os=$(detect_os)
+    case "$os" in
+      amzn|rhel|centos|fedora)
+        sudo yum install -y yum-utils
+        sudo yum-config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+        sudo yum install -y gh
+        ;;
+      ubuntu|debian)
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli-stable.list > /dev/null
+        sudo apt-get update -qq
+        sudo apt-get install -y gh
+        ;;
+    esac
+    ok "GitHub CLI installed"
+  fi
+}
+
+setup_github_auth() {
+  # Check if already authenticated
+  if gh auth status &>/dev/null; then
+    ok "GitHub CLI already authenticated"
+    return
+  fi
+
+  info "GitHub authentication required for cloning private repos and PR operations"
+  echo ""
+  echo "  Options:"
+  echo "    1) Paste a personal access token (classic, with repo scope)"
+  echo "    2) Skip (you'll need to set up auth manually later)"
+  echo ""
+  read -rp "  GitHub personal access token (or press Enter to skip): " gh_token
+
+  if [ -n "$gh_token" ]; then
+    echo "$gh_token" | gh auth login --with-token
+    ok "GitHub CLI authenticated"
+  else
+    warn "Skipping GitHub auth — clone and PR features may not work"
+  fi
+}
+
 # ── Claude Code CLI ──────────────────────────────────────────────────────────
 
 install_claude() {
@@ -250,6 +299,8 @@ main() {
   install_system_deps
   install_node
   load_nvm
+  install_gh
+  setup_github_auth
   install_claude
   clone_repo
   install_deps
