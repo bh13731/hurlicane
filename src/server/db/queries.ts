@@ -1196,6 +1196,12 @@ export function getWorktreeByAgentId(agentId: string): Worktree | null {
   return row ? cast<Worktree>(row) : null;
 }
 
+export function getWorktreeByPath(wtPath: string): Worktree | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM worktrees WHERE path = ? AND cleaned_at IS NULL ORDER BY created_at DESC LIMIT 1').get(wtPath);
+  return row ? cast<Worktree>(row) : null;
+}
+
 export function listActiveWorktrees(): Worktree[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM worktrees WHERE cleaned_at IS NULL ORDER BY created_at DESC').all();

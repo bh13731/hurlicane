@@ -109,11 +109,12 @@ async function processInput() {
     process.exit(0);
   }
 
-  // Look up the agent's assigned branch
+  // Look up the agent's assigned branch (pass cwd as fallback for sub-agents)
   const apiUrl = process.env.ORCHESTRATOR_API_URL ?? 'http://localhost:3000';
+  const cwd = process.cwd();
   try {
     const res = await fetch(
-      `${apiUrl}/api/agents/${encodeURIComponent(agentId)}/branch`
+      `${apiUrl}/api/agents/${encodeURIComponent(agentId)}/branch?cwd=${encodeURIComponent(cwd)}`
     );
     if (!res.ok) process.exit(0); // API error → fail open
     const { branch } = await res.json();
