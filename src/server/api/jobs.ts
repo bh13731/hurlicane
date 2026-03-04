@@ -55,29 +55,48 @@ router.post('/', async (req, res) => {
   // If template is marked readonly, force the job to be readonly regardless of request
   const isReadonly = (body.readonly || !!tpl?.is_readonly) ? 1 : 0;
 
-  const job = queries.insertJob({
-    id: randomUUID(),
-    title,
-    description: body.description ?? '',
-    context: body.context ? JSON.stringify(body.context) : null,
-    priority: body.priority ?? 0,
-    work_dir: body.workDir ?? null,
-    max_turns: body.maxTurns ?? 50,
-    model: body.model ?? null,
-    template_id: body.templateId ?? null,
-    depends_on: body.dependsOn?.length ? JSON.stringify(body.dependsOn) : null,
-    is_interactive: body.interactive ? 1 : 0,
-    is_readonly: isReadonly,
-    use_worktree: isReadonly ? 0 : (body.useWorktree ? 1 : 0),
-    project_id: body.projectId ?? null,
-    scheduled_at: body.scheduledAt ?? null,
-    repeat_interval_ms: body.repeatIntervalMs ?? null,
-    retry_policy: body.retryPolicy ?? 'none',
-    max_retries: body.maxRetries ?? 0,
-    retry_count: 0,
-    original_job_id: null,
-    completion_checks: body.completionChecks?.length ? JSON.stringify(body.completionChecks) : null,
-  });
+  // Validate FK references exist before inserting
+  const templateId = body.templateId ?? null;
+  if (templateId && !queries.getTemplateById(templateId)) {
+    res.status(400).json({ error: `Template '${templateId}' not found` });
+    return;
+  }
+  const projectId = body.projectId ?? null;
+  if (projectId && !queries.getProjectById(projectId)) {
+    res.status(400).json({ error: `Project '${projectId}' not found` });
+    return;
+  }
+
+  let job;
+  try {
+    job = queries.insertJob({
+      id: randomUUID(),
+      title,
+      description: body.description ?? '',
+      context: body.context ? JSON.stringify(body.context) : null,
+      priority: body.priority ?? 0,
+      work_dir: body.workDir ?? null,
+      max_turns: body.maxTurns ?? 50,
+      model: body.model ?? null,
+      template_id: templateId,
+      depends_on: body.dependsOn?.length ? JSON.stringify(body.dependsOn) : null,
+      is_interactive: body.interactive ? 1 : 0,
+      is_readonly: isReadonly,
+      use_worktree: isReadonly ? 0 : (body.useWorktree ? 1 : 0),
+      project_id: projectId,
+      scheduled_at: body.scheduledAt ?? null,
+      repeat_interval_ms: body.repeatIntervalMs ?? null,
+      retry_policy: body.retryPolicy ?? 'none',
+      max_retries: body.maxRetries ?? 0,
+      retry_count: 0,
+      original_job_id: null,
+      completion_checks: body.completionChecks?.length ? JSON.stringify(body.completionChecks) : null,
+    });
+  } catch (err: any) {
+    console.error('[jobs] insert failed:', err);
+    res.status(500).json({ error: err.message ?? 'Failed to create job' });
+    return;
+  }
 
   socket.emitJobNew(job);
   res.status(201).json(job);
