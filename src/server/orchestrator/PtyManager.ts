@@ -237,6 +237,11 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
       script,
     ], { cwd: workDir, stdio: 'pipe' });
 
+    // Disable tmux status bar so it doesn't leak into the PTY stream displayed in the UI
+    try {
+      execFileSync('tmux', ['set-option', '-t', sessionName(agentId), 'status', 'off'], { stdio: 'pipe' });
+    } catch { /* ignore */ }
+
     // Enable mouse mode so scroll wheel enters tmux copy mode for history scrolling
     try {
       execFileSync('tmux', ['set-option', '-t', sessionName(agentId), 'mouse', 'on'], { stdio: 'pipe' });

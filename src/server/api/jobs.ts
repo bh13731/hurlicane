@@ -1,12 +1,8 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import type { CreateJobRequest } from '../../shared/types.js';
-
-const execFileAsync = promisify(execFile);
 
 const router = Router();
 
@@ -18,12 +14,28 @@ function autoTitle(description: string): string {
 }
 
 async function generateSmartTitle(description: string): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return autoTitle(description);
+
   try {
     const prompt = `Write a title for this task in ${TITLE_MAX} characters or fewer. Be semantic and descriptive — capture the essence, not just the first few words. Use title case. No quotes, no punctuation at the end, no explanation.\n\nTask:\n${description.slice(0, 1000)}`;
-    const { stdout } = await execFileAsync('claude', ['-p', prompt, '--model', 'claude-haiku-4-5-20251001', '--max-turns', '1'], {
-      timeout: 30_000,
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 60,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+      signal: AbortSignal.timeout(10_000),
     });
-    const text = stdout.trim();
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    const data = await res.json() as any;
+    const text = (data.content?.[0]?.text ?? '').trim();
     if (text.length > 0) {
       return text.length > TITLE_MAX ? text.slice(0, TITLE_MAX - 1) + '…' : text;
     }
