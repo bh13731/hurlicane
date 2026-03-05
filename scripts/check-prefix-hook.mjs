@@ -96,7 +96,7 @@ async function processInput() {
 
   const isCommit = /\bgit\s+commit\b/.test(command);
   const isComment = /\bgh\s+(pr|issue)\s+(comment|review)\b/.test(command);
-  const isApiComment = /\bgh\s+api\b/.test(command) && /\b(comments|reviews)\b/.test(command);
+  const isApiComment = /\bgh\s+api\b/.test(command) && /\b(comments|reviews)\b/.test(command) && /(-X\s+(POST|PUT|PATCH)|-f\s|-F\s|--field\s|--raw-field\s)/.test(command);
 
   if (!isCommit && !isComment && !isApiComment) process.exit(0);
 

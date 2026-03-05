@@ -73,6 +73,7 @@ function buildJob(
     title,
     description,
     priority,
+    model: 'claude-opus-4-6',
     context,
   };
 }
@@ -262,6 +263,22 @@ async function checkAllSuitesPassed(
   }
 }
 
+/**
+ * Fetch inline comments for a review via gh CLI.
+ * Returns a formatted string of inline comments, or empty string if none/failure.
+ */
+function fetchReviewComments(repo: string, reviewId: string | number): string {
+  try {
+    const output = execSync(
+      `gh api repos/${repo}/pulls/reviews/${reviewId}/comments --jq '.[] | "\\(.path):\\(.line // .original_line // "?") — \\(.body)"'`,
+      { timeout: 15_000, stdio: ['pipe', 'pipe', 'pipe'] },
+    ).toString().trim();
+    return output || '';
+  } catch {
+    return '';
+  }
+}
+
 function handlePullRequestReview(
   payload: any,
   config: EyeConfig,
@@ -279,14 +296,17 @@ function handlePullRequestReview(
     const dedupKey = `review:${repo}#${prNum}:${review.id}`;
     if (isDuplicate(dedupKey)) return 'duplicate';
 
-    const title = `Address review on ${repo}#${prNum}`;
-    const description = [
-      `${reviewer} requested changes on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
-      review.body ? `\nReview comment:\n${review.body}` : '',
-      `\nAddress the requested changes and push a fix.`,
-    ].join('\n');
+    const inlineComments = fetchReviewComments(repo, review.id);
 
-    return buildJob(config, title, description, 4, {
+    const title = `Address review on ${repo}#${prNum}`;
+    const parts = [
+      `${reviewer} requested changes on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
+    ];
+    if (review.body) parts.push(`\nReview comment:\n${review.body}`);
+    if (inlineComments) parts.push(`\nInline comments:\n${inlineComments}`);
+    parts.push(`\nAddress the requested changes and push a fix.`);
+
+    return buildJob(config, title, parts.join('\n'), 4, {
       repo,
       pr: String(prNum),
       branch: pr.head?.ref ?? '',
@@ -299,14 +319,20 @@ function handlePullRequestReview(
     const dedupKey = `review-comment:${repo}#${prNum}:${review.id}`;
     if (isDuplicate(dedupKey)) return 'duplicate';
 
-    const title = `Review comment on ${repo}#${prNum}`;
-    const description = [
-      `${reviewer} left a review comment on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
-      `\nComment:\n${review.body}`,
-      `\nReview and respond or address the comment as needed.`,
-    ].join('\n');
+    const inlineComments = fetchReviewComments(repo, review.id);
 
-    return buildJob(config, title, description, 1, {
+    // Skip if there's no body and no inline comments (empty review)
+    if (!review.body && !inlineComments) return 'empty review comment';
+
+    const title = `Review comment on ${repo}#${prNum}`;
+    const parts = [
+      `${reviewer} left a review comment on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
+    ];
+    if (review.body) parts.push(`\nComment:\n${review.body}`);
+    if (inlineComments) parts.push(`\nInline comments:\n${inlineComments}`);
+    parts.push(`\nReview and respond or address the comment as needed.`);
+
+    return buildJob(config, title, parts.join('\n'), 1, {
       repo,
       pr: String(prNum),
       branch: pr.head?.ref ?? '',
