@@ -77,6 +77,21 @@ function buildJob(
   };
 }
 
+/**
+ * Look up the PR owner for a given repo + PR number via gh CLI.
+ * Returns the login string or null if the lookup fails.
+ */
+function fetchPrOwner(repo: string, prNum: number): string | null {
+  try {
+    return execSync(
+      `gh pr view ${prNum} --repo ${repo} --json author --jq .author.login`,
+      { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
+    ).toString().trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Event Handlers ─────────────────────────────────────────────────────────
 //
 // Each handler returns either a CreateJobRequest (matched) or a reason string
@@ -96,14 +111,16 @@ function handleCheckSuite(
   const repo = payload.repository?.full_name;
   if (!repo) return 'no repo in payload';
 
-  const sender = payload.sender?.login;
-  if (sender !== config.author) return `sender "${sender}" is not author`;
-
   const prs: any[] = suite.pull_requests ?? [];
   if (prs.length === 0) return 'no linked PRs';
 
   for (const pr of prs) {
     const prNum = pr.number;
+
+    // Check PR owner (sender on CI events is the bot, not the PR author)
+    const owner = fetchPrOwner(repo, prNum);
+    if (owner !== config.author) return `PR owner "${owner}" is not author`;
+
     const dedupKey = `ci:${repo}#${prNum}:${suite.head_sha ?? suite.id}`;
     if (isDuplicate(dedupKey)) continue;
 
@@ -137,14 +154,16 @@ function handleCheckRun(
   const repo = payload.repository?.full_name;
   if (!repo) return 'no repo in payload';
 
-  const sender = payload.sender?.login;
-  if (sender !== config.author) return `sender "${sender}" is not author`;
-
   const prs: any[] = run.pull_requests ?? [];
   if (prs.length === 0) return 'no linked PRs';
 
   for (const pr of prs) {
     const prNum = pr.number;
+
+    // Check PR owner (sender on CI events is the bot, not the PR author)
+    const owner = fetchPrOwner(repo, prNum);
+    if (owner !== config.author) return `PR owner "${owner}" is not author`;
+
     const dedupKey = `ci:${repo}#${prNum}:${run.head_sha ?? run.id}`;
     if (isDuplicate(dedupKey)) continue;
 
@@ -187,6 +206,10 @@ async function checkAllSuitesPassed(
 
   const prNum = prs[0].number;
   const branch = prs[0].head?.ref ?? '';
+
+  // Only notify for PRs owned by the configured author
+  const owner = fetchPrOwner(repo, prNum);
+  if (owner !== config.author) return;
 
   const dedupKey = `all-checks:${repo}#${prNum}:${sha}`;
   if (isDuplicate(dedupKey)) return;
@@ -342,10 +365,14 @@ async function handleIssueComment(
   });
 }
 
-async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: OrchestratorClient): Promise<string | null> {
+async function handlePullRequestMeta(payload: any, config: EyeConfig, client: OrchestratorClient): Promise<string | null> {
   const pr = payload.pull_request;
   const repo = payload.repository?.full_name;
   if (!pr || !repo) return null;
+
+  // Only handle PRs owned by the configured author
+  const prOwner = pr.user?.login;
+  if (prOwner && prOwner !== config.author) return null;
 
   const prNum = pr.number;
   const prefix = `ci:${repo}#${prNum}:`;
