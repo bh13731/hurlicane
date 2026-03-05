@@ -3399,15 +3399,11 @@ body {
   display: none;
 }
 
-/* Locks view: hidden by default, shown when active (works on all screen sizes) */
+/* Locks view: only shown on mobile/tablet when active */
 .mobile-locks-main {
   display: none;
   flex: 1;
   min-height: 0;
-}
-
-.mobile-locks-main--active {
-  display: flex;
 }
 
 .mobile-locks-main > .sidebar {
@@ -3906,6 +3902,10 @@ body {
   .mobile-worktrees-main .sidebar {
     width: 100%;
     border-right: none;
+  }
+
+  .mobile-locks-main--active {
+    display: flex;
   }
 
   .agent-grid-wrapper--hidden-mobile,
