@@ -7,7 +7,7 @@ import { cancelledAgents } from '../orchestrator/AgentRunner.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import * as socket from '../socket/SocketManager.js';
 import { runCleanupNow } from '../orchestrator/WorktreeCleanup.js';
-import { notifyPRClosed } from '../services/SlackNotifier.js';
+import { notifyPRClosed, notifyPRCreated } from '../services/SlackNotifier.js';
 
 /** Directory where worktrees are materialised. */
 const WORKTREES_DIR = path.resolve('data', 'worktrees');
@@ -270,6 +270,8 @@ router.post('/:id/pr', (req, res) => {
 
     const lines = output.split('\n');
     const url = lines[lines.length - 1];
+    const job = queries.getJobById(wt.job_id);
+    notifyPRCreated(wt.branch, url, job?.title);
     res.json({ url });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to create PR' });

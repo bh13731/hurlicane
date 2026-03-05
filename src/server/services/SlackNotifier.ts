@@ -54,6 +54,20 @@ export async function notifyPRClosed(branch: string, merged: boolean, jobTitle?:
   }
 }
 
+export async function notifyPRCreated(branch: string, url: string, jobTitle?: string | null): Promise<void> {
+  const { botToken, userId } = loadSlackSettings();
+  if (!botToken || !userId) return;
+
+  const lines = [`*PR created:* <${url}|\`${branch}\`>`];
+  if (jobTitle) lines.push(`Job: ${jobTitle}`);
+
+  try {
+    await sendSlackDM(botToken, userId, lines.join('\n'));
+  } catch (err) {
+    console.error('[slack] Failed to send PR created notification:', err);
+  }
+}
+
 export async function sendTestMessage(token: string, userId: string): Promise<{ ok: boolean; error?: string }> {
   return sendSlackDM(token, userId, 'Test notification from Hurlicane — Slack integration is working.');
 }
