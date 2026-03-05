@@ -66,10 +66,19 @@ export default function App() {
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [repos, setRepos] = useState<Repo[]>([]);
 
+  const [username, setUsername] = useState<string | null>(null);
+
   const [todayClaudeCost, setTodayClaudeCost] = useState<number | null>(null);
   const [todayCodexCost, setTodayCodexCost] = useState<number | null>(null);
   const [costAutoUpdate, setCostAutoUpdate] = useState(false);
   const fetchingCost = useRef(false);
+
+  // Fetch current user
+  useEffect(() => {
+    fetch('/api/me').then(r => r.ok ? r.json() : null).then(data => {
+      if (data?.username) setUsername(data.username);
+    }).catch(() => {});
+  }, []);
 
   // Fetch worktrees and repos periodically for job→worktree mapping
   useEffect(() => {
@@ -367,7 +376,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(true)} onSlack={() => setShowSlack(true)} onGit={() => setShowGit(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); setShowEye(false); setShowSlack(false); setShowGit(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} onDrawerToggle={() => setDrawerOpen(v => !v)} onHeaderMenuToggle={() => setHeaderMenuOpen(v => !v)} headerMenuOpen={headerMenuOpen} />
+      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(true)} onSlack={() => setShowSlack(true)} onGit={() => setShowGit(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); setShowEye(false); setShowSlack(false); setShowGit(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} onDrawerToggle={() => setDrawerOpen(v => !v)} onHeaderMenuToggle={() => setHeaderMenuOpen(v => !v)} headerMenuOpen={headerMenuOpen} username={username} />
 
       <div className={`drawer-backdrop${drawerOpen ? ' drawer-backdrop-visible' : ''}`} onClick={() => setDrawerOpen(false)} />
       {headerMenuOpen && <div className="header-menu-backdrop" onClick={() => setHeaderMenuOpen(false)} />}

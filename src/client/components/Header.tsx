@@ -25,6 +25,7 @@ interface HeaderProps {
   onDrawerToggle?: () => void;
   onHeaderMenuToggle?: () => void;
   headerMenuOpen?: boolean;
+  username?: string | null;
 }
 
 function HurlicaLogo() {
@@ -52,7 +53,7 @@ function HurlicaLogo() {
   );
 }
 
-export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onKnowledgeBase, onEye, onSlack, onGit, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate, onDrawerToggle, onHeaderMenuToggle, headerMenuOpen }: HeaderProps) {
+export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onKnowledgeBase, onEye, onSlack, onGit, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate, onDrawerToggle, onHeaderMenuToggle, headerMenuOpen, username }: HeaderProps) {
   const hasCost = (todayClaudeCost != null && todayClaudeCost > 0) || (todayCodexCost != null && todayCodexCost > 0);
   const closeMenu = () => { if (headerMenuOpen) onHeaderMenuToggle?.(); };
   return (
@@ -131,6 +132,15 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
         <button className="btn btn-primary btn-sm" onClick={() => { onNewJob(); closeMenu(); }}>
           + New Job
         </button>
+        {username && (
+          <>
+            <span className="header-divider" />
+            <span className="header-user">
+              {username}
+              <a href="/auth/logout" className="header-logout" title="Sign out">logout</a>
+            </span>
+          </>
+        )}
       </div>
     </header>
   );

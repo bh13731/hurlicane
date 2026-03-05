@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 
 const COOKIE_NAME = 'hurlicane_session';
+const USERNAME_COOKIE = 'hurlicane_user';
 const COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const secret = process.env.AUTH_SECRET ?? randomBytes(32).toString('hex');
@@ -73,13 +74,21 @@ export function handleLogin(req: Request, res: Response): void {
   }
 
   const password = req.body?.password;
+  const username = (req.body?.username ?? '').trim();
   if (password !== process.env.AUTH_PASSWORD) {
     res.status(401).send(getLoginPageHtml('Invalid password'));
     return;
   }
 
+  if (!username) {
+    res.status(401).send(getLoginPageHtml('Username is required'));
+    return;
+  }
+
+  const maxAge = Math.floor(COOKIE_MAX_AGE_MS / 1000);
   res.setHeader('Set-Cookie', [
-    `${COOKIE_NAME}=${makeSessionValue()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(COOKIE_MAX_AGE_MS / 1000)}`,
+    `${COOKIE_NAME}=${makeSessionValue()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`,
+    `${USERNAME_COOKIE}=${encodeURIComponent(username)}; SameSite=Lax; Path=/; Max-Age=${maxAge}`,
   ]);
   res.redirect('/');
 }
@@ -88,6 +97,7 @@ export function handleLogin(req: Request, res: Response): void {
 export function handleLogout(_req: Request, res: Response): void {
   res.setHeader('Set-Cookie', [
     `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
+    `${USERNAME_COOKIE}=; SameSite=Lax; Path=/; Max-Age=0`,
   ]);
   res.redirect('/');
 }
@@ -96,6 +106,18 @@ export function handleLogout(_req: Request, res: Response): void {
 export function isSocketAuthenticated(cookieHeader: string | undefined): boolean {
   if (!isAuthEnabled()) return true;
   return hasValidCookie(cookieHeader);
+}
+
+/** Extract username from cookie header */
+export function getUsername(req: Request): string | null {
+  const value = parseCookie(req.headers.cookie, USERNAME_COOKIE);
+  return value ? decodeURIComponent(value) : null;
+}
+
+/** GET /api/me handler */
+export function handleMe(req: Request, res: Response): void {
+  const username = getUsername(req);
+  res.json({ username, authEnabled: isAuthEnabled() });
 }
 
 function getLoginPageHtml(error?: string): string {
@@ -129,7 +151,7 @@ function getLoginPageHtml(error?: string): string {
       max-width: 380px;
     }
     h1 { font-size: 20px; margin-bottom: 24px; text-align: center; }
-    input[type="password"] {
+    input[type="text"], input[type="password"] {
       width: 100%;
       padding: 10px 12px;
       border: 1px solid #404040;
@@ -140,7 +162,7 @@ function getLoginPageHtml(error?: string): string {
       margin-bottom: 16px;
       outline: none;
     }
-    input[type="password"]:focus { border-color: #6366f1; }
+    input[type="text"]:focus, input[type="password"]:focus { border-color: #6366f1; }
     button {
       width: 100%;
       padding: 10px;
@@ -160,7 +182,8 @@ function getLoginPageHtml(error?: string): string {
     <h1>Hurlicane</h1>
     ${errorHtml}
     <form method="POST" action="/auth/login">
-      <input type="password" name="password" placeholder="Password" autofocus required>
+      <input type="text" name="username" placeholder="Username" autofocus required>
+      <input type="password" name="password" placeholder="Password" required>
       <button type="submit">Sign in</button>
     </form>
   </div>

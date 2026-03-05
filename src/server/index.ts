@@ -15,7 +15,7 @@ import { runRecovery } from './orchestrator/recovery.js';
 import { writeInput, resizePty } from './orchestrator/PtyManager.js';
 import { stopEyeProcess } from './api/eye.js';
 import * as queries from './db/queries.js';
-import { authMiddleware, handleLogin, handleLogout, isSocketAuthenticated, isAuthEnabled } from './auth.js';
+import { authMiddleware, handleLogin, handleLogout, handleMe, isSocketAuthenticated, isAuthEnabled } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -62,6 +62,9 @@ async function main() {
 
   // Auth gate — everything below requires a valid session (when AUTH_PASSWORD is set)
   app.use(authMiddleware);
+
+  // User info
+  app.get('/api/me', handleMe);
 
   // REST API
   app.use('/api', apiRouter);
