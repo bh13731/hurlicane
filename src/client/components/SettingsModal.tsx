@@ -11,6 +11,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [saving, setSaving] = useState(false);
   const [worktreeStats, setWorktreeStats] = useState<{ active: number; cleaned: number } | null>(null);
   const [cleaning, setCleaning] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     fetch('/api/settings')
@@ -114,6 +115,35 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </button>
             </div>
           )}
+
+          <div className="form-group" style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+            <label>Server</label>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+              Pull latest code, rebuild, and restart the server.
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              disabled={restarting}
+              onClick={async () => {
+                if (!confirm('This will restart the server. Continue?')) return;
+                setRestarting(true);
+                try { await fetch('/api/admin/restart', { method: 'POST' }); } catch { /* server will die */ }
+                // Poll until server comes back
+                const poll = () => {
+                  setTimeout(async () => {
+                    try {
+                      const r = await fetch('/api/settings');
+                      if (r.ok) window.location.reload();
+                      else poll();
+                    } catch { poll(); }
+                  }, 2000);
+                };
+                poll();
+              }}
+            >
+              {restarting ? 'Restarting…' : 'Pull & Restart'}
+            </button>
+          </div>
         </div>
         <div className="modal-footer">
           <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
