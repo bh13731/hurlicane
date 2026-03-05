@@ -3511,7 +3511,7 @@ body {
     inset: 0;
     width: 100% !important;
     min-width: 0 !important;
-    z-index: 150;
+    z-index: 210;
     border-left: none;
   }
 
