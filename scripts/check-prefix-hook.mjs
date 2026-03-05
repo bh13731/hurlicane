@@ -32,55 +32,43 @@ async function getBotName() {
     const res = await fetch(`${apiUrl}/api/settings`);
     if (!res.ok) return null;
     const data = await res.json();
-    return data.botName || null;
+    // Strip surrounding brackets if present — user may have entered "[Name]"
+    const raw = data.botName || '';
+    return raw.replace(/^\[|\]$/g, '') || null;
   } catch {
     return null;
   }
 }
 
 /**
- * Extract the commit message from a git commit command string.
+ * Extract text content from a command, looking for the message/body.
+ * Tries multiple patterns and returns the first match.
  */
-function extractCommitMessage(cmd) {
-  // Heredoc pattern: -m "$(cat <<'EOF'\n...\nEOF\n)" — check first
-  const heredoc = cmd.match(/-m\s+"\$\(cat\s+<<'?\w+'?\s*\n([\s\S]*?)\n\s*\w+\s*\n?\s*\)"/);
+function extractFlagValue(cmd, flags) {
+  // flags is an array like ['-m'] or ['--body', '-b']
+  const flagPattern = flags.map(f => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+
+  // 1. Heredoc: flag "$(cat <<'DELIM'\n...\nDELIM\n)"
+  const heredoc = cmd.match(new RegExp(`(?:${flagPattern})\\s+"\\$\\(cat\\s+<<'?\\w+'?[\\s\\S]*?\\n([\\s\\S]*?)\\n\\s*\\w+\\s*\\n?\\s*\\)"`));
   if (heredoc) return heredoc[1].trim();
 
-  const doubleQuote = cmd.match(/-m\s+"((?:[^"\\]|\\.)*)"/);
-  if (doubleQuote) return doubleQuote[1];
+  // 2. Double-quoted (but NOT heredoc — skip if starts with $()
+  const dq = cmd.match(new RegExp(`(?:${flagPattern})\\s+"((?:[^"\\\\]|\\\\.)*)"`, 's'));
+  if (dq) {
+    const val = dq[1];
+    // If this matched a heredoc wrapper like $(cat <<'EOF'...), extract inner content
+    const innerHeredoc = val.match(/^\$\(cat\s+<<'?\w+'?\s*\n([\s\S]*?)\n\s*\w+\s*$/);
+    if (innerHeredoc) return innerHeredoc[1].trim();
+    return val;
+  }
 
-  const singleQuote = cmd.match(/-m\s+'((?:[^'\\]|\\.)*)'/);
-  if (singleQuote) return singleQuote[1];
-
-  const unquoted = cmd.match(/-m\s+(\S+)/);
-  if (unquoted) return unquoted[1];
-
-  return null;
-}
-
-/**
- * Extract the body from a gh comment command.
- */
-function extractCommentBody(cmd) {
-  // Heredoc pattern — check first
-  const heredoc = cmd.match(/(?:--body|-b)\s+"\$\(cat\s+<<'?\w+'?\s*\n([\s\S]*?)\n\s*\w+\s*\n?\s*\)"/);
-  if (heredoc) return heredoc[1].trim();
-
-  const dq = cmd.match(/(?:--body|-b)\s+"((?:[^"\\]|\\.)*)"/);
-  if (dq) return dq[1];
-
-  const sq = cmd.match(/(?:--body|-b)\s+'((?:[^'\\]|\\.)*)'/);
+  // 3. Single-quoted
+  const sq = cmd.match(new RegExp(`(?:${flagPattern})\\s+'((?:[^'\\\\]|\\\\.)*)'`));
   if (sq) return sq[1];
 
-  // Unquoted: --body something
-  const unquoted = cmd.match(/(?:--body|-b)\s+([^-\s"][^\n]*)/);
+  // 4. Unquoted (rest of token until whitespace or next flag)
+  const unquoted = cmd.match(new RegExp(`(?:${flagPattern})\\s+([^\\s"'-][^\\n]*)`));
   if (unquoted) return unquoted[1].trim();
-
-  // gh api with -f body=
-  const apiField = cmd.match(/-f\s+body="((?:[^"\\]|\\.)*)"/);
-  if (apiField) return apiField[1];
-  const apiFieldSq = cmd.match(/-f\s+body='((?:[^'\\]|\\.)*)'/);
-  if (apiFieldSq) return apiFieldSq[1];
 
   return null;
 }
@@ -115,7 +103,7 @@ async function processInput() {
   const prefix = `[${botName}]`;
 
   if (isCommit) {
-    const msg = extractCommitMessage(command);
+    const msg = extractFlagValue(command, ['-m']);
     if (msg === null) {
       return block(`Commit message must start with "${prefix}". Could not verify the message format.`);
     }
@@ -125,7 +113,12 @@ async function processInput() {
   }
 
   if (isComment || isApiComment) {
-    const body = extractCommentBody(command);
+    // Try --body/-b first, then -f body= for gh api
+    let body = extractFlagValue(command, ['--body', '-b']);
+    if (body === null && isApiComment) {
+      const apiField = command.match(/-f\s+body=["']?((?:[^"'\\]|\\.)*)["']?/);
+      if (apiField) body = apiField[1];
+    }
     if (body === null) {
       return block(`Comment/review body must start with "${prefix}". Could not verify the message format. Use --body "${prefix} ..." with your message.`);
     }
