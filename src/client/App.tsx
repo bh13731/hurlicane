@@ -59,7 +59,7 @@ export default function App() {
   const [showGit, setShowGit] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [archivedJobs, setArchivedJobs] = useState<Job[]>([]);
-  const [leftTab, setLeftTab] = useState<'feed' | 'lineage' | 'worktrees'>('feed');
+  const [leftTab, setLeftTab] = useState<'feed' | 'lineage' | 'worktrees' | 'locks'>('feed');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [selectedWorktree, setSelectedWorktree] = useState<Worktree | null>(null);
@@ -370,6 +370,7 @@ export default function App() {
       <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(true)} onSlack={() => setShowSlack(true)} onGit={() => setShowGit(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); setShowEye(false); setShowSlack(false); setShowGit(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} onDrawerToggle={() => setDrawerOpen(v => !v)} onHeaderMenuToggle={() => setHeaderMenuOpen(v => !v)} headerMenuOpen={headerMenuOpen} />
 
       <div className={`drawer-backdrop${drawerOpen ? ' drawer-backdrop-visible' : ''}`} onClick={() => setDrawerOpen(false)} />
+      {headerMenuOpen && <div className="header-menu-backdrop" onClick={() => setHeaderMenuOpen(false)} />}
 
       <div className="main-layout">
         <div className={`left-sidebar-stack ${(leftTab === 'lineage' && selectedAgent) || leftTab === 'worktrees' ? '' : 'left-sidebar-stack--narrow'}${drawerOpen ? ' drawer-open' : ''}`}>
@@ -388,6 +389,10 @@ export default function App() {
               className={`left-sidebar-tab ${leftTab === 'worktrees' ? 'left-sidebar-tab--active' : ''}`}
               onClick={() => setLeftTab('worktrees')}
             >Worktrees</button>
+            <button
+              className={`left-sidebar-tab ${leftTab === 'locks' ? 'left-sidebar-tab--active' : ''}`}
+              onClick={() => setLeftTab('locks')}
+            >Locks</button>
           </div>
           {leftTab === 'worktrees' ? (
             <WorktreesSidebar
@@ -413,8 +418,19 @@ export default function App() {
           )}
         </div>
 
-        <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
-          <AgentGrid agents={filteredAgents} queuedJobs={filteredJobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} onArchiveJob={handleArchiveJob} onArchiveAll={handleArchiveAll} templates={templates} selectedAgentId={selectedAgent?.id ?? null} ptyIdleAgentIds={ptyIdleAgents} worktreesByJobId={worktreesByJobId} worktreesByPath={worktreesByPath} repoById={repoById} />
+        <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''} ${leftTab === 'locks' ? 'agent-main-locks' : ''}`}>
+          <div className={`mobile-worktrees-main ${leftTab === 'worktrees' ? 'mobile-worktrees-main--active' : ''}`}>
+            <WorktreesSidebar
+              selectedWorktreeId={selectedWorktree?.id}
+              onSelectWorktree={(wt) => { setSelectedAgent(null); setSelectedWorktree(wt); }}
+            />
+          </div>
+          <div className={`mobile-locks-main ${leftTab === 'locks' ? 'mobile-locks-main--active' : ''}`}>
+            <FileLockMap locks={locks} />
+          </div>
+          <div className={`agent-grid-wrapper ${leftTab === 'worktrees' ? 'agent-grid-wrapper--hidden-mobile' : ''} ${leftTab === 'locks' ? 'agent-grid-wrapper--hidden-locks' : ''}`}>
+            <AgentGrid agents={filteredAgents} queuedJobs={filteredJobs.filter(j => j.status === 'queued')} onSelectAgent={handleSelectAgent} onArchiveJob={handleArchiveJob} onArchiveAll={handleArchiveAll} templates={templates} selectedAgentId={selectedAgent?.id ?? null} ptyIdleAgentIds={ptyIdleAgents} worktreesByJobId={worktreesByJobId} worktreesByPath={worktreesByPath} repoById={repoById} />
+          </div>
         </main>
 
         {selectedAgent ? (
@@ -431,9 +447,7 @@ export default function App() {
             onDeleted={() => setSelectedWorktree(null)}
             onClose={() => setSelectedWorktree(null)}
           />
-        ) : (
-          <FileLockMap locks={locks} />
-        )}
+        ) : null}
       </div>
 
       {showJobForm && (
@@ -536,6 +550,31 @@ export default function App() {
           onClose={() => setShowProjects(false)}
         />
       )}
+
+      {/* Mobile bottom tab bar */}
+      <nav className="mobile-bottom-tabs">
+        <button
+          className={`mobile-bottom-tab ${leftTab === 'feed' || leftTab === 'lineage' ? 'mobile-bottom-tab--active' : ''}`}
+          onClick={() => { setLeftTab('feed'); setSelectedWorktree(null); }}
+        >
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+          Agents
+        </button>
+        <button
+          className={`mobile-bottom-tab ${leftTab === 'worktrees' ? 'mobile-bottom-tab--active' : ''}`}
+          onClick={() => setLeftTab('worktrees')}
+        >
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M2 6a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1H8a3 3 0 00-3 3v1.5a1.5 1.5 0 01-3 0V6z" clipRule="evenodd"/><path d="M6 12a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H2h2a2 2 0 002-2v-2z"/></svg>
+          Worktrees
+        </button>
+        <button
+          className={`mobile-bottom-tab ${leftTab === 'locks' ? 'mobile-bottom-tab--active' : ''}`}
+          onClick={() => setLeftTab('locks')}
+        >
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd"/></svg>
+          Locks
+        </button>
+      </nav>
 
       <ToastFeed
         toasts={toasts}

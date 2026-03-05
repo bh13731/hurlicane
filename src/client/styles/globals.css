@@ -69,11 +69,14 @@ body {
   background: var(--bg-primary);
   color: var(--text-primary);
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #root {
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
 }
@@ -84,6 +87,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -1052,6 +1056,26 @@ body {
   min-width: 0;
 }
 
+.terminal-back-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  transition: color 0.1s;
+}
+
+.terminal-back-btn:hover {
+  color: var(--text-primary);
+}
+
 .terminal-header-actions {
   display: flex;
   align-items: center;
@@ -1473,7 +1497,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: 300;
   animation: overlay-fade-in 0.2s ease-out;
 }
 
@@ -2798,13 +2822,15 @@ body {
 
 .eye-stats-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 1px;
   background: var(--border);
   border-bottom: 1px solid var(--border);
 }
 
 .eye-stat {
-  flex: 1;
+  flex: 1 1 80px;
+  min-width: 80px;
   padding: 14px 16px;
   background: var(--bg-surface);
   text-align: center;
@@ -2827,8 +2853,9 @@ body {
 
 .eye-config-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 20px;
+  gap: 10px 20px;
   padding: 10px 20px;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
@@ -3020,6 +3047,7 @@ body {
 
 .eye-config-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -3031,7 +3059,7 @@ body {
 
 .eye-event-toggles {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 6px;
 }
 
@@ -3350,6 +3378,53 @@ body {
   display: none;
 }
 
+.header-menu-backdrop {
+  display: none;
+}
+
+.mobile-bottom-tabs {
+  display: none;
+}
+
+/* Desktop: hide the mobile worktrees main, show agent grid wrapper always */
+.mobile-worktrees-main {
+  display: none;
+}
+
+/* Locks view: hidden by default, shown when active (works on all screen sizes) */
+.mobile-locks-main {
+  display: none;
+  flex: 1;
+  min-height: 0;
+}
+
+.mobile-locks-main--active {
+  display: flex;
+}
+
+.mobile-locks-main > .sidebar {
+  width: 100%;
+  flex: 1;
+  border-left: none;
+  border-right: none;
+  overflow-y: auto;
+}
+
+.agent-main-locks {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-grid-wrapper {
+  display: contents;
+}
+
+/* When locks tab is active, hide agent grid on all sizes */
+.agent-grid-wrapper--hidden-locks {
+  display: none;
+}
+
 /* ─── Tablet breakpoint ───────────────────────────────────────────────────── */
 
 @media (max-width: 768px) {
@@ -3432,11 +3507,96 @@ body {
     border-left: none;
   }
 
-  /* --- Agent grid single column --- */
+  /* --- Terminal header: compact for mobile --- */
+
+  .terminal-back-btn {
+    display: flex;
+  }
+
+  .terminal-header {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .terminal-job-title {
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .terminal-agent-id {
+    font-size: 9px;
+  }
+
+  /* --- Job request section: compact --- */
+
+  .job-request-section {
+    padding: 8px 12px;
+    max-height: 120px;
+  }
+
+  .job-request-description {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  /* --- Continue/question forms at bottom --- */
+
+  .continue-form,
+  .question-form {
+    flex-direction: column;
+    padding: 8px 12px;
+  }
+
+  .continue-form input,
+  .question-form input {
+    width: 100%;
+  }
+
+  /* --- Agent grid: two columns on tablet --- */
 
   .agent-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
+
+  /* --- Agent cards: compact for mobile --- */
+
+  .agent-card {
+    padding: 10px;
+  }
+
+  .agent-card-header {
+    margin-bottom: 4px;
+  }
+
+  .agent-card-title {
+    font-size: 12px;
+  }
+
+  .agent-card-status {
+    font-size: 10px;
+  }
+
+  .agent-card-meta {
+    font-size: 10px;
+  }
+
+  .agent-card-footer {
+    margin-top: 6px;
+    gap: 4px;
+  }
+
+  /* --- Agent card actions always visible (no hover on touch) --- */
+
+  .agent-card .archive-btn,
+  .agent-card .flag-btn,
+  .agent-card .interactive-toggle,
+  .agent-card .requeue-btn {
+    opacity: 1;
+    visibility: visible;
+  }
+
 
   /* --- Header actions → overflow menu --- */
 
@@ -3449,31 +3609,34 @@ body {
     flex-direction: column;
     position: absolute;
     top: 100%;
-    right: 12px;
+    right: 0;
+    left: 0;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 0 0 12px 12px;
     padding: 8px;
-    gap: 4px;
+    gap: 2px;
     z-index: 201;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     max-height: 70vh;
     overflow-y: auto;
-    min-width: 220px;
   }
 
   .header-actions-open .header-btn-group {
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
     background: none;
     border-radius: 0;
-    gap: 0;
+    gap: 4px;
   }
 
   .header-actions-open .header-btn {
-    text-align: left;
+    text-align: center;
     border-radius: 6px;
     padding: 10px 12px;
     min-height: 44px;
+    flex: 1 1 auto;
+    background: var(--bg-interactive);
   }
 
   .header-actions-open .header-divider {
@@ -3487,12 +3650,18 @@ body {
   .header-actions-open .search-input-header {
     min-height: 44px;
     font-size: 16px;
+    width: 100%;
   }
 
   .header-actions-open .btn-primary {
     min-height: 44px;
     width: 100%;
     justify-content: center;
+  }
+
+  .header-actions-open .btn-icon {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .mobile-header-overflow {
@@ -3513,6 +3682,14 @@ body {
   .mobile-header-overflow:hover {
     background: var(--bg-interactive);
     color: var(--text-primary);
+  }
+
+  .header-menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: transparent;
   }
 
   /* --- Touch targets: 44px minimum --- */
@@ -3574,18 +3751,6 @@ body {
     display: none;
   }
 
-  /* --- Stacked continue/question forms --- */
-
-  .continue-form,
-  .question-form {
-    flex-direction: column;
-  }
-
-  .continue-form input,
-  .question-form input {
-    width: 100%;
-  }
-
   /* --- Template layout stacked --- */
 
   .template-layout {
@@ -3621,9 +3786,11 @@ body {
   /* --- Header styling --- */
 
   .header {
-    position: relative;
+    position: sticky;
+    top: 0;
     padding: 8px 12px;
     gap: 8px;
+    z-index: 202;
   }
 
   .header-title {
@@ -3639,10 +3806,133 @@ body {
   .agent-main {
     min-height: 0;
     overflow-y: auto;
+    padding: 12px;
   }
 
   .agent-main-split {
     display: none;
+  }
+
+  /* --- Agent grid container: tighter --- */
+
+  .agent-grid-container {
+    gap: 10px;
+  }
+
+  /* --- Agent filter bar: scrollable --- */
+
+  .agent-filter-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 6px;
+  }
+
+  .agent-filter-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* --- Rename title input on mobile --- */
+
+  .terminal-job-title-input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  /* --- Running jobs panel: compact --- */
+
+  .running-jobs-panel {
+    max-height: 40vh;
+  }
+
+  /* --- Mobile bottom tab bar --- */
+
+  .mobile-bottom-tabs {
+    display: flex;
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    background: var(--bg-surface);
+    z-index: 100;
+  }
+
+  .mobile-bottom-tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 0;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s;
+    min-height: 50px;
+    justify-content: center;
+  }
+
+  .mobile-bottom-tab--active {
+    color: var(--accent);
+  }
+
+  /* --- Mobile worktrees view in main area --- */
+
+  .mobile-worktrees-main {
+    display: none;
+    flex-direction: column;
+    height: 100%;
+    overflow-y: auto;
+  }
+
+  .mobile-worktrees-main--active {
+    display: flex;
+  }
+
+  .mobile-worktrees-main .sidebar {
+    width: 100%;
+    border-right: none;
+  }
+
+  .agent-grid-wrapper--hidden-mobile {
+    display: none;
+  }
+
+  /* --- WorktreeDetail full-screen on mobile --- */
+
+  .worktree-detail {
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+    border-left: none;
+  }
+
+  .worktree-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 12px;
+  }
+
+  .worktree-action-btn {
+    min-height: 40px;
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+
+  .worktree-detail-header {
+    padding: 10px 12px;
+  }
+
+  .worktree-detail-close {
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    top: 4px;
+    right: 4px;
   }
 }
 
@@ -3654,6 +3944,15 @@ body {
 
   .header {
     padding: 6px 8px;
+  }
+
+  .header-logo-btn svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .header-title {
+    font-size: 14px;
   }
 
   .modal-body {
@@ -3676,23 +3975,40 @@ body {
     max-width: 320px;
   }
 
-  /* Horizontal-scroll filter bar */
+  /* Agent grid: single column on phone */
 
-  .agent-filter-bar {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    padding-bottom: 4px;
+  .agent-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
   }
 
-  .agent-filter-bar::-webkit-scrollbar {
-    display: none;
+  .agent-grid-container {
+    gap: 8px;
+    padding: 8px;
   }
+
+  .agent-main {
+    padding: 8px;
+  }
+
+  /* Even more compact agent cards on phone */
+
+  .agent-card {
+    padding: 8px 10px;
+    border-radius: 6px;
+  }
+
+  .agent-card:hover {
+    transform: none; /* disable hover lift on touch */
+  }
+
+  /* Agent filter buttons */
 
   .agent-filter-btn {
     white-space: nowrap;
     flex-shrink: 0;
+    padding: 6px 10px;
+    font-size: 11px;
   }
 
   /* Hide project badge on phone */
@@ -3701,15 +4017,25 @@ body {
     display: none;
   }
 
-  /* Smaller grid gap */
+  /* Terminal: tighter on phone */
 
-  .agent-grid {
-    gap: 10px;
+  .terminal-header {
+    padding: 6px 8px;
   }
 
-  .agent-grid-container {
-    gap: 10px;
-    padding: 10px;
+  .terminal-header-actions {
+    gap: 4px;
+  }
+
+  .terminal-header-actions .btn,
+  .terminal-header-actions .btn-icon {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+
+  .job-request-section {
+    padding: 6px 8px;
+    max-height: 100px;
   }
 
   /* Toast tighter */
@@ -3718,5 +4044,29 @@ body {
     left: 8px;
     right: 8px;
     bottom: 12px;
+  }
+
+  /* Overflow menu: full width, tighter */
+
+  .header-actions-open .header-btn {
+    padding: 8px 10px;
+    min-height: 40px;
+    font-size: 13px;
+  }
+
+  .header-actions-open .search-input-header {
+    min-height: 40px;
+  }
+
+  /* Agent grid empty state: smaller */
+
+  .agent-grid-empty {
+    height: 200px;
+    font-size: 13px;
+  }
+
+  .agent-grid-empty::before {
+    width: 80px;
+    height: 80px;
   }
 }
