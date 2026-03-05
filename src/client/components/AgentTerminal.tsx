@@ -795,6 +795,29 @@ export function AgentTerminal({ agent, onClose, onContinued, onRenameJob }: Agen
       )}
       <div ref={containerRef} className={`xterm-container${activeTab !== 'output' ? ' xterm-hidden' : ''}`} />
 
+      {isInteractive && activeTab === 'output' && ['running', 'starting'].includes(agent.status) && (
+        <div className="terminal-quick-actions">
+          <button className="terminal-quick-btn" onClick={() => socket.emit('pty:input', { agent_id: agent.id, data: '\x03' })} title="Ctrl+C">
+            Ctrl+C
+          </button>
+          <button className="terminal-quick-btn" onClick={() => socket.emit('pty:input', { agent_id: agent.id, data: '\r' })} title="Enter">
+            Enter
+          </button>
+          <button className="terminal-quick-btn" onClick={() => socket.emit('pty:input', { agent_id: agent.id, data: 'y\r' })} title="Type y and Enter">
+            y
+          </button>
+          <button className="terminal-quick-btn" onClick={() => socket.emit('pty:input', { agent_id: agent.id, data: 'n\r' })} title="Type n and Enter">
+            n
+          </button>
+          <button className="terminal-quick-btn" onClick={() => socket.emit('pty:input', { agent_id: agent.id, data: '\x1b' })} title="Escape">
+            Esc
+          </button>
+          <button className="terminal-quick-btn" onClick={() => socket.emit('pty:input', { agent_id: agent.id, data: '\x04' })} title="Ctrl+D (EOF)">
+            Ctrl+D
+          </button>
+        </div>
+      )}
+
       {activeTab === 'changes' && (
         <div className="diff-panel">
           {diff

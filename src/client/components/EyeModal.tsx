@@ -263,11 +263,14 @@ export function EyeModal({ onClose }: EyeModalProps) {
     }
   };
 
+  const [hideIgnored, setHideIgnored] = useState(false);
+
   // ─── Derived ────────────────────────────────────────────────────────────
 
   const isRunning = eyeConnected === true;
   const allEvents = eyeStatus?.recent_events ? [...eyeStatus.recent_events].reverse() : [];
-  const events = allEvents;
+  const events = hideIgnored ? allEvents.filter(ev => ev.decision !== 'ignored') : allEvents;
+  const ignoredCount = allEvents.length - allEvents.filter(ev => ev.decision !== 'ignored').length;
   const canLaunch = !!webhookSecret && !!author && !!templateId;
 
   return (
@@ -354,6 +357,16 @@ export function EyeModal({ onClose }: EyeModalProps) {
                   Events
                   <span className="eye-events-count">{events.length}</span>
                 </span>
+                {ignoredCount > 0 && (
+                  <label className="eye-hide-ignored-toggle">
+                    <input
+                      type="checkbox"
+                      checked={hideIgnored}
+                      onChange={e => setHideIgnored(e.target.checked)}
+                    />
+                    Hide ignored ({ignoredCount})
+                  </label>
+                )}
               </div>
               <div className="eye-events-list">
                 {events.length === 0 && (

@@ -7,6 +7,7 @@ interface SettingsModalProps {
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [maxConcurrent, setMaxConcurrent] = useState<number>(20);
   const [botName, setBotName] = useState('');
+  const [defaultModel, setDefaultModel] = useState('');
   const [systemPromptAppendix, setSystemPromptAppendix] = useState('');
   const [saving, setSaving] = useState(false);
   const [worktreeStats, setWorktreeStats] = useState<{ active: number; cleaned: number } | null>(null);
@@ -19,6 +20,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       .then(data => {
         setMaxConcurrent(data.maxConcurrentAgents);
         setBotName(data.botName ?? '');
+        setDefaultModel(data.defaultModel ?? '');
         setSystemPromptAppendix(data.systemPromptAppendix ?? '');
       })
       .catch(() => {});
@@ -34,7 +36,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent, botName, systemPromptAppendix }),
+        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent, botName, defaultModel, systemPromptAppendix }),
       });
       if (res.ok) onClose();
     } finally {
@@ -88,6 +90,22 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               onChange={e => setMaxConcurrent(Number(e.target.value))}
               style={{ width: 80 }}
             />
+          </div>
+          <div className="form-group">
+            <label>Default Model</label>
+            <select
+              value={defaultModel}
+              onChange={e => setDefaultModel(e.target.value)}
+              style={{ width: 280 }}
+            >
+              <option value="">Auto-classify (haiku/sonnet/opus)</option>
+              <option value="claude-haiku-4-5-20251001">Haiku</option>
+              <option value="claude-sonnet-4-6[1m]">Sonnet</option>
+              <option value="claude-opus-4-6[1m]">Opus</option>
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+              When set, all jobs without an explicit model use this instead of LLM-based classification.
+            </div>
           </div>
           <div className="form-group">
             <label>System Prompt Appendix</label>

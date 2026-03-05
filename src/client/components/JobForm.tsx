@@ -116,10 +116,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
       const selectedRepo = repos.find(r => r.id === branchRepoId);
 
       let workDir: string | undefined;
-      if (readonly) {
-        // Readonly jobs run directly in the repo — use first repo's path
-        workDir = repos[0]?.path || undefined;
-      } else if (branchMode === 'existing' && selectedWorktree) {
+      if (branchMode === 'existing' && selectedWorktree) {
         workDir = selectedWorktree.path;
       } else if (branchMode === 'remote' && selectedRemoteBranch && branchRepoId) {
         // Create a worktree tracking the remote branch
@@ -148,7 +145,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
         interactive: interactive || undefined,
         readonly: readonly || undefined,
-        useWorktree: readonly ? false : true,
+        useWorktree: true,
         repeatIntervalMs: repeatSeconds ? (repeatSeconds as number) * 1000 : undefined,
         retryPolicy: retryPolicy !== 'none' ? retryPolicy : undefined,
         maxRetries: retryPolicy !== 'none' ? maxRetries : undefined,
@@ -229,11 +226,11 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               />
               Readonly (no file edits)
               {selectedTemplate?.is_readonly ? <span className="form-label-hint"> (enforced by template)</span> : null}
-              <span className="tooltip-icon" data-tip="Runs directly in the repo without a worktree. The agent is blocked from modifying any files. Useful for research, analysis, and code review.">?</span>
+              <span className="tooltip-icon" data-tip="The agent is blocked from modifying any files. Useful for research, analysis, and code review. Can still use a worktree for branch context.">?</span>
             </label>
           </div>
 
-          {!readonly && <div className="form-group">
+          <div className="form-group">
             <label>Worktree</label>
             <div className="form-row" style={{ marginBottom: 8 }}>
               <label className="form-checkbox-label">
@@ -387,7 +384,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
                 </div>
               </div>
             )}
-          </div>}
+          </div>
 
           <div className="form-row">
             <div className="form-group form-group-sm">

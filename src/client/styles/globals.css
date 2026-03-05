@@ -1950,6 +1950,12 @@ body {
   background: rgba(88, 166, 255, 0.06);
 }
 
+/* ─── Terminal Quick Actions (mobile only) ─────────────────────────────────── */
+
+.terminal-quick-actions {
+  display: none;
+}
+
 .xterm-hidden {
   display: none !important;
 }
@@ -2905,6 +2911,21 @@ body {
   color: var(--text-muted);
 }
 
+.eye-hide-ignored-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.eye-hide-ignored-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
 .eye-events-list {
   overflow-y: auto;
   flex: 1;
@@ -3570,6 +3591,82 @@ body {
 
   .terminal-agent-id {
     font-size: 9px;
+  }
+
+  /* --- Terminal quick-action toolbar --- */
+
+  .terminal-quick-actions {
+    display: flex;
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .terminal-quick-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .terminal-quick-btn {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    min-height: 40px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    background: var(--bg-interactive);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .terminal-quick-btn:active {
+    background: var(--accent-muted);
+    color: var(--text-primary);
+  }
+
+  /* --- Terminal tabs: bigger touch targets --- */
+
+  .terminal-tab {
+    min-height: 44px;
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+
+  /* --- Continue form: mobile friendly --- */
+
+  .continue-area {
+    padding: 10px 12px;
+  }
+
+  .continue-form {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .continue-form input[type="text"] {
+    width: 100%;
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .continue-form .btn {
+    min-height: 44px;
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* --- xterm: reduce padding on mobile --- */
+
+  .xterm-container {
+    padding: 4px;
   }
 
   /* --- Job request section: compact --- */

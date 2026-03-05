@@ -20,6 +20,15 @@ export async function resolveModel(job: Job): Promise<string> {
   // Explicit model chosen by user — respect it
   if (job.model !== null) return job.model;
 
+  // Default model from settings — skip classification entirely
+  const defaultModel = queries.getNote('setting:defaultModel')?.value;
+  if (defaultModel) {
+    console.log(`[classifier] "${job.title}" → using default model ${defaultModel}`);
+    queries.updateJobModel(job.id, defaultModel);
+    socket.emitJobUpdate(queries.getJobById(job.id)!);
+    return defaultModel;
+  }
+
   const prompt = buildClassifierPrompt(job);
 
   try {

@@ -9,6 +9,7 @@ router.get('/', (_req, res) => {
     maxConcurrentAgents: getMaxConcurrent(),
     systemPromptAppendix: queries.getNote('setting:systemPromptAppendix')?.value ?? '',
     botName: queries.getNote('setting:botName')?.value ?? '',
+    defaultModel: queries.getNote('setting:defaultModel')?.value ?? '',
   });
 });
 
@@ -27,10 +28,14 @@ router.put('/', (req, res) => {
   if (req.body.botName !== undefined) {
     queries.upsertNote('setting:botName', String(req.body.botName), null);
   }
+  if (req.body.defaultModel !== undefined) {
+    queries.upsertNote('setting:defaultModel', String(req.body.defaultModel), null);
+  }
   res.json({
     maxConcurrentAgents: n,
     systemPromptAppendix: queries.getNote('setting:systemPromptAppendix')?.value ?? '',
     botName: queries.getNote('setting:botName')?.value ?? '',
+    defaultModel: queries.getNote('setting:defaultModel')?.value ?? '',
   });
 });
 
