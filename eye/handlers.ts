@@ -269,11 +269,33 @@ async function checkAllSuitesPassed(
  */
 function fetchReviewComments(repo: string, prNum: number | string, reviewId: string | number): string {
   try {
-    const output = execSync(
-      `gh api repos/${repo}/pulls/${prNum}/reviews/${reviewId}/comments --jq '.[] | "\\(.path):\\(.line // .original_line // "?") — \\(.body)"'`,
+    // Fetch all PR comments so we can resolve line numbers for replies via in_reply_to_id
+    const allCommentsJson = execSync(
+      `gh api repos/${repo}/pulls/${prNum}/comments --paginate`,
       { timeout: 15_000, stdio: ['pipe', 'pipe', 'pipe'] },
     ).toString().trim();
-    return output || '';
+    const allComments: any[] = allCommentsJson ? JSON.parse(allCommentsJson) : [];
+    const lineById = new Map<number, { path: string; line: number | null }>();
+    for (const c of allComments) {
+      lineById.set(c.id, { path: c.path, line: c.line ?? c.original_line ?? c.start_line ?? null });
+    }
+
+    // Fetch comments for this specific review
+    const reviewCommentsJson = execSync(
+      `gh api repos/${repo}/pulls/${prNum}/reviews/${reviewId}/comments`,
+      { timeout: 15_000, stdio: ['pipe', 'pipe', 'pipe'] },
+    ).toString().trim();
+    const reviewComments: any[] = reviewCommentsJson ? JSON.parse(reviewCommentsJson) : [];
+
+    return reviewComments.map(c => {
+      let line: number | string = c.line ?? c.original_line ?? c.start_line ?? c.position ?? '?';
+      // For replies, look up the parent comment's line number
+      if (line === '?' && c.in_reply_to_id) {
+        const parent = lineById.get(c.in_reply_to_id);
+        if (parent?.line) line = parent.line;
+      }
+      return `${c.path}:${line} — ${c.body}`;
+    }).join('\n');
   } catch {
     return '';
   }
