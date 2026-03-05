@@ -117,20 +117,20 @@ async function processInput() {
   if (isCommit) {
     const msg = extractCommitMessage(command);
     if (msg === null) {
-      block(`Commit message must start with "${prefix}". Could not verify the message format.`);
+      return block(`Commit message must start with "${prefix}". Could not verify the message format.`);
     }
     if (!msg.trimStart().startsWith(prefix)) {
-      block(`Commit message must start with "${prefix}". Rewrite your commit message to begin with "${prefix} ".`);
+      return block(`Commit message must start with "${prefix}". Rewrite your commit message to begin with "${prefix} ".`);
     }
   }
 
   if (isComment || isApiComment) {
     const body = extractCommentBody(command);
     if (body === null) {
-      block(`Comment/review body must start with "${prefix}". Could not verify the message format. Use --body "${prefix} ..." with your message.`);
+      return block(`Comment/review body must start with "${prefix}". Could not verify the message format. Use --body "${prefix} ..." with your message.`);
     }
     if (!body.trimStart().startsWith(prefix)) {
-      block(`Comment/review body must start with "${prefix}". Rewrite your comment to begin with "${prefix} ".`);
+      return block(`Comment/review body must start with "${prefix}". Rewrite your comment to begin with "${prefix} ".`);
     }
   }
 
