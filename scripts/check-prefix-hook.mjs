@@ -17,9 +17,6 @@
 process.on('uncaughtException', () => process.exit(0));
 process.on('unhandledRejection', () => process.exit(0));
 
-// Only enforce inside orchestrator agent subprocesses.
-const agentId = process.env.ORCHESTRATOR_AGENT_ID;
-if (!agentId) process.exit(0);
 
 // Safety valve: if no data arrives within 2s, fail open.
 const noDataTimer = setTimeout(() => process.exit(0), 2000);
