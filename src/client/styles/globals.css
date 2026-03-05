@@ -1693,6 +1693,36 @@ body {
   border: 1px solid rgba(248, 113, 113, 0.3);
 }
 
+.form-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 8px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: color 0.1s;
+}
+
+.form-advanced-toggle:hover {
+  color: var(--text-primary);
+}
+
+.form-advanced-chevron {
+  display: inline-block;
+  transition: transform 0.15s;
+  font-size: 10px;
+}
+
+.form-advanced-chevron--open {
+  transform: rotate(90deg);
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;

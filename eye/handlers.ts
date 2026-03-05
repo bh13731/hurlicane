@@ -267,7 +267,7 @@ async function checkAllSuitesPassed(
  * Fetch inline comments for a review via gh CLI.
  * Returns a formatted string of inline comments, or empty string if none/failure.
  */
-function fetchReviewComments(repo: string, prNum: number | string, reviewId: string | number): string {
+function fetchReviewComments(repo: string, prNum: number | string, reviewId: string | number, botPrefix?: string): string {
   try {
     // Fetch all PR comments so we can resolve line numbers for replies via in_reply_to_id
     const allCommentsJson = execSync(
@@ -287,7 +287,12 @@ function fetchReviewComments(repo: string, prNum: number | string, reviewId: str
     ).toString().trim();
     const reviewComments: any[] = reviewCommentsJson ? JSON.parse(reviewCommentsJson) : [];
 
-    return reviewComments.map(c => {
+    // Filter out comments from our own bot
+    const filtered = botPrefix
+      ? reviewComments.filter(c => !c.body?.trimStart().startsWith(botPrefix))
+      : reviewComments;
+
+    return filtered.map(c => {
       let line: number | string = c.line ?? c.original_line ?? c.start_line ?? c.position ?? '?';
       // For replies, look up the parent comment's line number
       if (line === '?' && c.in_reply_to_id) {
@@ -304,6 +309,7 @@ function fetchReviewComments(repo: string, prNum: number | string, reviewId: str
 function handlePullRequestReview(
   payload: any,
   config: EyeConfig,
+  botPrefix?: string,
 ): HandlerResult {
   const review = payload.review;
   const pr = payload.pull_request;
@@ -318,7 +324,7 @@ function handlePullRequestReview(
     const dedupKey = `review:${repo}#${prNum}:${review.id}`;
     if (isDuplicate(dedupKey)) return 'duplicate';
 
-    const inlineComments = fetchReviewComments(repo, prNum, review.id);
+    const inlineComments = fetchReviewComments(repo, prNum, review.id, botPrefix);
 
     const title = `Address review on ${repo}#${prNum}`;
     const parts = [
@@ -341,7 +347,7 @@ function handlePullRequestReview(
     const dedupKey = `review-comment:${repo}#${prNum}:${review.id}`;
     if (isDuplicate(dedupKey)) return 'duplicate';
 
-    const inlineComments = fetchReviewComments(repo, prNum, review.id);
+    const inlineComments = fetchReviewComments(repo, prNum, review.id, botPrefix);
 
     // Skip if there's no body and no inline comments (empty review)
     if (!review.body && !inlineComments) return 'empty review comment';
@@ -521,9 +527,11 @@ export async function dispatch(
     case 'check_run':
       handlerResult = handleCheckRun(payload, config);
       break;
-    case 'pull_request_review':
-      handlerResult = handlePullRequestReview(payload, config);
+    case 'pull_request_review': {
+      const botPrefix = prompts.botName ? `[${prompts.botName.replace(/^\[|\]$/g, '')}]` : undefined;
+      handlerResult = handlePullRequestReview(payload, config, botPrefix);
       break;
+    }
     case 'issue_comment':
       handlerResult = await handleIssueComment(payload, config);
       break;

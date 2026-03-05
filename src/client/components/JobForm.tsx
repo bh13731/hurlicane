@@ -27,6 +27,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [reviewModels, setReviewModels] = useState<string[]>([]);
   const [reviewAuto, setReviewAuto] = useState(true);
   const [readonly, setReadonly] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -425,6 +426,16 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
 
           <TemplateModelStats templateId={templateId} model={model} />
 
+          <button
+            type="button"
+            className="form-advanced-toggle"
+            onClick={() => setShowAdvanced(v => !v)}
+          >
+            <span className={`form-advanced-chevron${showAdvanced ? ' form-advanced-chevron--open' : ''}`}>&#9656;</span>
+            Advanced
+          </button>
+
+          {showAdvanced && <>
           {pendingJobs.length > 0 && (
             <div className="form-group">
               <label>
@@ -582,6 +593,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               </label>
             </div>
           )}
+          </>}
 
           {error && <div className="form-error">{error}</div>}
 
