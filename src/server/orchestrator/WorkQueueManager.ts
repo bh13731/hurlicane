@@ -132,6 +132,9 @@ function createWorktree(job: Job, agentId: string): Job {
 
   const worktreeDir = path.resolve('data', 'worktrees', shortId);
 
+  // Prune stale worktree references so branch names can be reused
+  try { execSync('git worktree prune', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' }); } catch { /* ignore */ }
+
   // Pull latest main so the worktree branches from the newest commit
   try { execSync('git pull origin main', { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
 

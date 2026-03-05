@@ -75,6 +75,9 @@ router.post('/', (req, res) => {
       execSync('git commit --allow-empty -m "Initial commit"', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' });
     }
 
+    // Prune stale worktree references so branch names can be reused
+    try { execSync('git worktree prune', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' }); } catch { /* ignore */ }
+
     if (trackExisting) {
       // Fetch so the branch ref is available, then check it out
       try { execSync('git fetch origin', { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
