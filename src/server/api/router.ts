@@ -15,6 +15,7 @@ import statsRouter from './stats.js';
 import knowledgeBaseRouter from './knowledgeBase.js';
 import reposRouter from './repos.js';
 import eyeRouter from './eye.js';
+import slackRouter from './slack.js';
 
 const router = Router();
 
@@ -35,5 +36,6 @@ router.use('/worktrees', worktreesRouter);
 router.use('/stats', statsRouter);
 router.use('/knowledge-base', knowledgeBaseRouter);
 router.use('/eye', eyeRouter);
+router.use('/slack', slackRouter);
 
 export default router;

@@ -11,7 +11,7 @@ export interface OrchestratorClient {
   getRepoByName(name: string): Promise<Repo | null>;
   getWorktreeByBranch(branch: string): Promise<Worktree | null>;
   createWorktree(branch: string, repoId: string, trackExisting?: boolean): Promise<Worktree | null>;
-  cleanupBranch(branch: string): Promise<{ found: boolean; cancelledJobs: number } | null>;
+  cleanupBranch(branch: string, merged?: boolean): Promise<{ found: boolean; cancelledJobs: number } | null>;
   getPrompts(): Promise<EyePrompts>;
 }
 
@@ -134,12 +134,12 @@ export function createOrchestratorClient(baseUrl: string): OrchestratorClient {
       }
     },
 
-    async cleanupBranch(branch: string): Promise<{ found: boolean; cancelledJobs: number } | null> {
+    async cleanupBranch(branch: string, merged?: boolean): Promise<{ found: boolean; cancelledJobs: number } | null> {
       try {
         const res = await fetch(`${baseUrl}/api/worktrees/cleanup-branch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ branch }),
+          body: JSON.stringify({ branch, merged: merged ?? false }),
         });
         if (!res.ok) {
           console.error(`[eye] orchestrator POST /api/worktrees/cleanup-branch failed: ${res.status}`);

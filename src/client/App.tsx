@@ -18,6 +18,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { DebateForm } from './components/DebateForm';
 import { KnowledgeBaseModal } from './components/KnowledgeBaseModal';
 import { EyeModal } from './components/EyeModal';
+import { SlackModal } from './components/SlackModal';
 import { GitModal } from './components/GitModal';
 import { WorktreesSidebar } from './components/WorktreesSidebar';
 import { WorktreeDetail } from './components/WorktreeDetail';
@@ -54,10 +55,13 @@ export default function App() {
   const [showDebateForm, setShowDebateForm] = useState(false);
   const [showKnowledgeBase, setShowKnowledgeBase] = useState(false);
   const [showEye, setShowEye] = useState(false);
+  const [showSlack, setShowSlack] = useState(false);
   const [showGit, setShowGit] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [archivedJobs, setArchivedJobs] = useState<Job[]>([]);
   const [leftTab, setLeftTab] = useState<'feed' | 'lineage' | 'worktrees'>('feed');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [selectedWorktree, setSelectedWorktree] = useState<Worktree | null>(null);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [repos, setRepos] = useState<Repo[]>([]);
@@ -328,6 +332,7 @@ export default function App() {
     setSelectedAgent(agent);
     const canonicalJob = jobs.find(j => j.id === agent.job_id);
     setActiveProjectId(canonicalJob?.project_id ?? agent.job.project_id ?? null);
+    setDrawerOpen(false);
   }, [jobs]);
 
   const handleSelectJob = useCallback((job: Job) => {
@@ -336,6 +341,7 @@ export default function App() {
       setSelectedAgent(agent);
     }
     setActiveProjectId(job.project_id ?? null);
+    setDrawerOpen(false);
   }, [agents]);
 
   const handleCancelJob = useCallback(async (job: Job) => {
@@ -361,10 +367,12 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(true)} onGit={() => setShowGit(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); setShowEye(false); setShowGit(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} />
+      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(true)} onSlack={() => setShowSlack(true)} onGit={() => setShowGit(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); setShowEye(false); setShowSlack(false); setShowGit(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} onDrawerToggle={() => setDrawerOpen(v => !v)} onHeaderMenuToggle={() => setHeaderMenuOpen(v => !v)} headerMenuOpen={headerMenuOpen} />
+
+      <div className={`drawer-backdrop${drawerOpen ? ' drawer-backdrop-visible' : ''}`} onClick={() => setDrawerOpen(false)} />
 
       <div className="main-layout">
-        <div className={`left-sidebar-stack ${(leftTab === 'lineage' && selectedAgent) || leftTab === 'worktrees' ? '' : 'left-sidebar-stack--narrow'}`}>
+        <div className={`left-sidebar-stack ${(leftTab === 'lineage' && selectedAgent) || leftTab === 'worktrees' ? '' : 'left-sidebar-stack--narrow'}${drawerOpen ? ' drawer-open' : ''}`}>
           <div className="left-sidebar-tabs">
             <button
               className={`left-sidebar-tab ${leftTab === 'feed' ? 'left-sidebar-tab--active' : ''}`}
@@ -507,6 +515,10 @@ export default function App() {
 
       {showEye && (
         <EyeModal onClose={() => setShowEye(false)} />
+      )}
+
+      {showSlack && (
+        <SlackModal onClose={() => setShowSlack(false)} />
       )}
 
       {showGit && (

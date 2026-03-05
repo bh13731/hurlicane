@@ -10,7 +10,6 @@ import { createMcpApp, closeAllMcpSessions } from './mcp/McpServer.js';
 import { startWorkQueue, stopWorkQueue, setMaxConcurrent } from './orchestrator/WorkQueueManager.js';
 import { startWatchdog, stopWatchdog } from './orchestrator/StuckJobWatchdog.js';
 import { startHealthMonitor, stopHealthMonitor } from './orchestrator/HealthMonitor.js';
-import { startWorktreeCleanup, stopWorktreeCleanup } from './orchestrator/WorktreeCleanup.js';
 import { startKBConsolidator, stopKBConsolidator } from './orchestrator/KBConsolidator.js';
 import { runRecovery } from './orchestrator/recovery.js';
 import { writeInput, resizePty } from './orchestrator/PtyManager.js';
@@ -127,7 +126,6 @@ async function main() {
   startWorkQueue();
   startWatchdog();
   startHealthMonitor();
-  startWorktreeCleanup();
   startKBConsolidator();
 
   // Restore persisted settings
@@ -158,7 +156,6 @@ async function main() {
     stopWorkQueue();
     stopWatchdog();
     stopHealthMonitor();
-    stopWorktreeCleanup();
     stopKBConsolidator();
     stopEyeProcess();
 

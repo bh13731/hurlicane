@@ -3,56 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as queries from '../db/queries.js';
 
-const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;  // 5 minutes
 const WORKTREES_DIR = path.resolve('data', 'worktrees');
-let _timer: NodeJS.Timeout | null = null;
-
-export function startWorktreeCleanup(): void {
-  if (_timer) return;
-  console.log('[worktree-cleanup] started');
-  _timer = setInterval(() => { try { tick(); } catch (err) { console.error('[worktree-cleanup] tick error:', err); } }, CLEANUP_INTERVAL_MS);
-}
-
-export function stopWorktreeCleanup(): void {
-  if (_timer) {
-    clearInterval(_timer);
-    _timer = null;
-  }
-}
-
-function tick(): void {
-  // Auto-clean worktrees whose branch PR has been merged or closed
-  const active = queries.listActiveWorktrees();
-  let cleaned = 0;
-
-  for (const wt of active) {
-    const repo = queries.getRepoById(wt.repo_id);
-    if (!repo) continue;
-
-    try {
-      // Check if a PR exists for this branch and its state
-      const state = execSync(
-        `gh pr view ${JSON.stringify(wt.branch)} --json state --jq .state`,
-        { cwd: wt.path, timeout: 15_000, stdio: 'pipe' },
-      ).toString().trim();
-
-      if (state === 'MERGED' || state === 'CLOSED') {
-        console.log(`[worktree-cleanup] branch ${wt.branch} PR is ${state}, cleaning up`);
-        removeWorktree(wt.path, wt.branch, repo.path);
-        queries.markWorktreeCleaned(wt.id);
-        cleaned++;
-      }
-    } catch {
-      // No PR for this branch or gh failed — leave it alone
-    }
-  }
-
-  if (cleaned > 0) {
-    console.log(`[worktree-cleanup] auto-cleaned ${cleaned} merged/closed worktrees`);
-  }
-
-  cleanupOrphanedWorktrees();
-}
 
 function removeWorktree(wtPath: string, branch: string, repoDir: string | null): void {
   // Remove the worktree

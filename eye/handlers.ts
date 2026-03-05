@@ -282,7 +282,16 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
     return `reset CI dedup for ${repo}#${prNum}`;
   }
 
-  if (payload.action === 'closed' || (payload.action === 'converted_to_draft')) {
+  if (payload.action === 'converted_to_draft') {
+    // Just clear dedup — don't cancel agents or clean worktrees
+    clearDedupPrefix(`ci:${repo}#${prNum}:`);
+    clearDedupPrefix(`review:${repo}#${prNum}:`);
+    clearDedupPrefix(`review-comment:${repo}#${prNum}:`);
+    clearDedupPrefix(`comment:${repo}#${prNum}:`);
+    return `cleaned dedup for ${repo}#${prNum} (converted to draft)`;
+  }
+
+  if (payload.action === 'closed') {
     // Cleanup all dedup entries for this PR
     clearDedupPrefix(`ci:${repo}#${prNum}:`);
     clearDedupPrefix(`review:${repo}#${prNum}:`);
@@ -291,8 +300,9 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
 
     // Cleanup worktree + cancel running agents on this branch
     const branch = pr.head?.ref;
+    const merged = pr.merged === true;
     if (branch) {
-      const cleanup = await client.cleanupBranch(branch);
+      const cleanup = await client.cleanupBranch(branch, merged);
       if (cleanup?.found) {
         return `cleaned dedup + worktree for ${repo}#${prNum} (cancelled ${cleanup.cancelledJobs} jobs)`;
       }

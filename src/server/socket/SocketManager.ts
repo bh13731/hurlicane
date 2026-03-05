@@ -1,6 +1,7 @@
 import { Server as HttpServer } from 'http';
 import { Server as SocketIoServer } from 'socket.io';
 import type { ServerToClientEvents, ClientToServerEvents, AgentWithJob, Job, Question, FileLock, AgentOutput, QueueSnapshot, Debate, AgentWarning } from '../../shared/types.js';
+import { notifyFailure } from '../services/SlackNotifier.js';
 
 let _io: SocketIoServer<ClientToServerEvents, ServerToClientEvents> | null = null;
 
@@ -35,6 +36,9 @@ export function emitAgentNew(agent: AgentWithJob): void {
 
 export function emitAgentUpdate(agent: AgentWithJob): void {
   getIo().emit('agent:update', { agent });
+  if (agent.status === 'failed') {
+    notifyFailure(`Agent failed`, agent.error ?? 'Unknown error', `Job: ${agent.job?.title ?? agent.job_id}`);
+  }
 }
 
 export function emitAgentOutput(agentId: string, line: AgentOutput): void {
@@ -63,6 +67,9 @@ export function emitJobNew(job: Job): void {
 
 export function emitJobUpdate(job: Job): void {
   getIo().emit('job:update', { job });
+  if (job.status === 'failed') {
+    notifyFailure(`Job failed: ${job.title}`, job.error ?? 'Unknown error');
+  }
 }
 
 export function emitPtyData(agentId: string, data: string): void {

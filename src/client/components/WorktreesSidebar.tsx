@@ -18,6 +18,8 @@ export function WorktreesSidebar({ selectedWorktreeId, onSelectWorktree }: Workt
   const [repos, setRepos] = useState<Repo[]>([]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(new Set());
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanResult, setCleanResult] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -59,9 +61,37 @@ export function WorktreesSidebar({ selectedWorktreeId, onSelectWorktree }: Workt
     }
   }
 
+  const handleCleanup = async () => {
+    setCleaning(true);
+    setCleanResult(null);
+    try {
+      const res = await fetch('/api/worktrees/cleanup', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setCleanResult(`Cleaned ${data.cleaned} worktree${data.cleaned === 1 ? '' : 's'}`);
+        fetchData();
+      }
+    } catch { /* ignore */ }
+    finally { setCleaning(false); }
+  };
+
   return (
     <div className="sidebar worktrees-sidebar">
-      <div className="sidebar-title">Worktrees</div>
+      <div className="sidebar-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        Worktrees
+        <button
+          className="btn btn-sm btn-secondary"
+          onClick={handleCleanup}
+          disabled={cleaning || worktrees.length === 0}
+          title="Remove worktrees for completed/failed/cancelled jobs"
+          style={{ fontSize: 11, padding: '2px 8px' }}
+        >
+          {cleaning ? 'Cleaning...' : 'Clean Up'}
+        </button>
+      </div>
+      {cleanResult && (
+        <div style={{ padding: '4px 12px', fontSize: 11, color: 'var(--text-secondary)' }}>{cleanResult}</div>
+      )}
       {worktrees.length === 0 && (
         <div className="worktrees-empty">No active worktrees</div>
       )}

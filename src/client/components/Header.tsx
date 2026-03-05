@@ -13,6 +13,7 @@ interface HeaderProps {
   onDebate: () => void;
   onKnowledgeBase: () => void;
   onEye: () => void;
+  onSlack: () => void;
   onGit: () => void;
   onHome: () => void;
   currentProjectName?: string | null;
@@ -21,6 +22,9 @@ interface HeaderProps {
   todayCodexCost?: number;
   costAutoUpdate?: boolean;
   onToggleCostAutoUpdate?: () => void;
+  onDrawerToggle?: () => void;
+  onHeaderMenuToggle?: () => void;
+  headerMenuOpen?: boolean;
 }
 
 function HurlicaLogo() {
@@ -48,11 +52,16 @@ function HurlicaLogo() {
   );
 }
 
-export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onKnowledgeBase, onEye, onGit, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate }: HeaderProps) {
+export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onKnowledgeBase, onEye, onSlack, onGit, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate, onDrawerToggle, onHeaderMenuToggle, headerMenuOpen }: HeaderProps) {
   const hasCost = (todayClaudeCost != null && todayClaudeCost > 0) || (todayCodexCost != null && todayCodexCost > 0);
   return (
     <header className="header">
       <div className="header-left">
+        {onDrawerToggle && (
+          <button className="mobile-drawer-toggle" onClick={onDrawerToggle} aria-label="Toggle sidebar">
+            &#9776;
+          </button>
+        )}
         <button className="header-logo-btn" onClick={onHome} title="Go to main page" aria-label="Go to main dashboard">
           <HurlicaLogo />
           <h1 className="header-title">Hurlicane</h1>
@@ -84,7 +93,12 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
           </div>
         )}
       </div>
-      <div className="header-actions">
+      {onHeaderMenuToggle && (
+        <button className="mobile-header-overflow" onClick={onHeaderMenuToggle} aria-label="Toggle menu">
+          &#8943;
+        </button>
+      )}
+      <div className={`header-actions${headerMenuOpen ? ' header-actions-open' : ''}`}>
         <input
           type="text"
           className="search-input-header"
@@ -106,6 +120,7 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
           <button className="header-btn" onClick={onDebate}>Debate</button>
           <button className="header-btn" onClick={onKnowledgeBase}>Memory</button>
           <button className="header-btn" onClick={onEye}>Eye</button>
+          <button className="header-btn" onClick={onSlack}>Slack</button>
           <button className="header-btn" onClick={onGit}>Git</button>
         </div>
         <span className="header-divider" />
