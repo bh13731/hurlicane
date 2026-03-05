@@ -3219,29 +3219,37 @@ body {
 }
 
 .worktree-detail-header {
-  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-surface);
 }
 
-.worktree-detail-close {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+.worktree-detail-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
   background: none;
   border: none;
-  color: var(--text-muted);
-  font-size: 16px;
+  color: var(--text-secondary);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
-  line-height: 1;
+  padding: 0;
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: color 0.1s, background 0.1s;
 }
 
-.worktree-detail-close:hover {
+.worktree-detail-back:hover {
   color: var(--text-primary);
   background: var(--bg-interactive);
+}
+
+.worktree-detail-header-text {
+  min-width: 0;
 }
 
 .worktree-detail-title {
@@ -3410,19 +3418,23 @@ body {
   overflow-y: auto;
 }
 
-.agent-main-locks {
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
+/* agent-main-locks only takes effect on mobile */
 
 .agent-grid-wrapper {
   display: contents;
 }
 
-/* When locks tab is active, hide agent grid on all sizes */
-.agent-grid-wrapper--hidden-locks {
-  display: none;
+/* Desktop: sidebar locks container fills the sidebar area */
+.sidebar-locks-container {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sidebar-locks-container > .sidebar {
+  width: 100%;
+  border-left: none;
+  border-right: none;
 }
 
 /* ─── Tablet breakpoint ───────────────────────────────────────────────────── */
@@ -3896,8 +3908,15 @@ body {
     border-right: none;
   }
 
-  .agent-grid-wrapper--hidden-mobile {
+  .agent-grid-wrapper--hidden-mobile,
+  .agent-grid-wrapper--hidden-locks {
     display: none;
+  }
+
+  .agent-main-locks {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   /* --- WorktreeDetail full-screen on mobile --- */
@@ -3925,14 +3944,9 @@ body {
     padding: 10px 12px;
   }
 
-  .worktree-detail-close {
+  .worktree-detail-back {
     min-width: 44px;
     min-height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    top: 4px;
-    right: 4px;
   }
 }
 

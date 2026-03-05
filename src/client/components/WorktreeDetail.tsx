@@ -144,11 +144,15 @@ export function WorktreeDetail({ worktree, onDeleted, onClose }: WorktreeDetailP
   return (
     <div className="worktree-detail">
       <div className="worktree-detail-header">
-        <div className="worktree-detail-title">{worktree.branch}</div>
-        <div className="worktree-detail-path">{worktree.path}</div>
         {onClose && (
-          <button className="worktree-detail-close" onClick={onClose} title="Close">✕</button>
+          <button className="worktree-detail-back" onClick={onClose} aria-label="Close worktree detail">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+          </button>
         )}
+        <div className="worktree-detail-header-text">
+          <div className="worktree-detail-title">{worktree.branch}</div>
+          <div className="worktree-detail-path">{worktree.path}</div>
+        </div>
       </div>
 
       <div className="worktree-actions">

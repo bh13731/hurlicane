@@ -399,6 +399,10 @@ export default function App() {
               selectedWorktreeId={selectedWorktree?.id}
               onSelectWorktree={(wt) => { setSelectedAgent(null); setSelectedWorktree(wt); }}
             />
+          ) : leftTab === 'locks' ? (
+            <div className="sidebar-locks-container">
+              <FileLockMap locks={locks} />
+            </div>
           ) : leftTab === 'lineage' && selectedAgent ? (
             <JobLineagePanel
               selectedAgent={selectedAgent}
@@ -408,7 +412,7 @@ export default function App() {
           ) : (
             <WorkQueueSidebar jobs={jobs} projects={projects} worktreesByJobId={worktreesByJobId} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} onArchiveJob={handleArchiveJob} />
           )}
-          {leftTab !== 'worktrees' && (
+          {leftTab !== 'worktrees' && leftTab !== 'locks' && (
             <RunningJobsPanel
               agents={agents}
               projects={projects}
