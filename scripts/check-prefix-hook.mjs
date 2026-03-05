@@ -74,8 +74,11 @@ function extractFlagValue(cmd, flags) {
 }
 
 function block(msg) {
-  process.stdout.write(msg);
-  process.exit(2);
+  // Write to stderr (Claude Code shows this to the agent on hook error).
+  // Drain before exiting to ensure the message is flushed.
+  process.stderr.write(msg, () => process.exit(2));
+  // Fallback exit in case drain callback never fires
+  setTimeout(() => process.exit(2), 500);
 }
 
 async function processInput() {
