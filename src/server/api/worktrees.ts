@@ -7,7 +7,7 @@ import { cancelledAgents } from '../orchestrator/AgentRunner.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import * as socket from '../socket/SocketManager.js';
 import { runCleanupNow } from '../orchestrator/WorktreeCleanup.js';
-import { notifyMerge } from '../services/SlackNotifier.js';
+import { notifyPRClosed } from '../services/SlackNotifier.js';
 
 /** Directory where worktrees are materialised. */
 const WORKTREES_DIR = path.resolve('data', 'worktrees');
@@ -148,17 +148,13 @@ router.post('/cleanup-branch', (req, res) => {
 
   const wt = queries.getWorktreeByBranch(branch);
   if (!wt) {
-    if (merged) {
-      notifyMerge(branch);
-    }
+    notifyPRClosed(branch, !!merged);
     res.json({ ok: true, found: false, cancelledJobs: 0 });
     return;
   }
 
-  if (merged) {
-    const job = queries.getJobById(wt.job_id);
-    notifyMerge(branch, job?.title);
-  }
+  const job = queries.getJobById(wt.job_id);
+  notifyPRClosed(branch, !!merged, job?.title);
 
   // Find and cancel all active jobs running in this worktree
   const activeJobs = queries.listActiveJobsByWorkDir(wt.path);

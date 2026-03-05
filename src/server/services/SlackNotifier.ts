@@ -39,17 +39,18 @@ export async function notifyFailure(title: string, errorMessage: string, context
   }
 }
 
-export async function notifyMerge(branch: string, jobTitle?: string | null): Promise<void> {
+export async function notifyPRClosed(branch: string, merged: boolean, jobTitle?: string | null): Promise<void> {
   const { botToken, userId } = loadSlackSettings();
   if (!botToken || !userId) return;
 
-  const lines = [`*PR merged:* \`${branch}\``];
+  const label = merged ? 'PR merged' : 'PR closed';
+  const lines = [`*${label}:* \`${branch}\``];
   if (jobTitle) lines.push(`Job: ${jobTitle}`);
 
   try {
     await sendSlackDM(botToken, userId, lines.join('\n'));
   } catch (err) {
-    console.error('[slack] Failed to send merge notification:', err);
+    console.error('[slack] Failed to send PR notification:', err);
   }
 }
 
