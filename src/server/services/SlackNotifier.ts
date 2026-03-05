@@ -105,6 +105,26 @@ export async function notifyWorktreeCleaned(branch: string, jobTitle?: string | 
   await notify(fallback, blocks);
 }
 
+export async function notifyAllChecksPassed(repo: string, pr: number, branch: string, sha: string): Promise<void> {
+  const fallback = `All checks passed: ${repo}#${pr} (${branch})`;
+  const blocks: unknown[] = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: ':white_check_mark: All Checks Passed', emoji: true },
+    },
+    {
+      type: 'section',
+      fields: [
+        { type: 'mrkdwn', text: `*Repo:*\n${repo}` },
+        { type: 'mrkdwn', text: `*PR:*\n#${pr}` },
+        { type: 'mrkdwn', text: `*Branch:*\n\`${branch}\`` },
+        { type: 'mrkdwn', text: `*Commit:*\n\`${sha}\`` },
+      ],
+    },
+  ];
+  await notify(fallback, blocks);
+}
+
 export async function sendTestMessage(token: string, userId: string): Promise<{ ok: boolean; error?: string }> {
   return sendSlackDM(token, userId, 'Test notification from Hurlicane', [
     {

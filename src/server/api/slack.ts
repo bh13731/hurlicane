@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as queries from '../db/queries.js';
-import { loadSlackSettings, sendTestMessage } from '../services/SlackNotifier.js';
+import { loadSlackSettings, sendTestMessage, notifyAllChecksPassed } from '../services/SlackNotifier.js';
 
 const router = Router();
 
@@ -52,6 +52,20 @@ router.post('/test', async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? 'Failed to send test message' });
   }
+});
+
+// POST /api/slack/notify — internal endpoint for Eye to send typed notifications
+router.post('/notify', async (req, res) => {
+  const { type } = req.body;
+
+  if (type === 'all_checks_passed') {
+    const { repo, pr, branch, sha } = req.body;
+    await notifyAllChecksPassed(repo, pr, branch, sha);
+    res.json({ ok: true });
+    return;
+  }
+
+  res.status(400).json({ error: `Unknown notification type: ${type}` });
 });
 
 export default router;

@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import type { EyeConfig } from './config.js';
 import type { OrchestratorClient } from './orchestrator.js';
 import type { CreateJobRequest } from '../src/shared/types.js';
@@ -163,6 +164,79 @@ function handleCheckRun(
     });
   }
   return 'duplicate';
+}
+
+/**
+ * When a check_suite completes successfully, query GitHub to see if ALL suites
+ * on that commit have passed. If so, send a Slack notification.
+ */
+async function checkAllSuitesPassed(
+  payload: any,
+  config: EyeConfig,
+  client: OrchestratorClient,
+): Promise<void> {
+  const suite = payload.check_suite;
+  if (!suite || suite.conclusion !== 'success') return;
+
+  const repo = payload.repository?.full_name;
+  const sha = suite.head_sha;
+  if (!repo || !sha) return;
+
+  const prs: any[] = suite.pull_requests ?? [];
+  if (prs.length === 0) return;
+
+  const prNum = prs[0].number;
+  const branch = prs[0].head?.ref ?? '';
+
+  const dedupKey = `all-checks:${repo}#${prNum}:${sha}`;
+  if (isDuplicate(dedupKey)) return;
+
+  try {
+    const output = execSync(
+      `gh api repos/${repo}/commits/${sha}/check-suites --jq '.check_suites | map(.conclusion) | join(",")'`,
+      { timeout: 15_000, stdio: ['pipe', 'pipe', 'pipe'] },
+    ).toString().trim();
+
+    const conclusions = output.split(',').filter(Boolean);
+    if (conclusions.length === 0) return;
+
+    // All must be "success" or "neutral" (skipped checks are fine)
+    const allPassed = conclusions.every(c => c === 'success' || c === 'neutral');
+    if (!allPassed) return;
+
+    console.log(`[eye] all checks passed for ${repo}#${prNum} (${sha.slice(0, 7)})`);
+
+    // Send Slack notification via orchestrator
+    try {
+      const baseUrl = config.orchestratorUrl;
+      await fetch(`${baseUrl}/api/slack/notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'all_checks_passed',
+          repo,
+          pr: prNum,
+          branch,
+          sha: sha.slice(0, 7),
+        }),
+      });
+    } catch (err) {
+      console.error('[eye] failed to send all-checks-passed notification:', err);
+    }
+
+    logEvent({
+      ts: Date.now(),
+      event_type: 'check_suite',
+      action: 'all_passed',
+      repo,
+      author: config.author,
+      decision: 'ran',
+      job_title: `All checks passed: ${repo}#${prNum}`,
+      detail: `${conclusions.length} suites, sha=${sha.slice(0, 7)}`,
+    });
+  } catch (err) {
+    console.error('[eye] failed to query check suites:', err);
+  }
 }
 
 function handlePullRequestReview(
@@ -335,6 +409,13 @@ export async function dispatch(
   const prOwner = payload.pull_request?.user?.login ?? payload.issue?.user?.login;
   if (prOwner && prOwner !== config.author) {
     return null;
+  }
+
+  // Check if all suites passed — runs even when check_suite is disabled for failures
+  if (eventType === 'check_suite' && payload.check_suite?.conclusion === 'success') {
+    checkAllSuitesPassed(payload, config, client).catch(err =>
+      console.error('[eye] checkAllSuitesPassed error:', err)
+    );
   }
 
   // Check if this event type is disabled via config toggles
