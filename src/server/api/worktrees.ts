@@ -78,6 +78,24 @@ router.post('/', (req, res) => {
     // Prune stale worktree references so branch names can be reused
     try { execSync('git worktree prune', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' }); } catch { /* ignore */ }
 
+    // If the branch is already checked out in another worktree, remove it first
+    try {
+      const wtList = execSync('git worktree list --porcelain', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' }).toString();
+      const entries = wtList.split('\n\n');
+      for (const entry of entries) {
+        const branchMatch = entry.match(/^branch refs\/heads\/(.+)$/m);
+        const pathMatch = entry.match(/^worktree (.+)$/m);
+        if (branchMatch && pathMatch && branchMatch[1] === sanitized && pathMatch[1] !== repo.path) {
+          const oldPath = pathMatch[1];
+          console.log(`[worktrees] removing old worktree at ${oldPath} that holds branch ${sanitized}`);
+          try { execSync(`git worktree remove --force ${JSON.stringify(oldPath)}`, { cwd: repo.path, timeout: 15_000, stdio: 'pipe' }); } catch { /* ignore */ }
+          // Mark as cleaned in DB if tracked
+          const oldWt = queries.getWorktreeByPath(oldPath);
+          if (oldWt) { queries.markWorktreeCleaned(oldWt.id); }
+        }
+      }
+    } catch { /* ignore */ }
+
     if (trackExisting) {
       // Fetch so the branch ref is available, then check it out
       try { execSync('git fetch origin', { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
