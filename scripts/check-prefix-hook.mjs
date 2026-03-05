@@ -81,6 +81,10 @@ function extractCommentBody(cmd) {
   const sq = cmd.match(/(?:--body|-b)\s+'((?:[^'\\]|\\.)*)'/);
   if (sq) return sq[1];
 
+  // Unquoted: --body something or -b something (rest of line until next flag or end)
+  const unquoted = cmd.match(/(?:--body|-b)\s+([^-\s"][^\n]*)/);
+  if (unquoted) return unquoted[1].trim();
+
   // gh api with -f body=
   const apiField = cmd.match(/-f\s+body="((?:[^"\\]|\\.)*)"/);
   if (apiField) return apiField[1];
