@@ -17,14 +17,25 @@ const CODEX = process.env.CODEX_BIN ?? 'codex';
 const MCP_PORT = process.env.MCP_PORT ?? '3001';
 const LOGS_DIR = path.join(process.cwd(), 'data', 'agent-logs');
 
-const HOOK_SCRIPT = path.resolve(process.cwd(), 'scripts/check-lock-hook.mjs');
+const HOOK_LOCK = path.resolve(process.cwd(), 'scripts/check-lock-hook.mjs');
+const HOOK_BRANCH = path.resolve(process.cwd(), 'scripts/check-branch-hook.mjs');
+const HOOK_PREFIX = path.resolve(process.cwd(), 'scripts/check-prefix-hook.mjs');
 
 export const HOOK_SETTINGS = JSON.stringify({
   hooks: {
-    PreToolUse: [{
-      matcher: "Edit|Write|MultiEdit|NotebookEdit",
-      hooks: [{ type: "command", command: `node ${HOOK_SCRIPT}` }]
-    }]
+    PreToolUse: [
+      {
+        matcher: "Edit|Write|MultiEdit|NotebookEdit",
+        hooks: [{ type: "command", command: `node ${HOOK_LOCK}` }]
+      },
+      {
+        matcher: "Bash",
+        hooks: [
+          { type: "command", command: `node ${HOOK_BRANCH}` },
+          { type: "command", command: `node ${HOOK_PREFIX}` },
+        ]
+      }
+    ]
   }
 });
 
