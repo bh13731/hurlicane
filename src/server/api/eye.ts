@@ -93,6 +93,7 @@ router.get('/prompts', (_req, res) => {
   res.json({
     templateId: settings.templateId,
     disabledEvents: settings.disabledEvents,
+    botName: queries.getNote('setting:botName')?.value ?? '',
   });
 });
 

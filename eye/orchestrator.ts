@@ -3,6 +3,7 @@ import type { CreateJobRequest, CreateDebateRequest, CreateDebateResponse, Repo,
 export interface EyePrompts {
   templateId: string;
   disabledEvents: string[];
+  botName: string;
 }
 
 export interface OrchestratorClient {
@@ -18,6 +19,7 @@ export interface OrchestratorClient {
 const DEFAULT_PROMPTS: EyePrompts = {
   templateId: '',
   disabledEvents: [],
+  botName: '',
 };
 
 export function createOrchestratorClient(baseUrl: string): OrchestratorClient {

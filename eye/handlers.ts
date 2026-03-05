@@ -343,6 +343,18 @@ export async function dispatch(
     return null;
   }
 
+  // Ignore events whose body starts with [botName] (our own bot's output)
+  if (prompts.botName) {
+    const prefix = `[${prompts.botName}]`;
+    const body =
+      payload.comment?.body ??
+      payload.review?.body ??
+      '';
+    if (typeof body === 'string' && body.trimStart().startsWith(prefix)) {
+      return null;
+    }
+  }
+
   // Get a CreateJobRequest from the appropriate handler
   let handlerResult: HandlerResult;
   switch (eventType) {

@@ -6,6 +6,7 @@ interface SettingsModalProps {
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [maxConcurrent, setMaxConcurrent] = useState<number>(20);
+  const [botName, setBotName] = useState('');
   const [systemPromptAppendix, setSystemPromptAppendix] = useState('');
   const [saving, setSaving] = useState(false);
   const [worktreeStats, setWorktreeStats] = useState<{ active: number; cleaned: number } | null>(null);
@@ -16,6 +17,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       .then(r => r.json())
       .then(data => {
         setMaxConcurrent(data.maxConcurrentAgents);
+        setBotName(data.botName ?? '');
         setSystemPromptAppendix(data.systemPromptAppendix ?? '');
       })
       .catch(() => {});
@@ -31,7 +33,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent, systemPromptAppendix }),
+        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent, botName, systemPromptAppendix }),
       });
       if (res.ok) onClose();
     } finally {
@@ -62,6 +64,19 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           <button className="btn-icon" onClick={onClose}>&times;</button>
         </div>
         <div className="modal-body">
+          <div className="form-group">
+            <label>Bot Name</label>
+            <input
+              type="text"
+              value={botName}
+              onChange={e => setBotName(e.target.value)}
+              placeholder="e.g. hurlicane"
+              style={{ width: 200 }}
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+              When set, commits and comments must start with [{botName || '...'}]. Eye ignores events from this name.
+            </div>
+          </div>
           <div className="form-group">
             <label>Max Concurrent Agents</label>
             <input

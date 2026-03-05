@@ -8,6 +8,7 @@ router.get('/', (_req, res) => {
   res.json({
     maxConcurrentAgents: getMaxConcurrent(),
     systemPromptAppendix: queries.getNote('setting:systemPromptAppendix')?.value ?? '',
+    botName: queries.getNote('setting:botName')?.value ?? '',
   });
 });
 
@@ -23,9 +24,13 @@ router.put('/', (req, res) => {
   if (typeof systemPromptAppendix === 'string') {
     queries.upsertNote('setting:systemPromptAppendix', systemPromptAppendix, null);
   }
+  if (req.body.botName !== undefined) {
+    queries.upsertNote('setting:botName', String(req.body.botName), null);
+  }
   res.json({
     maxConcurrentAgents: n,
     systemPromptAppendix: queries.getNote('setting:systemPromptAppendix')?.value ?? '',
+    botName: queries.getNote('setting:botName')?.value ?? '',
   });
 });
 
