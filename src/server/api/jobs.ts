@@ -21,14 +21,14 @@ async function generateSmartTitle(description: string): Promise<string> {
   try {
     const prompt = `Write a title for this task in ${TITLE_MAX} characters or fewer. Be semantic and descriptive — capture the essence, not just the first few words. Use title case. No quotes, no punctuation at the end, no explanation.\n\nTask:\n${description.slice(0, 1000)}`;
     const { stdout } = await execFileAsync('claude', ['-p', prompt, '--model', 'claude-haiku-4-5-20251001', '--max-turns', '1'], {
-      timeout: 15_000,
+      timeout: 30_000,
     });
     const text = stdout.trim();
     if (text.length > 0) {
       return text.length > TITLE_MAX ? text.slice(0, TITLE_MAX - 1) + '…' : text;
     }
   } catch (e) {
-    console.warn('[jobs] smart title generation failed, using fallback:', e);
+    console.warn('[jobs] smart title generation failed, using fallback:', (e as Error).message ?? e);
   }
   return autoTitle(description);
 }
