@@ -37,7 +37,7 @@ export function emitAgentNew(agent: AgentWithJob): void {
 export function emitAgentUpdate(agent: AgentWithJob): void {
   getIo().emit('agent:update', { agent });
   if (agent.status === 'failed') {
-    notifyFailure(`Agent failed`, agent.error ?? 'Unknown error', `Job: ${agent.job?.title ?? agent.job_id}`);
+    notifyFailure(`Agent failed`, agent.error_message ?? 'Unknown error', `Job: ${agent.job?.title ?? agent.job_id}`);
   }
 }
 
@@ -68,7 +68,7 @@ export function emitJobNew(job: Job): void {
 export function emitJobUpdate(job: Job): void {
   getIo().emit('job:update', { job });
   if (job.status === 'failed') {
-    notifyFailure(`Job failed: ${job.title}`, job.error ?? 'Unknown error');
+    notifyFailure(`Job failed: ${job.title}`, '');
   }
 }
 
