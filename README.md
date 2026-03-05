@@ -7,7 +7,7 @@ A web-based dashboard for running multiple Claude Code (and Codex) agents in par
 | Branch | Description |
 |--------|-------------|
 | `main` | Stable base. Repos registered by local path, worktrees optional, agents can work anywhere. |
-| `aaryaman-main` | Active development. Tight git coupling, Eye updates, system prompt appendix. |
+| `aaryaman-main` | Active development. Tight git coupling, Eye, Slack, mobile UI, prefix enforcement, and more. |
 
 ### What `aaryaman-main` changes
 
@@ -19,7 +19,8 @@ On `main`, git is loosely integrated — repos are registered by local directory
 - **Mandatory worktrees** — every job must run in a worktree. The "work directory" option is removed from the job form. Instead, a radio toggle lets you pick an existing worktree branch (dropdown) or create a new one (repo + branch name).
 - **Branch protection** — a `PreToolUse` hook (`scripts/check-branch-hook.mjs`) blocks agents from switching branches (`git checkout`, `git switch`), creating branches (`-b`/`-B`), or renaming branches (`git branch -m`). The assigned branch is set via `ORCHESTRATOR_BRANCH` env var at spawn time, so it works for all agents including sub-agents.
 - **Sub-agent worktree reuse** — when an agent spawns a sub-job (retry, continuation, debate stage), the sub-agent detects the `work_dir` is already a worktree and reuses it instead of trying to create a new one.
-- **PR-based auto-cleanup** — worktrees are only auto-cleaned when their PR is merged or closed (checked via `gh pr view`), not when the job finishes. This keeps worktrees alive for follow-up work.
+- **PR-based worktree cleanup** — worktrees are cleaned when their associated PR is merged/closed or the remote branch is deleted (checked via `gh pr view` and `git ls-remote`), not based on job status. This keeps worktrees alive for follow-up work. A "Clean Up" button in the worktrees sidebar and settings triggers manual cleanup.
+- **Repo and branch badges** — agent cards and the sidebar show which repo and branch each agent is working on.
 
 #### Eye — GitHub Webhook Automation
 
@@ -47,6 +48,41 @@ Eye (`eye/`) is a built-in GitHub webhook listener that automatically creates or
 
 **Configuration:** Eye is launched from the Eye panel in the dashboard UI, where you set the webhook secret, GitHub author to watch, port, and template. Event types can be individually disabled. Duplicate events within 10 minutes are automatically deduplicated.
 
+#### Bot Name Prefix Enforcement
+
+When a **Bot Name** is configured in settings, a `PreToolUse` hook (`scripts/check-prefix-hook.mjs`) enforces that all git commits and GitHub comments made by agents are prefixed with `[BotName]`. This makes it easy to identify agent-authored changes in git history and PR threads. The hook:
+
+- Intercepts `git commit` and `gh pr comment`/`gh issue comment` Bash commands
+- Blocks them if the message/body doesn't start with the configured prefix
+- Returns an error message to the agent so it can retry with the prefix
+- Applies to all Claude Code sessions in the directory, not just orchestrator agents
+- Fails open (allows the call) if the API is unreachable or the hook crashes
+
+Eye also uses the bot name to filter out its own webhook events, preventing infinite loops.
+
+#### Slack Notifications
+
+The orchestrator can send Slack DMs to keep you informed when you're away from the dashboard. Configure a Slack bot token and your user ID in the Slack panel (accessible from the header).
+
+**Events that trigger notifications:**
+
+| Event | Message |
+|-------|---------|
+| Worktree created | Branch name and associated job title |
+| Worktree cleaned | Branch name (after PR merge/close) |
+| Agent failure | Job title and error message |
+
+#### Responsive Mobile UI
+
+The dashboard is fully usable on phones and tablets:
+
+- **Bottom tab bar** — replaces the left sidebar on mobile with tabs for Agents, Worktrees, and Locks
+- **Full-screen views** — worktree detail and lock map expand to fill the screen on mobile
+- **Touch-friendly targets** — buttons and interactive elements are sized for touch input
+- **Responsive header** — collapses into a hamburger menu on narrow screens
+
+On desktop, the locks tab shows locks in the left sidebar while the agent grid remains visible. On mobile, the locks tab takes over the full screen.
+
 #### System Prompt Appendix
 
 A new **System Prompt Appendix** setting lets you inject custom instructions into every agent's system prompt without editing code:
@@ -54,6 +90,14 @@ A new **System Prompt Appendix** setting lets you inject custom instructions int
 - **Settings UI** — the Settings modal now has a monospace textarea for the appendix, saved to the database via `PUT /api/settings`.
 - **Injection** — `getSystemPrompt()` in `AgentRunner.ts` appends the stored text to the base system prompt. It's passed to Claude agents via `--append-system-prompt` and prepended to Codex agent prompts (which lack that flag).
 - **Use cases** — enforce coding conventions, add project-specific rules, restrict agent behavior globally (e.g., "Never modify package.json without asking").
+
+#### Readonly Jobs & Templates
+
+Jobs and templates can be marked as **readonly**. Readonly templates are available in the job form but cannot be edited or deleted — useful for shared templates you don't want agents or users to accidentally modify. The `create_worktree` MCP tool lets agents programmatically create worktrees.
+
+#### Pull & Restart
+
+The Settings modal has a **Pull & Restart** button that pulls the latest code from git, rebuilds, and restarts the server — all without SSH. The UI shows "Restarting…" and automatically reloads when the server comes back. Powered by `scripts/restart-ec2.sh` which runs detached from the server process.
 
 ## Deploying on EC2
 
@@ -88,8 +132,12 @@ tmux kill-session -t hurlicane   # stop the server
 
 ### Updating
 
+From the dashboard, click **Settings → Pull & Restart** to pull the latest code and redeploy without SSH.
+
+Or via SSH:
+
 ```bash
-cd ~/hurlicane && git pull && ./scripts/start-ec2.sh
+cd ~/hurlicane && ./scripts/restart-ec2.sh
 ```
 
 ### EC2 Security Group
@@ -110,6 +158,8 @@ Open these inbound ports:
 | `AUTH_PASSWORD` | Recommended | Gates UI/API/Socket.io behind a login page. Unset = no auth (for local dev) |
 | `AUTH_SECRET` | Optional | Stable HMAC secret so sessions survive server restarts |
 | `OPENAI_API_KEY` | Optional | For Codex agents |
+| `SLACK_BOT_TOKEN` | Optional | Slack bot token for DM notifications (also configurable in UI) |
+| `SLACK_USER_ID` | Optional | Your Slack user ID to receive DMs (also configurable in UI) |
 
 Internal service-to-service requests (Eye, MCP agents) on localhost bypass auth automatically.
 
@@ -518,9 +568,8 @@ File-restore operations (`git checkout -- <file>`) are allowed. The assigned bra
 
 ### Worktree Cleanup
 
-- **Auto-cleanup** — every 5 minutes, the cleanup daemon checks each active worktree's PR status via `gh pr view`. Worktrees whose PR has been merged or closed are automatically removed along with their branches.
-- **Manual cleanup** — `POST /api/worktrees/cleanup` removes worktrees for jobs in terminal states (done, failed, cancelled).
-- **Orphan cleanup** — directories in `data/worktrees/` not tracked in the database are removed automatically.
+- **Manual cleanup** — the "Clean Up" button (or `POST /api/worktrees/cleanup`) checks each active worktree's PR status via `gh pr view` and remote branch existence via `git ls-remote`. Worktrees whose PR has been merged or closed, or whose remote branch has been deleted, are removed along with their local branches.
+- **Orphan cleanup** — directories in `data/worktrees/` not tracked in the database are removed automatically during cleanup.
 
 ## Codex CLI Support
 
@@ -628,7 +677,11 @@ Click the settings icon in the header to open the Settings modal. Currently conf
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| Bot Name | *(empty)* | When set, enforces `[BotName]` prefix on all agent commits and comments |
 | Max Concurrent Agents | 20 | How many agents may run simultaneously |
+| System Prompt Appendix | *(empty)* | Custom instructions appended to every agent's system prompt |
+| Worktree Cleanup | — | Shows active/cleaned worktree counts with a manual cleanup button |
+| Pull & Restart | — | Pulls latest code, rebuilds, and restarts the server |
 
 ## Environment Variables
 
@@ -648,17 +701,23 @@ Click the settings icon in the header to open the Settings modal. Currently conf
 src/
   client/          React + Vite dashboard
   server/
-    api/           REST endpoints (jobs, agents, locks, templates, debates, projects, batch, knowledge-base)
+    api/           REST endpoints (jobs, agents, locks, templates, debates, projects, worktrees, admin, etc.)
     db/            SQLite init, schema, query helpers
     mcp/           MCP tool server and tool implementations
     orchestrator/  AgentRunner, WorkQueueManager, FileLockRegistry, PtyManager, DebateManager,
-                   HealthMonitor, StuckJobWatchdog, ModelClassifier, RetryManager, MemoryTriager
+                   HealthMonitor, StuckJobWatchdog, ModelClassifier, RetryManager, MemoryTriager,
+                   WorktreeCleanup
+    services/      SlackNotifier
     socket/        Socket.io event broadcasting
   shared/
     types.ts       Types shared between server and client
 scripts/
   check-lock-hook.mjs     Pre-tool-use hook that enforces file locks
   check-branch-hook.mjs   Pre-tool-use hook that enforces branch protection
+  check-prefix-hook.mjs   Pre-tool-use hook that enforces [BotName] prefix on commits/comments
+  start-ec2.sh            Build and start the server in a tmux session
+  restart-ec2.sh          Pull, rebuild, and restart the server (used by Pull & Restart button)
+  setup-ec2.sh            Full EC2 setup script (Node.js, tmux, gh, Claude CLI, clone, build)
 data/
   orchestrator.db        SQLite database (auto-created on first run)
   agent-logs/            NDJSON output and stderr logs per agent
