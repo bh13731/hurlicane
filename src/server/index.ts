@@ -16,6 +16,7 @@ import { writeInput, resizePty } from './orchestrator/PtyManager.js';
 import { stopEyeProcess } from './api/eye.js';
 import * as queries from './db/queries.js';
 import { authMiddleware, handleLogin, handleLogout, handleMe, isSocketAuthenticated, isAuthEnabled } from './auth.js';
+import externalRouter, { getOrCreateApiKey } from './api/external.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +69,11 @@ async function main() {
   app.get('/healthz', (_req, res) => res.send('ok'));
   app.post('/auth/login', handleLogin);
   app.get('/auth/logout', handleLogout);
+
+  // External API — uses X-API-Key header, bypasses session auth
+  app.use('/api/ext', externalRouter);
+  const apiKey = getOrCreateApiKey();
+  console.log(`[server] External API key: ${apiKey.slice(0, 9)}...${apiKey.slice(-4)}`);
 
   // Auth gate — everything below requires a valid session (when AUTH_PASSWORD is set)
   app.use(authMiddleware);
