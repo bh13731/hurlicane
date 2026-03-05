@@ -345,7 +345,8 @@ export async function dispatch(
 
   // Ignore events whose body starts with [botName] (our own bot's output)
   if (prompts.botName) {
-    const prefix = `[${prompts.botName}]`;
+    const name = prompts.botName.replace(/^\[|\]$/g, '');
+    const prefix = `[${name}]`;
     const body =
       payload.comment?.body ??
       payload.review?.body ??
