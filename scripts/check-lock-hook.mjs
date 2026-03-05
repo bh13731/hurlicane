@@ -25,8 +25,8 @@ if (!agentId) process.exit(0);
 
 // Readonly agents are unconditionally blocked from all file edits.
 if (process.env.ORCHESTRATOR_READONLY === 'true') {
-  process.stdout.write('This is a read-only job. File modifications are not allowed.');
-  process.exit(2);
+  process.stderr.write('This is a read-only job. File modifications are not allowed.', () => process.exit(2));
+  setTimeout(() => process.exit(2), 500);
 }
 
 // Safety valve: if no data arrives within 2s, fail open.
@@ -64,10 +64,9 @@ async function processInput() {
     if (locked) {
       process.exit(0); // lock held — allow the edit
     } else {
-      process.stdout.write(
-        `Lock required: call lock_files(["${filePath}"], "<reason>") before editing this file.`
-      );
-      process.exit(2); // block and show message to agent
+      const msg = `Lock required: call lock_files(["${filePath}"], "<reason>") before editing this file.`;
+      process.stderr.write(msg, () => process.exit(2));
+      setTimeout(() => process.exit(2), 500); // fallback
     }
   } catch {
     process.exit(0); // network error → fail open
