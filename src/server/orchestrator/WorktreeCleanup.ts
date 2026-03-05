@@ -68,21 +68,51 @@ function cleanupOrphanedWorktrees(): void {
   }
 }
 
+/** Check if a branch should be cleaned: PR merged/closed or remote branch deleted. */
+function shouldClean(branch: string, cwd: string): boolean {
+  // Check PR state via gh CLI
+  try {
+    const ghOutput = execSync(
+      `gh pr view ${JSON.stringify(branch)} --json state`,
+      { cwd, timeout: 15_000, stdio: 'pipe' },
+    ).toString().trim();
+    const prData = JSON.parse(ghOutput);
+    if (prData.state === 'MERGED' || prData.state === 'CLOSED') return true;
+  } catch {
+    // No PR exists — fall through to branch check
+  }
+
+  // Check if the remote branch has been deleted
+  try {
+    execSync(`git ls-remote --exit-code origin ${JSON.stringify(branch)}`, {
+      cwd,
+      timeout: 15_000,
+      stdio: 'pipe',
+    });
+    // Branch exists on remote — don't clean
+    return false;
+  } catch {
+    // ls-remote exits non-zero when the ref doesn't exist — branch was deleted
+    return true;
+  }
+}
+
 /** Manual cleanup trigger — returns number of worktrees cleaned */
 export function runCleanupNow(): number {
   const active = queries.listActiveWorktrees();
   let cleaned = 0;
 
   for (const wt of active) {
-    const job = queries.getJobById(wt.job_id);
-    if (!job) continue;
-    if (job.status !== 'done' && job.status !== 'failed' && job.status !== 'cancelled') continue;
-
     try {
       const repo = queries.getRepoById(wt.repo_id);
-      removeWorktree(wt.path, wt.branch, repo?.path ?? null);
+      if (!repo) continue;
+
+      if (!shouldClean(wt.branch, repo.path)) continue;
+
+      removeWorktree(wt.path, wt.branch, repo.path);
       queries.markWorktreeCleaned(wt.id);
-      notifyWorktreeCleaned(wt.branch, job.title);
+      const job = wt.job_id ? queries.getJobById(wt.job_id) : null;
+      notifyWorktreeCleaned(wt.branch, job?.title);
       cleaned++;
     } catch { /* skip */ }
   }

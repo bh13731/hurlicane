@@ -83,7 +83,7 @@ export function WorktreesSidebar({ selectedWorktreeId, onSelectWorktree }: Workt
           className="btn btn-sm btn-secondary"
           onClick={handleCleanup}
           disabled={cleaning || worktrees.length === 0}
-          title="Remove worktrees for completed/failed/cancelled jobs"
+          title="Remove worktrees whose PR was merged/closed or branch deleted"
           style={{ fontSize: 11, padding: '2px 8px' }}
         >
           {cleaning ? 'Cleaning...' : 'Clean Up'}
