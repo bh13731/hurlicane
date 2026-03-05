@@ -217,12 +217,18 @@ async function checkAllSuitesPassed(
 
   try {
     const output = execSync(
-      `gh api repos/${repo}/commits/${sha}/check-suites --jq '.check_suites | map(.conclusion) | join(",")'`,
+      `gh api repos/${repo}/commits/${sha}/check-suites --jq '.check_suites[] | (.status + ":" + (.conclusion // "null"))'`,
       { timeout: 15_000, stdio: ['pipe', 'pipe', 'pipe'] },
     ).toString().trim();
 
-    const conclusions = output.split(',').filter(Boolean);
-    if (conclusions.length === 0) return;
+    const entries = output.split('\n').filter(Boolean);
+    if (entries.length === 0) return;
+
+    // Every suite must be completed — skip if any are still queued/in_progress
+    const allCompleted = entries.every(e => e.startsWith('completed:'));
+    if (!allCompleted) return;
+
+    const conclusions = entries.map(e => e.split(':')[1]);
 
     // All must be "success" or "neutral" (skipped checks are fine)
     const allPassed = conclusions.every(c => c === 'success' || c === 'neutral');
