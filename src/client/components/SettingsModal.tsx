@@ -8,6 +8,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [maxConcurrent, setMaxConcurrent] = useState<number>(20);
   const [botName, setBotName] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
+  const [anthropicApiKey, setAnthropicApiKey] = useState('');
+  const [apiKeySet, setApiKeySet] = useState(false);
   const [systemPromptAppendix, setSystemPromptAppendix] = useState('');
   const [saving, setSaving] = useState(false);
   const [worktreeStats, setWorktreeStats] = useState<{ active: number; cleaned: number } | null>(null);
@@ -21,6 +23,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         setMaxConcurrent(data.maxConcurrentAgents);
         setBotName(data.botName ?? '');
         setDefaultModel(data.defaultModel ?? '');
+        setAnthropicApiKey(data.anthropicApiKey ?? '');
+        setApiKeySet(!!data.anthropicApiKeySet);
         setSystemPromptAppendix(data.systemPromptAppendix ?? '');
       })
       .catch(() => {});
@@ -36,7 +40,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent, botName, defaultModel, systemPromptAppendix }),
+        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent, botName, defaultModel, anthropicApiKey, systemPromptAppendix }),
       });
       if (res.ok) onClose();
     } finally {
@@ -105,6 +109,31 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             </select>
             <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
               When set, all jobs without an explicit model use this instead of LLM-based classification.
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Anthropic API Key</label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="password"
+                value={anthropicApiKey}
+                onChange={e => setAnthropicApiKey(e.target.value)}
+                placeholder={apiKeySet ? '(saved — paste new key to replace)' : 'sk-ant-...'}
+                style={{ flex: 1 }}
+              />
+              {apiKeySet && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => { setAnthropicApiKey(''); setApiKeySet(false); }}
+                  style={{ flexShrink: 0 }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+              Enables fast title generation and model classification via direct API calls instead of the slow CLI.
             </div>
           </div>
           <div className="form-group">

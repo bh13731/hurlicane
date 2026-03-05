@@ -46,6 +46,15 @@ async function main() {
   // Populate FTS index for any existing output rows not yet indexed
   queries.rebuildFts();
 
+  // Load saved API key into process.env (if not already set via environment)
+  if (!process.env.ANTHROPIC_API_KEY) {
+    const savedKey = queries.getNote('setting:anthropicApiKey')?.value;
+    if (savedKey) {
+      process.env.ANTHROPIC_API_KEY = savedKey;
+      console.log('[server] Loaded Anthropic API key from settings');
+    }
+  }
+
   // 2. Recovery — mark stale agents as failed, requeue their jobs
   runRecovery();
 
