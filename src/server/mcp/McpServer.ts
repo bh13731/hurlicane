@@ -16,6 +16,7 @@ import { searchKBHandler, searchKBSchema } from './tools/knowledgeBase.js';
 import { reportLearningsHandler, reportLearningsSchema } from './tools/reportLearnings.js';
 import { finishJobHandler, finishJobSchema } from './tools/finishJob.js';
 import { createWorktreeHandler, createWorktreeSchema } from './tools/createWorktree.js';
+import { slackMessageHandler, slackMessageSchema } from './tools/slackMessage.js';
 
 // agentId → { sessionId → transport }
 const agentTransports: Map<string, Map<string, StreamableHTTPServerTransport>> = new Map();
@@ -382,6 +383,19 @@ function buildMcpServer(agentId: string): MCP {
     },
     async (input) => {
       const result = await finishJobHandler(agentId, input as any);
+      return { content: [{ type: 'text', text: result }] };
+    }
+  );
+
+  server.tool(
+    'send_slack_message',
+    'Send a Slack DM to the user. Use this to notify the user of important events, ask for input outside the orchestrator, or share results. The message must include a short headline and a well-formatted body using Slack Block Kit blocks (sections, headers, dividers, context, mrkdwn fields). Your agent ID is attached automatically.',
+    {
+      headline: slackMessageSchema.shape.headline,
+      blocks: slackMessageSchema.shape.blocks,
+    },
+    async (input) => {
+      const result = await slackMessageHandler(agentId, input as any);
       return { content: [{ type: 'text', text: result }] };
     }
   );

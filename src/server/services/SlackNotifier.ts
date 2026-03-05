@@ -12,47 +12,108 @@ export function loadSlackSettings(): SlackSettings {
   };
 }
 
-async function sendSlackDM(token: string, userId: string, text: string): Promise<{ ok: boolean; error?: string }> {
+async function sendSlackDM(
+  token: string,
+  userId: string,
+  text: string,
+  blocks?: unknown[],
+): Promise<{ ok: boolean; error?: string }> {
+  const payload: Record<string, unknown> = { channel: userId, text };
+  if (blocks) payload.blocks = blocks;
   const res = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ channel: userId, text }),
+    body: JSON.stringify(payload),
   });
   return res.json() as Promise<{ ok: boolean; error?: string }>;
 }
 
-async function notify(text: string): Promise<void> {
+async function notify(text: string, blocks?: unknown[]): Promise<void> {
   const { botToken, userId } = loadSlackSettings();
   if (!botToken || !userId) return;
   try {
-    await sendSlackDM(botToken, userId, text);
+    await sendSlackDM(botToken, userId, text, blocks);
   } catch (err) {
     console.error('[slack] Failed to send notification:', err);
   }
 }
 
 export async function notifyFailure(title: string, errorMessage: string, context?: string): Promise<void> {
-  const lines = [`*Failed:* ${title}`];
-  if (errorMessage) lines.push(`> ${errorMessage}`);
-  if (context) lines.push(context);
-  await notify(lines.join('\n'));
+  const fallback = `Failed: ${title}${errorMessage ? ` — ${errorMessage}` : ''}`;
+  const fields: { type: string; text: string }[] = [];
+  if (context) fields.push({ type: 'mrkdwn', text: `*Context:*\n${context}` });
+
+  const blocks: unknown[] = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: ':red_circle: Agent Failed', emoji: true },
+    },
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*${title}*` },
+    },
+  ];
+  if (errorMessage) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: `\`\`\`${errorMessage}\`\`\`` },
+    });
+  }
+  if (fields.length > 0) {
+    blocks.push({ type: 'section', fields });
+  }
+
+  await notify(fallback, blocks);
 }
 
 export async function notifyWorktreeCreated(branch: string, jobTitle?: string | null): Promise<void> {
-  const lines = [`*Worktree created:* \`${branch}\``];
-  if (jobTitle) lines.push(`Job: ${jobTitle}`);
-  await notify(lines.join('\n'));
+  const fallback = `Worktree created: ${branch}${jobTitle ? ` (${jobTitle})` : ''}`;
+  const blocks: unknown[] = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: ':seedling: Worktree Created', emoji: true },
+    },
+    {
+      type: 'section',
+      fields: [
+        { type: 'mrkdwn', text: `*Branch:*\n\`${branch}\`` },
+        ...(jobTitle ? [{ type: 'mrkdwn', text: `*Job:*\n${jobTitle}` }] : []),
+      ],
+    },
+  ];
+  await notify(fallback, blocks);
 }
 
 export async function notifyWorktreeCleaned(branch: string, jobTitle?: string | null): Promise<void> {
-  const lines = [`*Worktree cleaned:* \`${branch}\``];
-  if (jobTitle) lines.push(`Job: ${jobTitle}`);
-  await notify(lines.join('\n'));
+  const fallback = `Worktree cleaned: ${branch}${jobTitle ? ` (${jobTitle})` : ''}`;
+  const blocks: unknown[] = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: ':broom: Worktree Cleaned', emoji: true },
+    },
+    {
+      type: 'section',
+      fields: [
+        { type: 'mrkdwn', text: `*Branch:*\n\`${branch}\`` },
+        ...(jobTitle ? [{ type: 'mrkdwn', text: `*Job:*\n${jobTitle}` }] : []),
+      ],
+    },
+  ];
+  await notify(fallback, blocks);
 }
 
 export async function sendTestMessage(token: string, userId: string): Promise<{ ok: boolean; error?: string }> {
-  return sendSlackDM(token, userId, 'Test notification from Hurlicane — Slack integration is working.');
+  return sendSlackDM(token, userId, 'Test notification from Hurlicane', [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: ':white_check_mark: Slack Connected', emoji: true },
+    },
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: 'Slack integration is working. You\'ll receive notifications for agent failures, worktree creation, and cleanup.' },
+    },
+  ]);
 }
