@@ -67,9 +67,6 @@ export function emitJobNew(job: Job): void {
 
 export function emitJobUpdate(job: Job): void {
   getIo().emit('job:update', { job });
-  if (job.status === 'failed') {
-    notifyFailure(`Job failed: ${job.title}`, '');
-  }
 }
 
 export function emitPtyData(agentId: string, data: string): void {

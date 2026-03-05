@@ -7,7 +7,7 @@ import { cancelledAgents } from '../orchestrator/AgentRunner.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import * as socket from '../socket/SocketManager.js';
 import { runCleanupNow } from '../orchestrator/WorktreeCleanup.js';
-import { notifyPRClosed, notifyPRCreated } from '../services/SlackNotifier.js';
+import { notifyWorktreeCreated, notifyWorktreeCleaned } from '../services/SlackNotifier.js';
 
 /** Directory where worktrees are materialised. */
 const WORKTREES_DIR = path.resolve('data', 'worktrees');
@@ -132,6 +132,7 @@ router.post('/', (req, res) => {
       branch: sanitized,
     });
 
+    notifyWorktreeCreated(sanitized);
     res.json(wt);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to create worktree' });
@@ -148,13 +149,9 @@ router.post('/cleanup-branch', (req, res) => {
 
   const wt = queries.getWorktreeByBranch(branch);
   if (!wt) {
-    notifyPRClosed(branch, !!merged);
     res.json({ ok: true, found: false, cancelledJobs: 0 });
     return;
   }
-
-  const job = queries.getJobById(wt.job_id);
-  notifyPRClosed(branch, !!merged, job?.title);
 
   // Find and cancel all active jobs running in this worktree
   const activeJobs = queries.listActiveJobsByWorkDir(wt.path);
@@ -191,6 +188,8 @@ router.post('/cleanup-branch', (req, res) => {
   }
 
   queries.markWorktreeCleaned(wt.id);
+  const job = queries.getJobById(wt.job_id);
+  notifyWorktreeCleaned(branch, job?.title);
 
   console.log(`[worktrees] cleaned up branch ${branch}: cancelled ${cancelledJobCount} jobs, removed worktree ${wt.path}`);
   res.json({ ok: true, found: true, cancelledJobs: cancelledJobCount, worktreeId: wt.id });
@@ -270,8 +269,6 @@ router.post('/:id/pr', (req, res) => {
 
     const lines = output.split('\n');
     const url = lines[lines.length - 1];
-    const job = queries.getJobById(wt.job_id);
-    notifyPRCreated(wt.branch, url, job?.title);
     res.json({ url });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to create PR' });
@@ -362,6 +359,8 @@ router.delete('/:id', (req, res) => {
   }
 
   queries.markWorktreeCleaned(wt.id);
+  const job = queries.getJobById(wt.job_id);
+  notifyWorktreeCleaned(wt.branch, job?.title);
   res.json({ ok: true });
 });
 

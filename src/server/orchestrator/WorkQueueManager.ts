@@ -8,6 +8,7 @@ import { startInteractiveAgent } from './PtyManager.js';
 import { resolveModel } from './ModelClassifier.js';
 import type { Job } from '../../shared/types.js';
 import { isCodexModel } from '../../shared/types.js';
+import { notifyWorktreeCreated } from '../services/SlackNotifier.js';
 
 let _maxConcurrent = Number(process.env.MAX_CONCURRENT_AGENTS ?? 20);
 const POLL_INTERVAL_MS = 2000;
@@ -161,6 +162,7 @@ function createWorktree(job: Job, agentId: string): Job {
       path: worktreeDir,
       branch: branchName,
     });
+    notifyWorktreeCreated(branchName, job.title);
   } catch (err) { console.warn('[queue] failed to record worktree:', err); }
 
   // Return a copy of the job with the overridden work_dir

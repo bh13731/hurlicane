@@ -24,48 +24,33 @@ async function sendSlackDM(token: string, userId: string, text: string): Promise
   return res.json() as Promise<{ ok: boolean; error?: string }>;
 }
 
-export async function notifyFailure(title: string, errorMessage: string, context?: string): Promise<void> {
+async function notify(text: string): Promise<void> {
   const { botToken, userId } = loadSlackSettings();
   if (!botToken || !userId) return;
-
-  const lines = [`*Failed:* ${title}`];
-  if (errorMessage) lines.push(`> ${errorMessage}`);
-  if (context) lines.push(context);
-
   try {
-    await sendSlackDM(botToken, userId, lines.join('\n'));
+    await sendSlackDM(botToken, userId, text);
   } catch (err) {
     console.error('[slack] Failed to send notification:', err);
   }
 }
 
-export async function notifyPRClosed(branch: string, merged: boolean, jobTitle?: string | null): Promise<void> {
-  const { botToken, userId } = loadSlackSettings();
-  if (!botToken || !userId) return;
-
-  const label = merged ? 'PR merged' : 'PR closed';
-  const lines = [`*${label}:* \`${branch}\``];
-  if (jobTitle) lines.push(`Job: ${jobTitle}`);
-
-  try {
-    await sendSlackDM(botToken, userId, lines.join('\n'));
-  } catch (err) {
-    console.error('[slack] Failed to send PR notification:', err);
-  }
+export async function notifyFailure(title: string, errorMessage: string, context?: string): Promise<void> {
+  const lines = [`*Failed:* ${title}`];
+  if (errorMessage) lines.push(`> ${errorMessage}`);
+  if (context) lines.push(context);
+  await notify(lines.join('\n'));
 }
 
-export async function notifyPRCreated(branch: string, url: string, jobTitle?: string | null): Promise<void> {
-  const { botToken, userId } = loadSlackSettings();
-  if (!botToken || !userId) return;
-
-  const lines = [`*PR created:* <${url}|\`${branch}\`>`];
+export async function notifyWorktreeCreated(branch: string, jobTitle?: string | null): Promise<void> {
+  const lines = [`*Worktree created:* \`${branch}\``];
   if (jobTitle) lines.push(`Job: ${jobTitle}`);
+  await notify(lines.join('\n'));
+}
 
-  try {
-    await sendSlackDM(botToken, userId, lines.join('\n'));
-  } catch (err) {
-    console.error('[slack] Failed to send PR created notification:', err);
-  }
+export async function notifyWorktreeCleaned(branch: string, jobTitle?: string | null): Promise<void> {
+  const lines = [`*Worktree cleaned:* \`${branch}\``];
+  if (jobTitle) lines.push(`Job: ${jobTitle}`);
+  await notify(lines.join('\n'));
 }
 
 export async function sendTestMessage(token: string, userId: string): Promise<{ ok: boolean; error?: string }> {
