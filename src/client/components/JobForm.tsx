@@ -426,6 +426,18 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
 
           <TemplateModelStats templateId={templateId} model={model} />
 
+          <div className="form-group">
+            <label className="form-checkbox-label">
+              <input
+                type="checkbox"
+                checked={interactive}
+                onChange={e => setInteractive(e.target.checked)}
+              />
+              Interactive session
+              <span className="tooltip-icon" data-tip="Keeps terminal open for direct conversation">?</span>
+            </label>
+          </div>
+
           <button
             type="button"
             className="form-advanced-toggle"
@@ -456,18 +468,6 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               </div>
             </div>
           )}
-
-          <div className="form-group">
-            <label className="form-checkbox-label">
-              <input
-                type="checkbox"
-                checked={interactive}
-                onChange={e => setInteractive(e.target.checked)}
-              />
-              Interactive session
-              <span className="tooltip-icon" data-tip="Keeps terminal open for direct conversation">?</span>
-            </label>
-          </div>
 
           <div className="form-group">
             <label htmlFor="repeatSeconds">
