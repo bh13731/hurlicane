@@ -155,6 +155,17 @@ router.get('/:id/branches', (req, res) => {
   });
 });
 
+router.patch('/:id', (req, res) => {
+  const { default_branch } = req.body as { default_branch?: string };
+  if (!default_branch || typeof default_branch !== 'string' || !default_branch.trim()) {
+    res.status(400).json({ error: 'default_branch is required' });
+    return;
+  }
+  const repo = queries.updateRepo(req.params.id, { default_branch: default_branch.trim() });
+  if (!repo) { res.status(404).json({ error: 'repo not found' }); return; }
+  res.json(repo);
+});
+
 router.delete('/:id', (req, res) => {
   const repo = queries.getRepoById(req.params.id);
   if (repo) {

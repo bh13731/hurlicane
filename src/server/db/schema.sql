@@ -81,11 +81,12 @@ CREATE INDEX IF NOT EXISTS idx_questions_agent ON questions(agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_locks_active    ON file_locks(file_path, released_at);
 
 CREATE TABLE IF NOT EXISTS repos (
-  id         TEXT PRIMARY KEY,
-  name       TEXT NOT NULL,
-  url        TEXT NOT NULL DEFAULT '',
-  path       TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  id              TEXT PRIMARY KEY,
+  name            TEXT NOT NULL,
+  url             TEXT NOT NULL DEFAULT '',
+  path            TEXT NOT NULL,
+  default_branch  TEXT NOT NULL DEFAULT 'main',
+  created_at      INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS worktrees (

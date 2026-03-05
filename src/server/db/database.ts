@@ -239,6 +239,9 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!repoCols.includes('url')) {
     db.exec("ALTER TABLE repos ADD COLUMN url TEXT NOT NULL DEFAULT ''");
   }
+  if (!repoCols.includes('default_branch')) {
+    db.exec("ALTER TABLE repos ADD COLUMN default_branch TEXT NOT NULL DEFAULT 'main'");
+  }
 
   // ── Worktrees — additive migrations ───────────────────────────────────────
   const wtCols: string[] = (db.prepare('PRAGMA table_info(worktrees)').all() as any[]).map((r: any) => r.name);

@@ -267,10 +267,10 @@ async function checkAllSuitesPassed(
  * Fetch inline comments for a review via gh CLI.
  * Returns a formatted string of inline comments, or empty string if none/failure.
  */
-function fetchReviewComments(repo: string, reviewId: string | number): string {
+function fetchReviewComments(repo: string, prNum: number | string, reviewId: string | number): string {
   try {
     const output = execSync(
-      `gh api repos/${repo}/pulls/reviews/${reviewId}/comments --jq '.[] | "\\(.path):\\(.line // .original_line // "?") — \\(.body)"'`,
+      `gh api repos/${repo}/pulls/${prNum}/reviews/${reviewId}/comments --jq '.[] | "\\(.path):\\(.line // .original_line // "?") — \\(.body)"'`,
       { timeout: 15_000, stdio: ['pipe', 'pipe', 'pipe'] },
     ).toString().trim();
     return output || '';
@@ -296,7 +296,7 @@ function handlePullRequestReview(
     const dedupKey = `review:${repo}#${prNum}:${review.id}`;
     if (isDuplicate(dedupKey)) return 'duplicate';
 
-    const inlineComments = fetchReviewComments(repo, review.id);
+    const inlineComments = fetchReviewComments(repo, prNum, review.id);
 
     const title = `Address review on ${repo}#${prNum}`;
     const parts = [
@@ -319,7 +319,7 @@ function handlePullRequestReview(
     const dedupKey = `review-comment:${repo}#${prNum}:${review.id}`;
     if (isDuplicate(dedupKey)) return 'duplicate';
 
-    const inlineComments = fetchReviewComments(repo, review.id);
+    const inlineComments = fetchReviewComments(repo, prNum, review.id);
 
     // Skip if there's no body and no inline comments (empty review)
     if (!review.body && !inlineComments) return 'empty review comment';

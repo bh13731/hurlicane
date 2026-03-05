@@ -1164,6 +1164,20 @@ export function getRepoByPath(repoPath: string): Repo | null {
   return row ? cast<Repo>(row) : null;
 }
 
+export function updateRepo(id: string, updates: { default_branch?: string }): Repo | null {
+  const db = getDb();
+  const sets: string[] = [];
+  const vals: any[] = [];
+  if (updates.default_branch !== undefined) {
+    sets.push('default_branch = ?');
+    vals.push(updates.default_branch);
+  }
+  if (sets.length === 0) return getRepoById(id);
+  vals.push(id);
+  db.prepare(`UPDATE repos SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  return getRepoById(id);
+}
+
 export function deleteRepo(id: string): void {
   const db = getDb();
   db.prepare('DELETE FROM repos WHERE id = ?').run(id);

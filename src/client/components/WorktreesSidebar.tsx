@@ -20,6 +20,8 @@ export function WorktreesSidebar({ selectedWorktreeId, onSelectWorktree }: Workt
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(new Set());
   const [cleaning, setCleaning] = useState(false);
   const [cleanResult, setCleanResult] = useState<string | null>(null);
+  const [editingBranch, setEditingBranch] = useState<string | null>(null);
+  const [branchInput, setBranchInput] = useState('');
 
   const fetchData = useCallback(async () => {
     try {
@@ -60,6 +62,23 @@ export function WorktreesSidebar({ selectedWorktreeId, onSelectWorktree }: Workt
       ungrouped.push(wt);
     }
   }
+
+  const handleSaveBranch = async (repoId: string) => {
+    const trimmed = branchInput.trim();
+    if (!trimmed) return;
+    try {
+      const res = await fetch(`/api/repos/${repoId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_branch: trimmed }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setRepos(prev => prev.map(r => r.id === repoId ? updated : r));
+      }
+    } catch { /* ignore */ }
+    setEditingBranch(null);
+  };
 
   const handleCleanup = async () => {
     setCleaning(true);
@@ -105,6 +124,31 @@ export function WorktreesSidebar({ selectedWorktreeId, onSelectWorktree }: Workt
             <span className="worktree-repo-name">{repo.name}</span>
             <span className="worktree-repo-count">{wts.length}</span>
           </div>
+          {!collapsedRepos.has(repo.id) && (
+            <div className="worktree-repo-base-branch">
+              {editingBranch === repo.id ? (
+                <form className="worktree-base-branch-form" onSubmit={e => { e.preventDefault(); handleSaveBranch(repo.id); }}>
+                  <input
+                    type="text"
+                    value={branchInput}
+                    onChange={e => setBranchInput(e.target.value)}
+                    autoFocus
+                    onBlur={() => setEditingBranch(null)}
+                    onKeyDown={e => e.key === 'Escape' && setEditingBranch(null)}
+                    className="worktree-base-branch-input"
+                  />
+                </form>
+              ) : (
+                <span
+                  className="worktree-base-branch-label"
+                  onClick={e => { e.stopPropagation(); setEditingBranch(repo.id); setBranchInput(repo.default_branch || 'main'); }}
+                  title="Click to change base branch"
+                >
+                  base: {repo.default_branch || 'main'}
+                </span>
+              )}
+            </div>
+          )}
           {!collapsedRepos.has(repo.id) && wts.map(wt => (
             <div
               key={wt.id}

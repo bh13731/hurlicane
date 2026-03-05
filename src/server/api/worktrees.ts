@@ -66,12 +66,14 @@ router.post('/', (req, res) => {
     const shortId = randomUUID().slice(0, 8);
     const worktreeDir = path.join(WORKTREES_DIR, shortId);
 
-    // Pull latest main so worktrees branch from the newest commit
-    try { execSync('git pull origin main', { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+    const baseBranch = repo.default_branch || 'main';
 
-    // If main has no commits yet (empty repo), create an initial empty commit
+    // Pull latest base branch so worktrees branch from the newest commit
+    try { execSync(`git pull origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+
+    // If base branch has no commits yet (empty repo), create an initial empty commit
     try {
-      execSync('git rev-parse main', { cwd: repo.path, timeout: 5_000, stdio: 'pipe' });
+      execSync(`git rev-parse ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 5_000, stdio: 'pipe' });
     } catch {
       execSync('git commit --allow-empty -m "Initial commit"', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' });
     }
@@ -117,7 +119,7 @@ router.post('/', (req, res) => {
         });
       }
     } else {
-      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(sanitized)} main`, {
+      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(sanitized)} ${JSON.stringify(baseBranch)}`, {
         cwd: repo.path,
         timeout: 30_000,
       });
@@ -199,8 +201,11 @@ router.get('/:id/diff', (req, res) => {
   const wt = queries.getWorktreeById(req.params.id);
   if (!wt) { res.status(404).json({ error: 'Worktree not found' }); return; }
 
+  const repo = queries.getRepoById(wt.repo_id);
+  const baseBranch = repo?.default_branch || 'main';
+
   try {
-    const diff = execSync('git diff main...HEAD --no-color', {
+    const diff = execSync(`git diff ${JSON.stringify(baseBranch)}...HEAD --no-color`, {
       cwd: wt.path,
       timeout: 30_000,
       maxBuffer: 10 * 1024 * 1024,
@@ -208,7 +213,7 @@ router.get('/:id/diff', (req, res) => {
 
     let commits = '';
     try {
-      commits = execSync('git log --oneline main..HEAD', {
+      commits = execSync(`git log --oneline ${JSON.stringify(baseBranch)}..HEAD`, {
         cwd: wt.path,
         timeout: 10_000,
       }).toString();
@@ -240,10 +245,12 @@ router.post('/:id/pr', (req, res) => {
   if (!wt) { res.status(404).json({ error: 'Worktree not found' }); return; }
 
   try {
-    // Ensure main is pushed to origin (needed if we created the initial empty commit locally)
     const repo = queries.getRepoById(wt.repo_id);
+    const baseBranch = repo?.default_branch || 'main';
+
+    // Ensure base branch is pushed to origin (needed if we created the initial empty commit locally)
     if (repo) {
-      try { execSync('git push -u origin main', { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* already pushed */ }
+      try { execSync(`git push -u origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* already pushed */ }
     }
 
     // Push the worktree branch
@@ -254,14 +261,14 @@ router.post('/:id/pr', (req, res) => {
 
     let output: string;
     try {
-      output = execSync(`gh pr create --fill --draft --head ${JSON.stringify(wt.branch)}`, {
+      output = execSync(`gh pr create --fill --draft --head ${JSON.stringify(wt.branch)} --base ${JSON.stringify(baseBranch)}`, {
         cwd: wt.path,
         timeout: 30_000,
       }).toString().trim();
     } catch {
       // --fill fails when there are no commits between base and head (e.g. remote branch tracking).
       // Fall back to explicit title/body.
-      output = execSync(`gh pr create --draft --head ${JSON.stringify(wt.branch)} --title ${JSON.stringify(wt.branch)} --body ""`, {
+      output = execSync(`gh pr create --draft --head ${JSON.stringify(wt.branch)} --base ${JSON.stringify(baseBranch)} --title ${JSON.stringify(wt.branch)} --body ""`, {
         cwd: wt.path,
         timeout: 30_000,
       }).toString().trim();

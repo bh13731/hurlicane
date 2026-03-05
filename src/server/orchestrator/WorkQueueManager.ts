@@ -136,18 +136,20 @@ function createWorktree(job: Job, agentId: string): Job {
   // Prune stale worktree references so branch names can be reused
   try { execSync('git worktree prune', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' }); } catch { /* ignore */ }
 
-  // Pull latest main so the worktree branches from the newest commit
-  try { execSync('git pull origin main', { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+  const baseBranch = repo.default_branch || 'main';
 
-  // If main has no commits yet (empty repo), create an initial empty commit
+  // Pull latest base branch so the worktree branches from the newest commit
+  try { execSync(`git pull origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+
+  // If base branch has no commits yet (empty repo), create an initial empty commit
   try {
-    execSync('git rev-parse main', { cwd: repo.path, timeout: 5_000, stdio: 'pipe' });
+    execSync(`git rev-parse ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 5_000, stdio: 'pipe' });
   } catch {
     execSync('git commit --allow-empty -m "Initial commit"', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' });
   }
 
-  console.log(`[queue] creating worktree: ${worktreeDir} (branch: ${branchName}, base: main)`);
-  execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branchName)} main`, {
+  console.log(`[queue] creating worktree: ${worktreeDir} (branch: ${branchName}, base: ${baseBranch})`);
+  execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branchName)} ${JSON.stringify(baseBranch)}`, {
     cwd: repo.path,
     timeout: 30_000,
   });

@@ -17,6 +17,7 @@ interface Repo {
   name: string;
   url: string;
   path: string;
+  default_branch: string;
   created_at: number;
 }
 
@@ -40,6 +41,10 @@ export function GitModal({ onClose }: GitModalProps) {
   const [addingRepo, setAddingRepo] = useState(false);
   const [deletingRepoId, setDeletingRepoId] = useState<string | null>(null);
   const [repoError, setRepoError] = useState<string | null>(null);
+
+  // Base branch editing
+  const [editingBranchRepoId, setEditingBranchRepoId] = useState<string | null>(null);
+  const [branchInput, setBranchInput] = useState('');
 
   // Clone progress
   const [clonePhase, setClonePhase] = useState('');
@@ -196,6 +201,23 @@ export function GitModal({ onClose }: GitModalProps) {
     }
   };
 
+  const handleSaveBranch = async (repoId: string) => {
+    const trimmed = branchInput.trim();
+    if (!trimmed) { setEditingBranchRepoId(null); return; }
+    try {
+      const res = await fetch(`/api/repos/${repoId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_branch: trimmed }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setRepos(prev => prev.map(r => r.id === repoId ? updated : r));
+      }
+    } catch { /* ignore */ }
+    setEditingBranchRepoId(null);
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
@@ -212,27 +234,65 @@ export function GitModal({ onClose }: GitModalProps) {
               <div style={{ marginBottom: 8 }}>
                 {repos.map(repo => (
                   <div key={repo.id} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '4px 0',
+                    padding: '6px 0',
                     fontSize: 13,
                     borderBottom: '1px solid var(--border)',
                   }}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <span style={{ fontWeight: 500 }}>{repo.name}</span>
-                      <span style={{ color: 'var(--text-secondary)', marginLeft: 8, fontSize: 12 }}>
-                        {repo.url}
-                      </span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <span style={{ fontWeight: 500 }}>{repo.name}</span>
+                        <span style={{ color: 'var(--text-secondary)', marginLeft: 8, fontSize: 12 }}>
+                          {repo.url}
+                        </span>
+                      </div>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        style={{ marginLeft: 8, flexShrink: 0 }}
+                        onClick={() => handleDeleteRepo(repo.id)}
+                        disabled={deletingRepoId === repo.id}
+                      >
+                        {deletingRepoId === repo.id ? '...' : 'Delete'}
+                      </button>
                     </div>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      style={{ marginLeft: 8, flexShrink: 0 }}
-                      onClick={() => handleDeleteRepo(repo.id)}
-                      disabled={deletingRepoId === repo.id}
-                    >
-                      {deletingRepoId === repo.id ? '...' : 'Delete'}
-                    </button>
+                    <div style={{ marginTop: 3, fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ color: 'var(--text-muted)' }}>base:</span>
+                      {editingBranchRepoId === repo.id ? (
+                        <form onSubmit={e => { e.preventDefault(); handleSaveBranch(repo.id); }} style={{ display: 'inline-flex' }}>
+                          <input
+                            type="text"
+                            value={branchInput}
+                            onChange={e => setBranchInput(e.target.value)}
+                            autoFocus
+                            onBlur={() => handleSaveBranch(repo.id)}
+                            onKeyDown={e => e.key === 'Escape' && setEditingBranchRepoId(null)}
+                            style={{
+                              fontSize: 11,
+                              fontFamily: 'var(--font-mono)',
+                              background: 'var(--bg-primary)',
+                              border: '1px solid var(--accent-muted)',
+                              borderRadius: 4,
+                              color: 'var(--text-primary)',
+                              padding: '1px 6px',
+                              width: 120,
+                            }}
+                          />
+                        </form>
+                      ) : (
+                        <span
+                          style={{
+                            fontFamily: 'var(--font-mono)',
+                            color: 'var(--accent)',
+                            cursor: 'pointer',
+                            padding: '0 4px',
+                            borderRadius: 3,
+                          }}
+                          onClick={() => { setEditingBranchRepoId(repo.id); setBranchInput(repo.default_branch || 'main'); }}
+                          title="Click to change base branch"
+                        >
+                          {repo.default_branch || 'main'}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

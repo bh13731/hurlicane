@@ -59,12 +59,14 @@ export async function createWorktreeHandler(agentId: string, input: z.infer<type
   try {
     const worktreeDir = path.join(WORKTREES_DIR, shortId);
 
-    // Pull latest main
-    try { execSync('git pull origin main', { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+    const baseBranch = repo.default_branch || 'main';
 
-    // Ensure main exists
+    // Pull latest base branch
+    try { execSync(`git pull origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+
+    // Ensure base branch exists
     try {
-      execSync('git rev-parse main', { cwd: repo.path, timeout: 5_000, stdio: 'pipe' });
+      execSync(`git rev-parse ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 5_000, stdio: 'pipe' });
     } catch {
       execSync('git commit --allow-empty -m "Initial commit"', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' });
     }
@@ -89,8 +91,8 @@ export async function createWorktreeHandler(agentId: string, input: z.infer<type
         });
       }
     } else {
-      // Create new branch from main
-      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(sanitized)} main`, {
+      // Create new branch from base branch
+      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(sanitized)} ${JSON.stringify(baseBranch)}`, {
         cwd: repo.path,
         timeout: 30_000,
       });
