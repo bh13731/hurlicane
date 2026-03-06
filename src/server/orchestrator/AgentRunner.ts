@@ -102,11 +102,12 @@ ORCHESTRATION PATTERN (for decomposing large tasks):
   6. Optionally use write_note/read_note to pass structured data between agents.
 
 PR CREATION:
-  When you create a pull request, you MUST report the result using report_status with this exact format:
-    PR Created: <title>
-    PR #<number> (<draft or ready>) - <full PR URL>
-    Changes:
-    - <bullet point summary of each change>
+  When you create a pull request, you MUST send a Slack notification using the slack_message MCP tool.
+  Use the headline: "PR Created: <title>"
+  Use Block Kit blocks with:
+    - A header block: "PR Created: <title>"
+    - A section with the PR number, status (draft/ready), and the full clickable PR URL
+    - A section with a bullet-point summary of changes
   The PR URL is mandatory. Extract it from the gh pr create output.
 
 COMPLETION (automated jobs only):
