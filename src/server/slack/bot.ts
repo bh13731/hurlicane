@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { loadSlackSettings } from '../services/SlackNotifier.js';
+import { fetchSlackThread } from '../api/external.js';
 
 let client: SocketModeClient | null = null;
 
@@ -41,6 +42,16 @@ export async function startSlackBot(): Promise<void> {
       return;
     }
 
+    // Fetch thread context if the mention is in a thread
+    const threadTs = event.thread_ts ?? event.ts;
+    let threadContext = '';
+    try {
+      const thread = await fetchSlackThread(event.channel, threadTs);
+      if (thread) threadContext = `\n\nSlack thread context:\n${thread}`;
+    } catch (err) {
+      console.error('[slack-bot] Failed to fetch thread context:', err);
+    }
+
     // Resolve work_dir — use the first repo's path, or cwd as fallback
     const repos = queries.listRepos?.() ?? [];
     const defaultWorkDir = repos[0]?.path ?? process.cwd();
@@ -49,7 +60,7 @@ export async function startSlackBot(): Promise<void> {
       id: randomUUID(),
       title: description.split('\n')[0].slice(0, 45),
       description,
-      context: `Created from Slack by <@${event.user}> in <#${event.channel}>`,
+      context: `Created from Slack by <@${event.user}> in <#${event.channel}>${threadContext}`,
       priority: 0,
       work_dir: defaultWorkDir,
       max_turns: 50,
