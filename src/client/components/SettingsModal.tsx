@@ -10,10 +10,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [defaultModel, setDefaultModel] = useState('');
   const [anthropicApiKey, setAnthropicApiKey] = useState('');
   const [apiKeySet, setApiKeySet] = useState(false);
-  const [externalApiKey, setExternalApiKey] = useState('');
   const [systemPromptAppendix, setSystemPromptAppendix] = useState('');
   const [saving, setSaving] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
   const [worktreeStats, setWorktreeStats] = useState<{ active: number; cleaned: number } | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [restarting, setRestarting] = useState(false);
@@ -27,7 +25,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         setDefaultModel(data.defaultModel ?? '');
         setAnthropicApiKey(data.anthropicApiKey ?? '');
         setApiKeySet(!!data.anthropicApiKeySet);
-        setExternalApiKey(data.externalApiKey ?? '');
         setSystemPromptAppendix(data.systemPromptAppendix ?? '');
       })
       .catch(() => {});
@@ -137,40 +134,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
               Enables fast title generation and model classification via direct API calls instead of the slow CLI.
-            </div>
-          </div>
-          <div className="form-group">
-            <label>External API Key</label>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input
-                type="text"
-                value={externalApiKey}
-                readOnly
-                onClick={e => (e.target as HTMLInputElement).select()}
-                style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }}
-              />
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                style={{ flexShrink: 0 }}
-                disabled={regenerating}
-                onClick={async () => {
-                  if (!confirm('Regenerate API key? The old key will stop working immediately.')) return;
-                  setRegenerating(true);
-                  try {
-                    const res = await fetch('/api/settings/regenerate-api-key', { method: 'POST' });
-                    if (res.ok) {
-                      const data = await res.json();
-                      setExternalApiKey(data.externalApiKey);
-                    }
-                  } finally { setRegenerating(false); }
-                }}
-              >
-                {regenerating ? '...' : 'Regenerate'}
-              </button>
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
-              Use with <code style={{ background: 'var(--bg-interactive)', padding: '1px 4px', borderRadius: 3 }}>X-API-Key</code> header to access <code style={{ background: 'var(--bg-interactive)', padding: '1px 4px', borderRadius: 3 }}>/api/ext/*</code> endpoints remotely.
             </div>
           </div>
           <div className="form-group">

@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import * as queries from '../db/queries.js';
 import { getMaxConcurrent, setMaxConcurrent } from '../orchestrator/WorkQueueManager.js';
-import { getApiKey, regenerateApiKey } from './external.js';
 
 const router = Router();
 
@@ -19,7 +18,6 @@ router.get('/', (_req, res) => {
     defaultModel: queries.getNote('setting:defaultModel')?.value ?? '',
     anthropicApiKey: maskKey(apiKey),
     anthropicApiKeySet: !!apiKey,
-    externalApiKey: getApiKey(),
   });
 });
 
@@ -63,11 +61,6 @@ router.put('/', (req, res) => {
     anthropicApiKey: maskKey(savedKey),
     anthropicApiKeySet: !!savedKey,
   });
-});
-
-router.post('/regenerate-api-key', (_req, res) => {
-  const key = regenerateApiKey();
-  res.json({ externalApiKey: key });
 });
 
 export default router;
