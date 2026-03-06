@@ -99,10 +99,10 @@ function checkCommand(command) {
     if (/\bgh\s+pr\s+create\b/.test(p) && baseBranch) {
       const baseMatch = p.match(/--base\s+["']?([^\s"']+)["']?/);
       if (baseMatch && baseMatch[1] !== baseBranch) {
-        return `PR base branch must be "${baseBranch}". You specified "--base ${baseMatch[1]}" which is not allowed.`;
+        return `PR base branch must be "${baseBranch}". You specified "--base ${baseMatch[1]}" which is not allowed. Use: gh pr create --base ${baseBranch} ...`;
       }
       if (!baseMatch) {
-        return `You must specify "--base ${baseBranch}" when creating a PR. PRs can only target the configured base branch.`;
+        return `You must specify "--base ${baseBranch}" when creating a PR. Example: gh pr create --base ${baseBranch} --head ${assignedBranch || '<your-branch>'} --fill --draft`;
       }
     }
   }
@@ -130,7 +130,7 @@ function processInput() {
 
   const blockMsg = checkCommand(command);
   if (blockMsg) {
-    process.stdout.write(blockMsg);
+    process.stderr.write(blockMsg);
     process.exit(2);
   }
   process.exit(0);
