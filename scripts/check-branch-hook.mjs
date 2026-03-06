@@ -23,7 +23,8 @@ const agentId = process.env.ORCHESTRATOR_AGENT_ID;
 if (!agentId) process.exit(0);
 
 const assignedBranch = process.env.ORCHESTRATOR_BRANCH;
-if (!assignedBranch) process.exit(0);
+const baseBranch = process.env.ORCHESTRATOR_BASE_BRANCH;
+if (!assignedBranch && !baseBranch) process.exit(0);
 
 // Safety valve: if no data arrives within 2s, fail open.
 const noDataTimer = setTimeout(() => process.exit(0), 2000);
@@ -92,6 +93,18 @@ function checkCommand(command) {
     if (/\bgit\s+branch\s+-(m|M|-move)\b/.test(p)) {
       return 'Renaming branches is not allowed.';
     }
+
+    // ── gh pr create --base ──
+    // Ensure PRs can only target the repo's configured base branch.
+    if (/\bgh\s+pr\s+create\b/.test(p) && baseBranch) {
+      const baseMatch = p.match(/--base\s+["']?([^\s"']+)["']?/);
+      if (baseMatch && baseMatch[1] !== baseBranch) {
+        return `PR base branch must be "${baseBranch}". You specified "--base ${baseMatch[1]}" which is not allowed.`;
+      }
+      if (!baseMatch) {
+        return `You must specify "--base ${baseBranch}" when creating a PR. PRs can only target the configured base branch.`;
+      }
+    }
   }
 
   return null; // all checks passed
@@ -110,8 +123,8 @@ function processInput() {
   const command = data?.tool_input?.command;
   if (!command || typeof command !== 'string') process.exit(0);
 
-  // Quick check: if the command doesn't contain any git branch-related keywords, skip.
-  if (!/\bgit\s+(checkout|switch|branch\s+-(m|M))\b/.test(command)) {
+  // Quick check: if the command doesn't contain any branch-related keywords, skip.
+  if (!/\bgit\s+(checkout|switch|branch\s+-(m|M))\b/.test(command) && !/\bgh\s+pr\s+create\b/.test(command)) {
     process.exit(0);
   }
 

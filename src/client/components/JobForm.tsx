@@ -32,7 +32,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [error, setError] = useState<string | null>(null);
 
   // Worktree-branch state
-  const [branchMode, setBranchMode] = useState<'existing' | 'new' | 'remote'>('new');
+  const [branchMode, setBranchMode] = useState<'existing' | 'new' | 'remote' | 'none'>('new');
   const [selectedWorktreeId, setSelectedWorktreeId] = useState('');
   const [branchName, setBranchName] = useState('');
   const [branchRepoId, setBranchRepoId] = useState('');
@@ -117,7 +117,9 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
       const selectedRepo = repos.find(r => r.id === branchRepoId);
 
       let workDir: string | undefined;
-      if (branchMode === 'existing' && selectedWorktree) {
+      if (branchMode === 'none') {
+        // No worktree — workDir stays undefined
+      } else if (branchMode === 'existing' && selectedWorktree) {
         workDir = selectedWorktree.path;
       } else if (branchMode === 'remote' && selectedRemoteBranch && branchRepoId) {
         // Create a worktree tracking the remote branch
@@ -146,7 +148,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
         interactive: interactive || undefined,
         readonly: readonly || undefined,
-        useWorktree: true,
+        useWorktree: branchMode !== 'none',
         repeatIntervalMs: repeatSeconds ? (repeatSeconds as number) * 1000 : undefined,
         retryPolicy: retryPolicy !== 'none' ? retryPolicy : undefined,
         maxRetries: retryPolicy !== 'none' ? maxRetries : undefined,
@@ -222,7 +224,10 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               <input
                 type="checkbox"
                 checked={readonly}
-                onChange={e => setReadonly(e.target.checked)}
+                onChange={e => {
+                  setReadonly(e.target.checked);
+                  if (!e.target.checked && branchMode === 'none') setBranchMode('new');
+                }}
                 disabled={!!selectedTemplate?.is_readonly}
               />
               Readonly (no file edits)
@@ -234,6 +239,17 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
           <div className="form-group">
             <label>Worktree</label>
             <div className="form-row" style={{ marginBottom: 8 }}>
+              {readonly && (
+                <label className="form-checkbox-label">
+                  <input
+                    type="radio"
+                    name="branchMode"
+                    checked={branchMode === 'none'}
+                    onChange={() => setBranchMode('none')}
+                  />
+                  None
+                </label>
+              )}
               <label className="form-checkbox-label">
                 <input
                   type="radio"
@@ -263,7 +279,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
                 Remote branch
               </label>
             </div>
-            {branchMode === 'existing' ? (
+            {branchMode === 'none' ? null : branchMode === 'existing' ? (
               <select
                 value={selectedWorktreeId}
                 onChange={e => setSelectedWorktreeId(e.target.value)}
@@ -387,23 +403,6 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
             )}
           </div>
 
-          <div className="form-row">
-            <div className="form-group form-group-sm">
-              <label htmlFor="priority">
-                Priority
-                <span className="tooltip-icon" data-tip="Controls dispatch order when multiple jobs are waiting. Higher = started sooner (range: −10 to 10). If agent slots are free, all jobs start immediately regardless of priority.">?</span>
-              </label>
-              <input
-                id="priority"
-                type="number"
-                value={priority}
-                onChange={e => setPriority(Number(e.target.value))}
-                min={-10}
-                max={10}
-              />
-            </div>
-          </div>
-
           <div className="form-group">
             <label htmlFor="model">Model <span className="form-label-hint">(leave blank to auto-select)</span></label>
             <select
@@ -448,6 +447,23 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
           </button>
 
           {showAdvanced && <>
+          <div className="form-row">
+            <div className="form-group form-group-sm">
+              <label htmlFor="priority">
+                Priority
+                <span className="tooltip-icon" data-tip="Controls dispatch order when multiple jobs are waiting. Higher = started sooner (range: −10 to 10). If agent slots are free, all jobs start immediately regardless of priority.">?</span>
+              </label>
+              <input
+                id="priority"
+                type="number"
+                value={priority}
+                onChange={e => setPriority(Number(e.target.value))}
+                min={-10}
+                max={10}
+              />
+            </div>
+          </div>
+
           {pendingJobs.length > 0 && (
             <div className="form-group">
               <label>

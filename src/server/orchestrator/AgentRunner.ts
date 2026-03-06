@@ -214,6 +214,10 @@ export function runAgent(options: RunOptions): void {
       // Set assigned branch so the branch-enforcement hook works for all agents
       const wt = queries.getWorktreeByPath(workDir);
       if (wt?.branch) env['ORCHESTRATOR_BRANCH'] = wt.branch;
+      if (wt?.repo_id) {
+        const repo = queries.getRepoById(wt.repo_id);
+        if (repo?.default_branch) env['ORCHESTRATOR_BASE_BRANCH'] = repo.default_branch;
+      }
       return env;
     })(),
   });

@@ -201,9 +201,10 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
 
   // Resolve the assigned branch from the worktree so the branch-enforcement hook
   // works for sub-agents (retries, continuations, debate stages) that share a worktree.
-  const assignedBranch = (() => {
+  const { assignedBranch, baseBranch } = (() => {
     const wt = queries.getWorktreeByPath(workDir);
-    return wt?.branch ?? null;
+    const repo = wt?.repo_id ? queries.getRepoById(wt.repo_id) : null;
+    return { assignedBranch: wt?.branch ?? null, baseBranch: repo?.default_branch ?? null };
   })();
 
   const scriptLines = [
@@ -212,6 +213,7 @@ export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, res
     `export ORCHESTRATOR_API_URL=${JSON.stringify(`http://localhost:${process.env.PORT ?? 3000}`)}`,
     ...(job.is_readonly ? [`export ORCHESTRATOR_READONLY=true`] : []),
     ...(assignedBranch ? [`export ORCHESTRATOR_BRANCH=${JSON.stringify(assignedBranch)}`] : []),
+    ...(baseBranch ? [`export ORCHESTRATOR_BASE_BRANCH=${JSON.stringify(baseBranch)}`] : []),
     `unset CLAUDECODE`,
     nicedExecLine,
   ].join('\n') + '\n';
