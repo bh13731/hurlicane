@@ -84,7 +84,7 @@ export async function startSlackBot(): Promise<void> {
       model: template?.model ?? null,
       template_id: templateId,
       is_readonly: template?.is_readonly ?? 0,
-      use_worktree: template?.is_readonly ? 0 : 1,
+      use_worktree: 0,
     });
 
     socket.emitJobNew(job);
