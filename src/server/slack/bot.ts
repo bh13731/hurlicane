@@ -65,7 +65,12 @@ export async function startSlackBot(): Promise<void> {
       id: randomUUID(),
       title: description.split('\n')[0].slice(0, 45),
       description: template ? `${template.content}\n\n${description}` : description,
-      context: `Created from Slack by <@${event.user}> in <#${event.channel}>${threadContext}`,
+      context: JSON.stringify({
+        source: 'slack',
+        user: event.user,
+        channel: event.channel,
+        ...(threadContext ? { thread: threadContext } : {}),
+      }),
       priority: 0,
       work_dir: defaultWorkDir,
       max_turns: 50,
