@@ -9,10 +9,12 @@ const router = Router();
 router.get('/', (_req, res) => {
   const settings = loadSlackSettings();
   const appToken = loadSlackAppToken();
+  const templateId = queries.getNote('setting:slack:templateId')?.value ?? '';
   res.json({
     botToken: settings.botToken ? '••••' + settings.botToken.slice(-4) : '',
     appToken: appToken ? '••••' + appToken.slice(-4) : '',
     userId: settings.userId,
+    templateId,
     enabled: !!(settings.botToken && settings.userId),
     botEnabled: !!(settings.botToken && appToken),
   });
@@ -20,7 +22,7 @@ router.get('/', (_req, res) => {
 
 // PUT /api/slack — save settings
 router.put('/', (req, res) => {
-  const { botToken, userId, appToken } = req.body;
+  const { botToken, userId, appToken, templateId } = req.body;
   if (botToken !== undefined) {
     queries.upsertNote('setting:slack:botToken', String(botToken), null);
   }
@@ -30,12 +32,17 @@ router.put('/', (req, res) => {
   if (appToken !== undefined) {
     queries.upsertNote('setting:slack:appToken', String(appToken), null);
   }
+  if (templateId !== undefined) {
+    queries.upsertNote('setting:slack:templateId', String(templateId), null);
+  }
   const settings = loadSlackSettings();
   const savedAppToken = loadSlackAppToken();
+  const savedTemplateId = queries.getNote('setting:slack:templateId')?.value ?? '';
   res.json({
     botToken: settings.botToken ? '••••' + settings.botToken.slice(-4) : '',
     appToken: savedAppToken ? '••••' + savedAppToken.slice(-4) : '',
     userId: settings.userId,
+    templateId: savedTemplateId,
     enabled: !!(settings.botToken && settings.userId),
     botEnabled: !!(settings.botToken && savedAppToken),
   });

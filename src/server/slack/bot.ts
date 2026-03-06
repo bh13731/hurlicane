@@ -56,15 +56,22 @@ export async function startSlackBot(): Promise<void> {
     const repos = queries.listRepos?.() ?? [];
     const defaultWorkDir = repos[0]?.path ?? process.cwd();
 
+    // Load template setting
+    const templateId = queries.getNote('setting:slack:templateId')?.value || null;
+    const template = templateId ? queries.getTemplateById(templateId) : null;
+
     const job = queries.insertJob({
       id: randomUUID(),
       title: description.split('\n')[0].slice(0, 45),
-      description,
+      description: template ? `${template.content}\n\n${description}` : description,
       context: `Created from Slack by <@${event.user}> in <#${event.channel}>${threadContext}`,
       priority: 0,
       work_dir: defaultWorkDir,
       max_turns: 50,
-      use_worktree: 1,
+      model: template?.model ?? null,
+      template_id: templateId,
+      is_readonly: template?.is_readonly ?? 0,
+      use_worktree: template?.is_readonly ? 0 : 1,
     });
 
     socket.emitJobNew(job);

@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
+interface Template {
+  id: string;
+  name: string;
+}
+
 interface SlackModalProps {
   onClose: () => void;
 }
@@ -8,6 +13,9 @@ export function SlackModal({ onClose }: SlackModalProps) {
   const [botToken, setBotToken] = useState('');
   const [appToken, setAppToken] = useState('');
   const [userId, setUserId] = useState('');
+  const [templateId, setTemplateId] = useState('');
+  const [savedTemplateId, setSavedTemplateId] = useState('');
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [showToken, setShowToken] = useState(false);
   const [showAppToken, setShowAppToken] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -28,6 +36,8 @@ export function SlackModal({ onClose }: SlackModalProps) {
       setSavedMasked(data.botToken ?? '');
       setSavedAppMasked(data.appToken ?? '');
       setSavedUserId(data.userId ?? '');
+      setSavedTemplateId(data.templateId ?? '');
+      setTemplateId(data.templateId ?? '');
       setBotEnabled(data.botEnabled ?? false);
       setUserId(data.userId ?? '');
       setBotToken('');
@@ -35,17 +45,26 @@ export function SlackModal({ onClose }: SlackModalProps) {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { fetchSettings(); }, [fetchSettings]);
+  const fetchTemplates = useCallback(async () => {
+    try {
+      const res = await fetch('/api/templates');
+      if (!res.ok) return;
+      const data = await res.json();
+      setTemplates(data);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchSettings(); fetchTemplates(); }, [fetchSettings, fetchTemplates]);
 
   useEffect(() => {
-    setDirty(botToken !== '' || appToken !== '' || userId !== savedUserId);
-  }, [botToken, appToken, userId, savedUserId]);
+    setDirty(botToken !== '' || appToken !== '' || userId !== savedUserId || templateId !== savedTemplateId);
+  }, [botToken, appToken, userId, savedUserId, templateId, savedTemplateId]);
 
   const handleSave = async () => {
     setSaving(true);
     setFeedback(null);
     try {
-      const body: Record<string, string> = { userId };
+      const body: Record<string, string> = { userId, templateId };
       if (botToken) body.botToken = botToken;
       if (appToken) body.appToken = appToken;
       const res = await fetch('/api/slack', {
@@ -62,6 +81,8 @@ export function SlackModal({ onClose }: SlackModalProps) {
       setSavedMasked(data.botToken ?? '');
       setSavedAppMasked(data.appToken ?? '');
       setSavedUserId(data.userId ?? '');
+      setSavedTemplateId(data.templateId ?? '');
+      setTemplateId(data.templateId ?? '');
       setBotEnabled(data.botEnabled ?? false);
       setBotToken('');
       setAppToken('');
@@ -164,6 +185,21 @@ export function SlackModal({ onClose }: SlackModalProps) {
               placeholder="U0123456789"
             />
             <div className="eye-field-hint">Your Slack member ID (Profile → ⋯ → Copy member ID)</div>
+          </div>
+
+          <div className="form-group">
+            <label>Job Template</label>
+            <select
+              value={templateId}
+              onChange={e => setTemplateId(e.target.value)}
+              style={{ width: '100%' }}
+            >
+              <option value="">None</option>
+              {templates.map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+            <div className="eye-field-hint">Template to attach to jobs created via @mention</div>
           </div>
 
           {feedback && (
