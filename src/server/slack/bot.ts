@@ -42,14 +42,15 @@ export async function startSlackBot(): Promise<void> {
       return;
     }
 
-    // Fetch thread context if the mention is in a thread
-    const threadTs = event.thread_ts ?? event.ts;
+    // Fetch thread context if the mention is inside an existing thread
     let threadContext = '';
-    try {
-      const thread = await fetchSlackThread(event.channel, threadTs);
-      if (thread) threadContext = `\n\nSlack thread context:\n${thread}`;
-    } catch (err) {
-      console.error('[slack-bot] Failed to fetch thread context:', err);
+    if (event.thread_ts) {
+      try {
+        const thread = await fetchSlackThread(event.channel, event.thread_ts);
+        if (thread) threadContext = `\n\nSlack thread context:\n${thread}`;
+      } catch (err) {
+        console.error('[slack-bot] Failed to fetch thread context:', err);
+      }
     }
 
     // Resolve work_dir — use the first repo's path, or cwd as fallback

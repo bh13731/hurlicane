@@ -48,7 +48,11 @@ export async function fetchSlackThread(channel: string, thread_ts: string): Prom
       signal: AbortSignal.timeout(10_000),
     });
     const data: any = await res.json();
-    if (!data.ok || !data.messages?.length) return null;
+    if (!data.ok) {
+      console.error(`[slack] conversations.replies failed: ${data.error}`);
+      return null;
+    }
+    if (!data.messages?.length) return null;
 
     return data.messages.map((m: any) => {
       const user = m.user ?? 'unknown';
