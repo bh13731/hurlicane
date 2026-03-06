@@ -30,7 +30,7 @@ export async function startSlackBot(): Promise<void> {
   // @slack/socket-mode v2 emits events_api payloads by their inner event type directly
   socketMode.on('app_mention', async ({ ack, event, body }) => {
     await ack();
-    console.log(`[slack-bot] app_mention from ${event.user} in ${event.channel}`);
+    console.log(`[slack-bot] app_mention from ${event.user} in ${event.channel}, thread_ts=${event.thread_ts ?? '(none)'}, ts=${event.ts}`);
 
     const description = (event.text as string).replace(/<@[A-Z0-9]+>/g, '').trim();
     if (!description) {
