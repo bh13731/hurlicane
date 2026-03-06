@@ -32,6 +32,13 @@ export async function startSlackBot(): Promise<void> {
     await ack();
     console.log(`[slack-bot] app_mention from ${event.user} in ${event.channel}, thread_ts=${event.thread_ts ?? '(none)'}, ts=${event.ts}`);
 
+    // Only accept mentions from the configured Slack user
+    const { userId: allowedUserId } = loadSlackSettings();
+    if (allowedUserId && event.user !== allowedUserId) {
+      console.log(`[slack-bot] Ignoring mention from ${event.user} (allowed: ${allowedUserId})`);
+      return;
+    }
+
     const description = (event.text as string).replace(/<@[A-Z0-9]+>/g, '').trim();
     if (!description) {
       await web.chat.postMessage({
