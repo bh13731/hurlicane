@@ -14,6 +14,7 @@ import { startKBConsolidator, stopKBConsolidator } from './orchestrator/KBConsol
 import { runRecovery } from './orchestrator/recovery.js';
 import { writeInput, resizePty } from './orchestrator/PtyManager.js';
 import { stopEyeProcess } from './api/eye.js';
+import { startSlackBot, stopSlackBot } from './slack/bot.js';
 import * as queries from './db/queries.js';
 import { authMiddleware, handleLogin, handleLogout, handleMe, isSocketAuthenticated, isAuthEnabled } from './auth.js';
 
@@ -144,7 +145,10 @@ async function main() {
   const savedMax = queries.getNote('setting:maxConcurrentAgents');
   if (savedMax) setMaxConcurrent(Number(savedMax.value));
 
-  // 7. Start main server
+  // 7. Start Slack bot (Socket Mode) if configured
+  startSlackBot().catch(err => console.error('[slack-bot] Failed to start:', err));
+
+  // 8. Start main server
   httpServer.listen(PORT, () => {
     console.log(`[server] Orchestrator listening on :${PORT}`);
   });
@@ -170,6 +174,7 @@ async function main() {
     stopHealthMonitor();
     stopKBConsolidator();
     stopEyeProcess();
+    await stopSlackBot();
 
     // Stop accepting new HTTP connections; wait for in-flight requests to drain
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));

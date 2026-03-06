@@ -6,14 +6,19 @@ interface SlackModalProps {
 
 export function SlackModal({ onClose }: SlackModalProps) {
   const [botToken, setBotToken] = useState('');
+  const [appToken, setAppToken] = useState('');
   const [userId, setUserId] = useState('');
   const [showToken, setShowToken] = useState(false);
+  const [showAppToken, setShowAppToken] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [togglingBot, setTogglingBot] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null);
   const [savedMasked, setSavedMasked] = useState('');
+  const [savedAppMasked, setSavedAppMasked] = useState('');
   const [savedUserId, setSavedUserId] = useState('');
+  const [botEnabled, setBotEnabled] = useState(false);
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -21,17 +26,20 @@ export function SlackModal({ onClose }: SlackModalProps) {
       if (!res.ok) return;
       const data = await res.json();
       setSavedMasked(data.botToken ?? '');
+      setSavedAppMasked(data.appToken ?? '');
       setSavedUserId(data.userId ?? '');
+      setBotEnabled(data.botEnabled ?? false);
       setUserId(data.userId ?? '');
       setBotToken('');
+      setAppToken('');
     } catch { /* ignore */ }
   }, []);
 
   useEffect(() => { fetchSettings(); }, [fetchSettings]);
 
   useEffect(() => {
-    setDirty(botToken !== '' || userId !== savedUserId);
-  }, [botToken, userId, savedUserId]);
+    setDirty(botToken !== '' || appToken !== '' || userId !== savedUserId);
+  }, [botToken, appToken, userId, savedUserId]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -39,6 +47,7 @@ export function SlackModal({ onClose }: SlackModalProps) {
     try {
       const body: Record<string, string> = { userId };
       if (botToken) body.botToken = botToken;
+      if (appToken) body.appToken = appToken;
       const res = await fetch('/api/slack', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -51,8 +60,11 @@ export function SlackModal({ onClose }: SlackModalProps) {
       }
       const data = await res.json();
       setSavedMasked(data.botToken ?? '');
+      setSavedAppMasked(data.appToken ?? '');
       setSavedUserId(data.userId ?? '');
+      setBotEnabled(data.botEnabled ?? false);
       setBotToken('');
+      setAppToken('');
       setDirty(false);
       setFeedback({ type: 'ok', msg: 'Saved' });
     } catch (e: any) {
@@ -97,7 +109,7 @@ export function SlackModal({ onClose }: SlackModalProps) {
 
         <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>
-            Get a Slack DM when a job or agent fails. Create a Slack app with <code>chat:write</code> scope and add the bot to your workspace.
+            Get a Slack DM when a job or agent fails, or <code>@mention</code> the bot to create jobs. Create a Slack app with <code>chat:write</code> and <code>app_mentions:read</code> scopes.
           </p>
 
           <div className="form-group">
@@ -119,6 +131,28 @@ export function SlackModal({ onClose }: SlackModalProps) {
                 {showToken ? 'Hide' : 'Show'}
               </button>
             </div>
+          </div>
+
+          <div className="form-group">
+            <label>App Token <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(Socket Mode)</span></label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                type={showAppToken ? 'text' : 'password'}
+                value={appToken}
+                onChange={e => setAppToken(e.target.value)}
+                placeholder={savedAppMasked || 'xapp-...'}
+                style={{ flex: 1 }}
+              />
+              <button
+                className="btn btn-sm btn-secondary"
+                onClick={() => setShowAppToken(!showAppToken)}
+                type="button"
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                {showAppToken ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            <div className="eye-field-hint">App-Level Token with <code>connections:write</code> scope (Basic Information → App-Level Tokens)</div>
           </div>
 
           <div className="form-group">
@@ -145,6 +179,31 @@ export function SlackModal({ onClose }: SlackModalProps) {
           )}
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            {botEnabled && !dirty && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={async () => {
+                  setTogglingBot(true);
+                  setFeedback(null);
+                  try {
+                    const res = await fetch('/api/slack/bot/start', { method: 'POST' });
+                    if (!res.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      setFeedback({ type: 'err', msg: data.error ?? 'Failed to start bot' });
+                      return;
+                    }
+                    setFeedback({ type: 'ok', msg: 'Bot started — listening for @mentions' });
+                  } catch (e: any) {
+                    setFeedback({ type: 'err', msg: e.message ?? 'Network error' });
+                  } finally {
+                    setTogglingBot(false);
+                  }
+                }}
+                disabled={togglingBot}
+              >
+                {togglingBot ? 'Starting...' : 'Start Bot'}
+              </button>
+            )}
             <button
               className="btn btn-secondary btn-sm"
               onClick={handleTest}
