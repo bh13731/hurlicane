@@ -69,42 +69,6 @@ export async function notifyFailure(title: string, errorMessage: string, context
   await notify(fallback, blocks);
 }
 
-export async function notifyWorktreeCreated(branch: string, jobTitle?: string | null): Promise<void> {
-  const fallback = `Worktree created: ${branch}${jobTitle ? ` (${jobTitle})` : ''}`;
-  const blocks: unknown[] = [
-    {
-      type: 'header',
-      text: { type: 'plain_text', text: ':seedling: Worktree Created', emoji: true },
-    },
-    {
-      type: 'section',
-      fields: [
-        { type: 'mrkdwn', text: `*Branch:*\n\`${branch}\`` },
-        ...(jobTitle ? [{ type: 'mrkdwn', text: `*Job:*\n${jobTitle}` }] : []),
-      ],
-    },
-  ];
-  await notify(fallback, blocks);
-}
-
-export async function notifyWorktreeCleaned(branch: string, jobTitle?: string | null): Promise<void> {
-  const fallback = `Worktree cleaned: ${branch}${jobTitle ? ` (${jobTitle})` : ''}`;
-  const blocks: unknown[] = [
-    {
-      type: 'header',
-      text: { type: 'plain_text', text: ':broom: Worktree Cleaned', emoji: true },
-    },
-    {
-      type: 'section',
-      fields: [
-        { type: 'mrkdwn', text: `*Branch:*\n\`${branch}\`` },
-        ...(jobTitle ? [{ type: 'mrkdwn', text: `*Job:*\n${jobTitle}` }] : []),
-      ],
-    },
-  ];
-  await notify(fallback, blocks);
-}
-
 export async function notifyAllChecksPassed(repo: string, pr: number, branch: string, sha: string): Promise<void> {
   const fallback = `All checks passed: ${repo}#${pr} (${branch})`;
   const blocks: unknown[] = [

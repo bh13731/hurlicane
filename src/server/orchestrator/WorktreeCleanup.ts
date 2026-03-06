@@ -2,7 +2,6 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as queries from '../db/queries.js';
-import { notifyWorktreeCleaned } from '../services/SlackNotifier.js';
 
 const WORKTREES_DIR = path.resolve('data', 'worktrees');
 
@@ -111,8 +110,6 @@ export function runCleanupNow(): number {
 
       removeWorktree(wt.path, wt.branch, repo.path);
       queries.markWorktreeCleaned(wt.id);
-      const job = wt.job_id ? queries.getJobById(wt.job_id) : null;
-      notifyWorktreeCleaned(wt.branch, job?.title);
       cleaned++;
     } catch { /* skip */ }
   }

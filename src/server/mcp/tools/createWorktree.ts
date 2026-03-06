@@ -3,7 +3,6 @@ import { execSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import * as queries from '../../db/queries.js';
-import { notifyWorktreeCreated } from '../../services/SlackNotifier.js';
 
 const WORKTREES_DIR = path.resolve('data', 'worktrees');
 
@@ -107,8 +106,6 @@ export async function createWorktreeHandler(agentId: string, input: z.infer<type
       path: worktreeDir,
       branch: sanitized,
     });
-
-    notifyWorktreeCreated(sanitized);
 
     return JSON.stringify({
       success: true,

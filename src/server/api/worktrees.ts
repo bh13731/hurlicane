@@ -7,7 +7,6 @@ import { cancelledAgents } from '../orchestrator/AgentRunner.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import * as socket from '../socket/SocketManager.js';
 import { runCleanupNow } from '../orchestrator/WorktreeCleanup.js';
-import { notifyWorktreeCreated, notifyWorktreeCleaned } from '../services/SlackNotifier.js';
 
 /** Directory where worktrees are materialised. */
 const WORKTREES_DIR = path.resolve('data', 'worktrees');
@@ -134,7 +133,6 @@ router.post('/', (req, res) => {
       branch: sanitized,
     });
 
-    notifyWorktreeCreated(sanitized);
     res.json(wt);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to create worktree' });
@@ -190,9 +188,6 @@ router.post('/cleanup-branch', (req, res) => {
   }
 
   queries.markWorktreeCleaned(wt.id);
-  const job = queries.getJobById(wt.job_id);
-  notifyWorktreeCleaned(branch, job?.title);
-
   console.log(`[worktrees] cleaned up branch ${branch}: cancelled ${cancelledJobCount} jobs, removed worktree ${wt.path}`);
   res.json({ ok: true, found: true, cancelledJobs: cancelledJobCount, worktreeId: wt.id });
 });
@@ -366,8 +361,6 @@ router.delete('/:id', (req, res) => {
   }
 
   queries.markWorktreeCleaned(wt.id);
-  const job = queries.getJobById(wt.job_id);
-  notifyWorktreeCleaned(wt.branch, job?.title);
   res.json({ ok: true });
 });
 
