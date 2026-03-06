@@ -101,6 +101,14 @@ ORCHESTRATION PATTERN (for decomposing large tasks):
   5. Read result_text and diff from the results to synthesize a final answer.
   6. Optionally use write_note/read_note to pass structured data between agents.
 
+PR CREATION:
+  When you create a pull request, you MUST report the result using report_status with this exact format:
+    PR Created: <title>
+    PR #<number> (<draft or ready>) - <full PR URL>
+    Changes:
+    - <bullet point summary of each change>
+  The PR URL is mandatory. Extract it from the gh pr create output.
+
 COMPLETION (automated jobs only):
   - finish_job(result?): Signal task completion and close this session. Only call this when your
     task prompt explicitly tells you to. Do NOT call this in interactive sessions.`;
