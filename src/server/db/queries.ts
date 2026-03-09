@@ -1164,13 +1164,17 @@ export function getRepoByPath(repoPath: string): Repo | null {
   return row ? cast<Repo>(row) : null;
 }
 
-export function updateRepo(id: string, updates: { default_branch?: string }): Repo | null {
+export function updateRepo(id: string, updates: { default_branch?: string; instructions?: string }): Repo | null {
   const db = getDb();
   const sets: string[] = [];
   const vals: any[] = [];
   if (updates.default_branch !== undefined) {
     sets.push('default_branch = ?');
     vals.push(updates.default_branch);
+  }
+  if (updates.instructions !== undefined) {
+    sets.push('instructions = ?');
+    vals.push(updates.instructions);
   }
   if (sets.length === 0) return getRepoById(id);
   vals.push(id);

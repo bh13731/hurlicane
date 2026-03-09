@@ -242,6 +242,9 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!repoCols.includes('default_branch')) {
     db.exec("ALTER TABLE repos ADD COLUMN default_branch TEXT NOT NULL DEFAULT 'main'");
   }
+  if (!repoCols.includes('instructions')) {
+    db.exec("ALTER TABLE repos ADD COLUMN instructions TEXT NOT NULL DEFAULT ''");
+  }
 
   // ── Worktrees — additive migrations ───────────────────────────────────────
   const wtCols: string[] = (db.prepare('PRAGMA table_info(worktrees)').all() as any[]).map((r: any) => r.name);

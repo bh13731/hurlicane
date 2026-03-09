@@ -18,6 +18,7 @@ interface Repo {
   url: string;
   path: string;
   default_branch: string;
+  instructions: string;
   created_at: number;
 }
 
@@ -45,6 +46,11 @@ export function GitModal({ onClose }: GitModalProps) {
   // Base branch editing
   const [editingBranchRepoId, setEditingBranchRepoId] = useState<string | null>(null);
   const [branchInput, setBranchInput] = useState('');
+
+  // Repo instructions editing
+  const [editingInstructionsRepoId, setEditingInstructionsRepoId] = useState<string | null>(null);
+  const [instructionsInput, setInstructionsInput] = useState('');
+  const [savingInstructions, setSavingInstructions] = useState(false);
 
   // Clone progress
   const [clonePhase, setClonePhase] = useState('');
@@ -218,6 +224,23 @@ export function GitModal({ onClose }: GitModalProps) {
     setEditingBranchRepoId(null);
   };
 
+  const handleSaveInstructions = async (repoId: string) => {
+    setSavingInstructions(true);
+    try {
+      const res = await fetch(`/api/repos/${repoId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instructions: instructionsInput }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setRepos(prev => prev.map(r => r.id === repoId ? updated : r));
+      }
+    } catch { /* ignore */ }
+    setSavingInstructions(false);
+    setEditingInstructionsRepoId(null);
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
@@ -290,6 +313,62 @@ export function GitModal({ onClose }: GitModalProps) {
                           title="Click to change base branch"
                         >
                           {repo.default_branch || 'main'}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ marginTop: 3, fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ color: 'var(--text-muted)' }}>instructions:</span>
+                      {editingInstructionsRepoId === repo.id ? (
+                        <div style={{ flex: 1 }}>
+                          <textarea
+                            value={instructionsInput}
+                            onChange={e => setInstructionsInput(e.target.value)}
+                            autoFocus
+                            rows={4}
+                            placeholder="Additional instructions appended to agent prompts for this repo..."
+                            style={{
+                              width: '100%',
+                              fontSize: 11,
+                              fontFamily: 'var(--font-mono)',
+                              background: 'var(--bg-primary)',
+                              border: '1px solid var(--accent-muted)',
+                              borderRadius: 4,
+                              color: 'var(--text-primary)',
+                              padding: '4px 6px',
+                              resize: 'vertical',
+                            }}
+                          />
+                          <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => handleSaveInstructions(repo.id)}
+                              disabled={savingInstructions}
+                              style={{ fontSize: 10 }}
+                            >
+                              {savingInstructions ? '...' : 'Save'}
+                            </button>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => setEditingInstructionsRepoId(null)}
+                              style={{ fontSize: 10 }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <span
+                          style={{
+                            color: repo.instructions ? 'var(--text-secondary)' : 'var(--text-muted)',
+                            cursor: 'pointer',
+                            padding: '0 4px',
+                            borderRadius: 3,
+                            fontStyle: repo.instructions ? 'normal' : 'italic',
+                          }}
+                          onClick={() => { setEditingInstructionsRepoId(repo.id); setInstructionsInput(repo.instructions || ''); }}
+                          title="Click to edit repo-specific instructions"
+                        >
+                          {repo.instructions ? `${repo.instructions.slice(0, 60)}${repo.instructions.length > 60 ? '...' : ''}` : 'none (click to add)'}
                         </span>
                       )}
                     </div>

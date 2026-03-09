@@ -423,6 +423,7 @@ export interface Repo {
   url: string;
   path: string;
   default_branch: string;
+  instructions: string;
   created_at: number;
 }
 

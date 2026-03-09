@@ -156,12 +156,23 @@ router.get('/:id/branches', (req, res) => {
 });
 
 router.patch('/:id', (req, res) => {
-  const { default_branch } = req.body as { default_branch?: string };
-  if (!default_branch || typeof default_branch !== 'string' || !default_branch.trim()) {
-    res.status(400).json({ error: 'default_branch is required' });
+  const { default_branch, instructions } = req.body as { default_branch?: string; instructions?: string };
+  const updates: { default_branch?: string; instructions?: string } = {};
+  if (default_branch !== undefined) {
+    if (typeof default_branch !== 'string' || !default_branch.trim()) {
+      res.status(400).json({ error: 'default_branch must be a non-empty string' });
+      return;
+    }
+    updates.default_branch = default_branch.trim();
+  }
+  if (instructions !== undefined) {
+    updates.instructions = typeof instructions === 'string' ? instructions : '';
+  }
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: 'No valid fields to update' });
     return;
   }
-  const repo = queries.updateRepo(req.params.id, { default_branch: default_branch.trim() });
+  const repo = queries.updateRepo(req.params.id, updates);
   if (!repo) { res.status(404).json({ error: 'repo not found' }); return; }
   res.json(repo);
 });

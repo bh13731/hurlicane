@@ -778,6 +778,15 @@ function buildPrompt(job: Job): string {
     }
   }
 
+  // Inject repo-specific instructions if the job is running in a worktree
+  const wt = queries.getWorktreeByPath(workDir);
+  if (wt?.repo_id) {
+    const repo = queries.getRepoById(wt.repo_id);
+    if (repo?.instructions?.trim()) {
+      prompt += `\n\n## Repo Instructions (${repo.name})\n\n${repo.instructions}`;
+    }
+  }
+
   // Inject relevant memories from knowledge base (2000-char budget)
   prompt += buildMemorySection(job);
 
