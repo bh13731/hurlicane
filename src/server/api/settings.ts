@@ -18,6 +18,8 @@ router.get('/', (_req, res) => {
     defaultModel: queries.getNote('setting:defaultModel')?.value ?? '',
     anthropicApiKey: maskKey(apiKey),
     anthropicApiKeySet: !!apiKey,
+    gitAuthorName: queries.getNote('setting:gitAuthorName')?.value ?? '',
+    gitAuthorEmail: queries.getNote('setting:gitAuthorEmail')?.value ?? '',
   });
 });
 
@@ -38,6 +40,12 @@ router.put('/', (req, res) => {
   }
   if (req.body.defaultModel !== undefined) {
     queries.upsertNote('setting:defaultModel', String(req.body.defaultModel), null);
+  }
+  if (req.body.gitAuthorName !== undefined) {
+    queries.upsertNote('setting:gitAuthorName', String(req.body.gitAuthorName), null);
+  }
+  if (req.body.gitAuthorEmail !== undefined) {
+    queries.upsertNote('setting:gitAuthorEmail', String(req.body.gitAuthorEmail), null);
   }
   if (req.body.anthropicApiKey !== undefined) {
     const key = String(req.body.anthropicApiKey);
@@ -60,6 +68,8 @@ router.put('/', (req, res) => {
     defaultModel: queries.getNote('setting:defaultModel')?.value ?? '',
     anthropicApiKey: maskKey(savedKey),
     anthropicApiKeySet: !!savedKey,
+    gitAuthorName: queries.getNote('setting:gitAuthorName')?.value ?? '',
+    gitAuthorEmail: queries.getNote('setting:gitAuthorEmail')?.value ?? '',
   });
 });
 

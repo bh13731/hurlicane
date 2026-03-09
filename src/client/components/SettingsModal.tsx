@@ -11,6 +11,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [anthropicApiKey, setAnthropicApiKey] = useState('');
   const [apiKeySet, setApiKeySet] = useState(false);
   const [systemPromptAppendix, setSystemPromptAppendix] = useState('');
+  const [gitAuthorName, setGitAuthorName] = useState('');
+  const [gitAuthorEmail, setGitAuthorEmail] = useState('');
   const [saving, setSaving] = useState(false);
   const [worktreeStats, setWorktreeStats] = useState<{ active: number; cleaned: number } | null>(null);
   const [cleaning, setCleaning] = useState(false);
@@ -26,6 +28,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         setAnthropicApiKey(data.anthropicApiKey ?? '');
         setApiKeySet(!!data.anthropicApiKeySet);
         setSystemPromptAppendix(data.systemPromptAppendix ?? '');
+        setGitAuthorName(data.gitAuthorName ?? '');
+        setGitAuthorEmail(data.gitAuthorEmail ?? '');
       })
       .catch(() => {});
     fetch('/api/worktrees/stats')
@@ -40,7 +44,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent, botName, defaultModel, anthropicApiKey, systemPromptAppendix }),
+        body: JSON.stringify({ maxConcurrentAgents: maxConcurrent, botName, defaultModel, anthropicApiKey, systemPromptAppendix, gitAuthorName, gitAuthorEmail }),
       });
       if (res.ok) onClose();
     } finally {
@@ -134,6 +138,28 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
               Enables fast title generation and model classification via direct API calls instead of the slow CLI.
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Git Author</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                type="text"
+                value={gitAuthorName}
+                onChange={e => setGitAuthorName(e.target.value)}
+                placeholder="Name (e.g. AaryamanBhute)"
+                style={{ flex: 1 }}
+              />
+              <input
+                type="text"
+                value={gitAuthorEmail}
+                onChange={e => setGitAuthorEmail(e.target.value)}
+                placeholder="Email (e.g. user@example.com)"
+                style={{ flex: 1 }}
+              />
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+              Git identity used for agent commits. Leave blank to use the system default.
             </div>
           </div>
           <div className="form-group">

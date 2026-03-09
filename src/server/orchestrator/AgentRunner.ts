@@ -227,6 +227,17 @@ export function runAgent(options: RunOptions): void {
         const repo = queries.getRepoById(wt.repo_id);
         if (repo?.default_branch) env['ORCHESTRATOR_BASE_BRANCH'] = repo.default_branch;
       }
+      // Set git author/committer identity if configured
+      const gitName = queries.getNote('setting:gitAuthorName')?.value;
+      const gitEmail = queries.getNote('setting:gitAuthorEmail')?.value;
+      if (gitName) {
+        env['GIT_AUTHOR_NAME'] = gitName;
+        env['GIT_COMMITTER_NAME'] = gitName;
+      }
+      if (gitEmail) {
+        env['GIT_AUTHOR_EMAIL'] = gitEmail;
+        env['GIT_COMMITTER_EMAIL'] = gitEmail;
+      }
       return env;
     })(),
   });
