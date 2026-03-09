@@ -326,6 +326,9 @@ function handlePullRequestReview(
   const prNum = pr.number;
   const state = review.state ?? 'unknown';
 
+  // On published (non-draft) PRs, only respond to reviews from the registered author
+  if (!pr.draft && reviewer && reviewer !== config.author) return `reviewer "${reviewer}" is not registered author (published PR)`;
+
   if (payload.action === 'submitted' && state === 'changes_requested') {
     const dedupKey = `review:${repo}#${prNum}:${review.id}`;
     if (isDuplicate(dedupKey)) return 'duplicate';
@@ -392,22 +395,29 @@ async function handleIssueComment(
   if (!issue.pull_request) return 'not a PR comment';
 
   const commenter = comment.user?.login;
-
   const prNum = issue.number;
-  const dedupKey = `comment:${repo}#${prNum}:${comment.id}`;
-  if (isDuplicate(dedupKey)) return 'duplicate';
 
-  // Fetch PR branch via gh CLI (issue_comment payload doesn't include it)
+  // Fetch PR branch and draft status via gh CLI (issue_comment payload doesn't include them)
   let branch = '';
+  let isDraft = false;
   try {
     const { execSync } = await import('child_process');
-    branch = execSync(
-      `gh pr view ${prNum} --repo ${repo} --json headRefName --jq .headRefName`,
+    const prInfo = execSync(
+      `gh pr view ${prNum} --repo ${repo} --json headRefName,isDraft --jq '{branch: .headRefName, draft: .isDraft}'`,
       { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
     ).toString().trim();
+    const parsed = JSON.parse(prInfo);
+    branch = parsed.branch ?? '';
+    isDraft = parsed.draft === true;
   } catch (err: any) {
-    console.warn(`[eye] failed to fetch PR branch for ${repo}#${prNum}:`, err.message);
+    console.warn(`[eye] failed to fetch PR info for ${repo}#${prNum}:`, err.message);
   }
+
+  // On published (non-draft) PRs, only respond to comments from the registered author
+  if (!isDraft && commenter && commenter !== config.author) return `commenter "${commenter}" is not registered author (published PR)`;
+
+  const dedupKey = `comment:${repo}#${prNum}:${comment.id}`;
+  if (isDuplicate(dedupKey)) return 'duplicate';
 
   const title = `Reply to comment on ${repo}#${prNum}`;
   const description = [
