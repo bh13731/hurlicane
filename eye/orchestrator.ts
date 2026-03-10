@@ -1,7 +1,18 @@
 import type { CreateJobRequest, CreateDebateRequest, CreateDebateResponse, Repo, Worktree } from '../src/shared/types.js';
 
+export interface TemplateFilter {
+  field: string;
+  op: 'eq' | 'neq';
+  value: string;
+}
+
+export interface TemplateBinding {
+  templateId: string;
+  filters: TemplateFilter[];
+}
+
 export interface EyePrompts {
-  eventTemplates: Record<string, string[]>;
+  eventTemplates: Record<string, TemplateBinding[]>;
   disabledEvents: string[];
   botName: string;
 }

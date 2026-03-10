@@ -29,11 +29,22 @@ function isEyeRunning(): boolean {
 
 // ─── Config persistence ────────────────────────────────────────────────────
 
+interface TemplateFilter {
+  field: string;
+  op: 'eq' | 'neq';
+  value: string;
+}
+
+interface TemplateBinding {
+  templateId: string;
+  filters: TemplateFilter[];
+}
+
 interface EyeSettings {
   webhookSecret: string;
   author: string;
   port: number;
-  eventTemplates: Record<string, string[]>;
+  eventTemplates: Record<string, TemplateBinding[]>;
   disabledEvents: string[];
 }
 
@@ -44,31 +55,37 @@ function loadSettings(): EyeSettings {
     if (raw) disabledEvents = JSON.parse(raw);
   } catch { /* ignore bad JSON */ }
 
-  let eventTemplates: Record<string, string[]> = {};
+  let eventTemplates: Record<string, TemplateBinding[]> = {};
   try {
     const raw = queries.getNote('setting:eye:eventTemplates')?.value;
     if (raw) {
       const parsed = JSON.parse(raw);
-      // Migrate from Record<string, string> to Record<string, string[]>
       for (const [key, val] of Object.entries(parsed)) {
         if (Array.isArray(val)) {
-          eventTemplates[key] = val as string[];
+          // Migrate from string[] to TemplateBinding[]
+          eventTemplates[key] = (val as any[]).map(item => {
+            if (typeof item === 'string') {
+              return { templateId: item, filters: [] };
+            }
+            return item as TemplateBinding;
+          });
         } else if (typeof val === 'string' && val) {
-          eventTemplates[key] = [val];
+          eventTemplates[key] = [{ templateId: val, filters: [] }];
         }
       }
     }
   } catch { /* ignore bad JSON */ }
 
-  // Migrate legacy single templateId to per-event templates
+  // Migrate legacy single templateId
   if (Object.keys(eventTemplates).length === 0) {
     const legacyTemplateId = queries.getNote('setting:eye:templateId')?.value;
     if (legacyTemplateId) {
+      const binding: TemplateBinding = { templateId: legacyTemplateId, filters: [] };
       eventTemplates = {
-        check_suite: [legacyTemplateId],
-        check_run: [legacyTemplateId],
-        pull_request_review: [legacyTemplateId],
-        issue_comment: [legacyTemplateId],
+        check_suite: [binding],
+        check_run: [binding],
+        pull_request_review: [binding],
+        issue_comment: [binding],
       };
     }
   }

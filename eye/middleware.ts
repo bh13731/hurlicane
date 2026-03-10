@@ -1,9 +1,56 @@
 import { execSync } from 'child_process';
 import type { EyeConfig } from './config.js';
-import type { OrchestratorClient } from './orchestrator.js';
+import type { OrchestratorClient, TemplateBinding, TemplateFilter } from './orchestrator.js';
 import type { CreateJobRequest } from '../src/shared/types.js';
 import { extractSignals, evaluateComplexity } from './complexity.js';
 import { resolveWorktree } from './worktree.js';
+
+/**
+ * Extract filter-evaluable fields from the webhook payload.
+ * Returns a flat record of field → string value.
+ */
+function extractFilterFields(eventType: string, payload: any): Record<string, string> {
+  const fields: Record<string, string> = {};
+
+  // PR draft status — available on most event types
+  const pr = payload.pull_request;
+  if (pr) {
+    fields['pr_draft'] = pr.draft ? 'true' : 'false';
+  }
+  // For issue_comment, draft info isn't in payload — checked via gh CLI in handler,
+  // but we can check the issue labels/state
+  if (eventType === 'issue_comment' && payload.issue?.pull_request) {
+    // issue_comment doesn't carry draft status; we fetch it separately below
+  }
+
+  // Review state
+  if (eventType === 'pull_request_review' && payload.review) {
+    fields['review_state'] = payload.review.state ?? '';
+  }
+
+  // Check/suite name
+  if (eventType === 'check_suite' && payload.check_suite) {
+    fields['check_name'] = payload.check_suite.app?.name ?? '';
+  }
+  if (eventType === 'check_run' && payload.check_run) {
+    fields['check_name'] = payload.check_run.name ?? '';
+  }
+
+  return fields;
+}
+
+/**
+ * Evaluate whether all filters in a binding pass against the extracted fields.
+ * All filters are AND'd — every one must pass.
+ */
+function filtersPass(filters: TemplateFilter[], fields: Record<string, string>): boolean {
+  for (const f of filters) {
+    const actual = fields[f.field] ?? '';
+    if (f.op === 'eq' && actual !== f.value) return false;
+    if (f.op === 'neq' && actual === f.value) return false;
+  }
+  return true;
+}
 
 export interface ProcessEventResult {
   type: 'job' | 'debate';
@@ -77,17 +124,33 @@ export async function processEvent(
     return { type: 'debate', title: result.debate.title, count: 1 };
   }
 
-  // Get per-event templates — create a job for each, or one with no template
-  const eventTemplateIds = prompts.eventTemplates[eventType] ?? [];
-  const templateList = eventTemplateIds.length > 0 ? eventTemplateIds : [undefined];
+  // Get per-event template bindings — create a job for each that passes filters
+  const bindings = prompts.eventTemplates[eventType] ?? [];
+  const fields = extractFilterFields(eventType, payload);
+
+  // For issue_comment, pr_draft isn't in the payload — fetch via gh CLI
+  if (eventType === 'issue_comment' && fields['pr_draft'] === undefined && repoName && prNum) {
+    try {
+      const isDraft = execSync(
+        `gh pr view ${JSON.stringify(prNum)} --repo ${JSON.stringify(repoName)} --json isDraft --jq .isDraft`,
+        { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
+      ).toString().trim();
+      fields['pr_draft'] = isDraft === 'true' ? 'true' : 'false';
+    } catch { /* gh CLI failed — leave unset */ }
+  }
+
+  // If no bindings, create one job with no template
+  const matchingBindings = bindings.length > 0
+    ? bindings.filter(b => filtersPass(b.filters, fields))
+    : [{ templateId: undefined, filters: [] }] as { templateId: string | undefined; filters: TemplateFilter[] }[];
 
   let firstTitle: string | null = null;
   let created = 0;
 
-  for (const templateId of templateList) {
+  for (const binding of matchingBindings) {
     const req: CreateJobRequest = { ...jobReq };
-    if (templateId) {
-      req.templateId = templateId;
+    if (binding.templateId) {
+      req.templateId = binding.templateId;
     }
     const result = await client.createJob(req);
     if (result) {

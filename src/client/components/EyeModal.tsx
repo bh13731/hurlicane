@@ -27,11 +27,22 @@ interface EyeStatus {
   };
 }
 
+interface TemplateFilter {
+  field: string;
+  op: 'eq' | 'neq';
+  value: string;
+}
+
+interface TemplateBinding {
+  templateId: string;
+  filters: TemplateFilter[];
+}
+
 interface EyeSettings {
   webhookSecret: string;
   author: string;
   port: number;
-  eventTemplates: Record<string, string[]>;
+  eventTemplates: Record<string, TemplateBinding[]>;
   disabledEvents: string[];
 }
 
@@ -39,6 +50,23 @@ interface Template {
   id: string;
   name: string;
 }
+
+/** Available filter fields per event type */
+const FILTER_FIELDS: Record<string, { field: string; label: string; values: { value: string; label: string }[] }[]> = {
+  check_suite: [
+    { field: 'pr_draft', label: 'PR State', values: [{ value: 'true', label: 'Draft' }, { value: 'false', label: 'Published' }] },
+  ],
+  check_run: [
+    { field: 'pr_draft', label: 'PR State', values: [{ value: 'true', label: 'Draft' }, { value: 'false', label: 'Published' }] },
+  ],
+  pull_request_review: [
+    { field: 'pr_draft', label: 'PR State', values: [{ value: 'true', label: 'Draft' }, { value: 'false', label: 'Published' }] },
+    { field: 'review_state', label: 'Review Type', values: [{ value: 'changes_requested', label: 'Changes Requested' }, { value: 'commented', label: 'Commented' }, { value: 'approved', label: 'Approved' }] },
+  ],
+  issue_comment: [
+    { field: 'pr_draft', label: 'PR State', values: [{ value: 'true', label: 'Draft' }, { value: 'false', label: 'Published' }] },
+  ],
+};
 
 const EVENT_TYPES: { key: string; label: string; description: string }[] = [
   { key: 'check_suite', label: 'CI Suites', description: 'Check suite failures' },
@@ -104,7 +132,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
   const [webhookSecret, setWebhookSecret] = useState('');
   const [author, setAuthor] = useState('');
   const [port, setPort] = useState(4567);
-  const [eventTemplates, setEventTemplates] = useState<Record<string, string[]>>({});
+  const [eventTemplates, setEventTemplates] = useState<Record<string, TemplateBinding[]>>({});
   const [templates, setTemplates] = useState<Template[]>([]);
   const [disabledEvents, setDisabledEvents] = useState<string[]>([]);
   const [showSecret, setShowSecret] = useState(false);
@@ -347,12 +375,18 @@ export function EyeModal({ onClose }: EyeModalProps) {
             {apiState?.settings?.eventTemplates && Object.keys(apiState.settings.eventTemplates).length > 0 && (
               <div className="eye-prompts-display" style={{ padding: '8px 12px', margin: '0 0 8px', fontSize: 12, color: 'var(--text-secondary)', background: 'var(--bg-secondary)', borderRadius: 6 }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Templates:</div>
-                {Object.entries(apiState.settings.eventTemplates).map(([eventKey, tplIds]) => {
+                {Object.entries(apiState.settings.eventTemplates).map(([eventKey, bindings]) => {
                   const eventLabel = EVENT_TYPES.find(et => et.key === eventKey)?.label ?? eventKey;
                   return (
                     <div key={eventKey} style={{ marginLeft: 8, marginBottom: 2 }}>
                       <span style={{ color: 'var(--text-dim)' }}>{eventLabel}:</span>{' '}
-                      {tplIds.map(id => templates.find(t => t.id === id)?.name ?? id).join(', ')}
+                      {bindings.map((b, i) => {
+                        const name = templates.find(t => t.id === b.templateId)?.name ?? b.templateId;
+                        const filterDesc = b.filters.length > 0
+                          ? ` (${b.filters.map(f => `${f.field} ${f.op} ${f.value}`).join(', ')})`
+                          : '';
+                        return <span key={i}>{i > 0 ? ', ' : ''}{name}{filterDesc}</span>;
+                      })}
                     </div>
                   );
                 })}
@@ -478,9 +512,9 @@ export function EyeModal({ onClose }: EyeModalProps) {
                 {EVENT_TYPES.map(et => {
                   const enabled = !disabledEvents.includes(et.key);
                   const expanded = expandedEvents[et.key] ?? false;
-                  const tplIds = eventTemplates[et.key] ?? [];
-                  const tplCount = tplIds.length;
-                  const availableTemplates = templates.filter(t => !tplIds.includes(t.id));
+                  const bindings = eventTemplates[et.key] ?? [];
+                  const bindingCount = bindings.length;
+                  const filterFields = FILTER_FIELDS[et.key] ?? [];
                   return (
                     <div key={et.key} className={`eye-event-row ${enabled ? '' : 'eye-event-row--off'}`}>
                       <div className="eye-event-row-header">
@@ -505,41 +539,117 @@ export function EyeModal({ onClose }: EyeModalProps) {
                             onClick={() => setExpandedEvents(prev => ({ ...prev, [et.key]: !expanded }))}
                             type="button"
                           >
-                            {tplCount === 0 ? 'No templates' : `${tplCount} template${tplCount > 1 ? 's' : ''}`}
+                            {bindingCount === 0 ? 'No templates' : `${bindingCount} template${bindingCount > 1 ? 's' : ''}`}
                             <span className={`eye-event-row-chevron ${expanded ? 'eye-event-row-chevron--open' : ''}`}>&#x25B8;</span>
                           </button>
                         )}
                       </div>
                       {enabled && expanded && (
                         <div className="eye-event-row-body">
-                          {tplIds.length > 0 && (
+                          {bindings.length > 0 && (
                             <div className="eye-event-template-list">
-                              {tplIds.map(tplId => {
-                                const tpl = templates.find(t => t.id === tplId);
+                              {bindings.map((binding, idx) => {
+                                const tpl = templates.find(t => t.id === binding.templateId);
                                 return (
-                                  <div key={tplId} className="eye-event-template-item">
-                                    <span className="eye-event-template-name">{tpl?.name ?? tplId}</span>
-                                    <button
-                                      className="eye-event-template-remove"
-                                      type="button"
-                                      onClick={() => {
-                                        setEventTemplates(prev => {
-                                          const next = { ...prev };
-                                          next[et.key] = (next[et.key] ?? []).filter(id => id !== tplId);
-                                          if (next[et.key].length === 0) delete next[et.key];
-                                          return next;
-                                        });
-                                      }}
-                                      title="Remove template"
-                                    >
-                                      &#x2715;
-                                    </button>
+                                  <div key={idx} className="eye-event-binding">
+                                    <div className="eye-event-template-item">
+                                      <span className="eye-event-template-name">{tpl?.name ?? binding.templateId}</span>
+                                      <button
+                                        className="eye-event-template-remove"
+                                        type="button"
+                                        onClick={() => {
+                                          setEventTemplates(prev => {
+                                            const next = { ...prev };
+                                            next[et.key] = (next[et.key] ?? []).filter((_, i) => i !== idx);
+                                            if (next[et.key].length === 0) delete next[et.key];
+                                            return next;
+                                          });
+                                        }}
+                                        title="Remove template"
+                                      >
+                                        &#x2715;
+                                      </button>
+                                    </div>
+                                    {/* Filter tags */}
+                                    {binding.filters.length > 0 && (
+                                      <div className="eye-filter-tags">
+                                        {binding.filters.map((f, fi) => {
+                                          const fieldDef = filterFields.find(ff => ff.field === f.field);
+                                          const valDef = fieldDef?.values.find(v => v.value === f.value);
+                                          return (
+                                            <span key={fi} className="eye-filter-tag">
+                                              {fieldDef?.label ?? f.field} {f.op === 'eq' ? '=' : '\u2260'} {valDef?.label ?? f.value}
+                                              <button
+                                                className="eye-filter-tag-remove"
+                                                type="button"
+                                                onClick={() => {
+                                                  setEventTemplates(prev => {
+                                                    const next = { ...prev };
+                                                    const b = { ...next[et.key][idx] };
+                                                    b.filters = b.filters.filter((_, i) => i !== fi);
+                                                    next[et.key] = [...next[et.key]];
+                                                    next[et.key][idx] = b;
+                                                    return next;
+                                                  });
+                                                }}
+                                              >
+                                                &#x2715;
+                                              </button>
+                                            </span>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                    {/* Add filter */}
+                                    {filterFields.length > 0 && (
+                                      <select
+                                        className="eye-filter-add"
+                                        value=""
+                                        onChange={e => {
+                                          const raw = e.target.value;
+                                          if (!raw) return;
+                                          let op: 'eq' | 'neq' = 'eq';
+                                          let rest = raw;
+                                          if (raw.startsWith('neq:')) {
+                                            op = 'neq';
+                                            rest = raw.slice(4);
+                                          }
+                                          const colonIdx = rest.indexOf(':');
+                                          const field = rest.slice(0, colonIdx);
+                                          const fval = rest.slice(colonIdx + 1);
+                                          setEventTemplates(prev => {
+                                            const next = { ...prev };
+                                            const b = { ...next[et.key][idx] };
+                                            b.filters = [...b.filters, { field, op, value: fval }];
+                                            next[et.key] = [...next[et.key]];
+                                            next[et.key][idx] = b;
+                                            return next;
+                                          });
+                                        }}
+                                      >
+                                        <option value="">Add filter...</option>
+                                        {filterFields.map(ff =>
+                                          ff.values.map(v => (
+                                            <option key={`${ff.field}:${v.value}`} value={`${ff.field}:${v.value}`}>
+                                              {ff.label} = {v.label}
+                                            </option>
+                                          ))
+                                        )}
+                                        {filterFields.map(ff =>
+                                          ff.values.map(v => (
+                                            <option key={`neq:${ff.field}:${v.value}`} value={`neq:${ff.field}:${v.value}`}>
+                                              {ff.label} &ne; {v.label}
+                                            </option>
+                                          ))
+                                        )}
+                                      </select>
+                                    )}
                                   </div>
                                 );
                               })}
                             </div>
                           )}
-                          {availableTemplates.length > 0 && (
+                          {templates.length > 0 && (
                             <select
                               value=""
                               onChange={e => {
@@ -547,13 +657,13 @@ export function EyeModal({ onClose }: EyeModalProps) {
                                 if (!val) return;
                                 setEventTemplates(prev => ({
                                   ...prev,
-                                  [et.key]: [...(prev[et.key] ?? []), val],
+                                  [et.key]: [...(prev[et.key] ?? []), { templateId: val, filters: [] }],
                                 }));
                               }}
                               style={{ width: '100%', fontSize: 12 }}
                             >
                               <option value="">Add template...</option>
-                              {availableTemplates.map(t => (
+                              {templates.map(t => (
                                 <option key={t.id} value={t.id}>{t.name}</option>
                               ))}
                             </select>

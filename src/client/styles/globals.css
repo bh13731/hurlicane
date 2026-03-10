@@ -3253,6 +3253,64 @@ body {
   color: var(--danger);
 }
 
+.eye-event-binding {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.eye-event-binding .eye-event-template-item {
+  border: none;
+  padding: 0;
+  background: none;
+}
+
+.eye-filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.eye-filter-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: var(--bg-tertiary, var(--bg-primary));
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.eye-filter-tag-remove {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 9px;
+  padding: 0 1px;
+  line-height: 1;
+}
+
+.eye-filter-tag-remove:hover {
+  color: var(--danger);
+}
+
+.eye-filter-add {
+  font-size: 11px;
+  padding: 2px 4px;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
 .eye-config-actions {
   display: flex;
   justify-content: flex-end;
