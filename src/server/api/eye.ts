@@ -33,7 +33,7 @@ interface EyeSettings {
   webhookSecret: string;
   author: string;
   port: number;
-  eventTemplates: Record<string, string>;
+  eventTemplates: Record<string, string[]>;
   disabledEvents: string[];
 }
 
@@ -44,10 +44,20 @@ function loadSettings(): EyeSettings {
     if (raw) disabledEvents = JSON.parse(raw);
   } catch { /* ignore bad JSON */ }
 
-  let eventTemplates: Record<string, string> = {};
+  let eventTemplates: Record<string, string[]> = {};
   try {
     const raw = queries.getNote('setting:eye:eventTemplates')?.value;
-    if (raw) eventTemplates = JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      // Migrate from Record<string, string> to Record<string, string[]>
+      for (const [key, val] of Object.entries(parsed)) {
+        if (Array.isArray(val)) {
+          eventTemplates[key] = val as string[];
+        } else if (typeof val === 'string' && val) {
+          eventTemplates[key] = [val];
+        }
+      }
+    }
   } catch { /* ignore bad JSON */ }
 
   // Migrate legacy single templateId to per-event templates
@@ -55,10 +65,10 @@ function loadSettings(): EyeSettings {
     const legacyTemplateId = queries.getNote('setting:eye:templateId')?.value;
     if (legacyTemplateId) {
       eventTemplates = {
-        check_suite: legacyTemplateId,
-        check_run: legacyTemplateId,
-        pull_request_review: legacyTemplateId,
-        issue_comment: legacyTemplateId,
+        check_suite: [legacyTemplateId],
+        check_run: [legacyTemplateId],
+        pull_request_review: [legacyTemplateId],
+        issue_comment: [legacyTemplateId],
       };
     }
   }

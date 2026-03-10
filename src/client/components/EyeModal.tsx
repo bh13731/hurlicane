@@ -31,7 +31,7 @@ interface EyeSettings {
   webhookSecret: string;
   author: string;
   port: number;
-  eventTemplates: Record<string, string>;
+  eventTemplates: Record<string, string[]>;
   disabledEvents: string[];
 }
 
@@ -104,7 +104,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
   const [webhookSecret, setWebhookSecret] = useState('');
   const [author, setAuthor] = useState('');
   const [port, setPort] = useState(4567);
-  const [eventTemplates, setEventTemplates] = useState<Record<string, string>>({});
+  const [eventTemplates, setEventTemplates] = useState<Record<string, string[]>>({});
   const [templates, setTemplates] = useState<Template[]>([]);
   const [disabledEvents, setDisabledEvents] = useState<string[]>([]);
   const [showSecret, setShowSecret] = useState(false);
@@ -347,12 +347,12 @@ export function EyeModal({ onClose }: EyeModalProps) {
             {apiState?.settings?.eventTemplates && Object.keys(apiState.settings.eventTemplates).length > 0 && (
               <div className="eye-prompts-display" style={{ padding: '8px 12px', margin: '0 0 8px', fontSize: 12, color: 'var(--text-secondary)', background: 'var(--bg-secondary)', borderRadius: 6 }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Templates:</div>
-                {Object.entries(apiState.settings.eventTemplates).map(([eventKey, tplId]) => {
+                {Object.entries(apiState.settings.eventTemplates).map(([eventKey, tplIds]) => {
                   const eventLabel = EVENT_TYPES.find(et => et.key === eventKey)?.label ?? eventKey;
-                  const tplName = templates.find(t => t.id === tplId)?.name ?? tplId;
                   return (
-                    <div key={eventKey} style={{ marginLeft: 8 }}>
-                      <span style={{ color: 'var(--text-dim)' }}>{eventLabel}:</span> {tplName}
+                    <div key={eventKey} style={{ marginLeft: 8, marginBottom: 2 }}>
+                      <span style={{ color: 'var(--text-dim)' }}>{eventLabel}:</span>{' '}
+                      {tplIds.map(id => templates.find(t => t.id === id)?.name ?? id).join(', ')}
                     </div>
                   );
                 })}
@@ -478,9 +478,9 @@ export function EyeModal({ onClose }: EyeModalProps) {
                 {EVENT_TYPES.map(et => {
                   const enabled = !disabledEvents.includes(et.key);
                   const expanded = expandedEvents[et.key] ?? false;
-                  const templateName = eventTemplates[et.key]
-                    ? templates.find(t => t.id === eventTemplates[et.key])?.name
-                    : null;
+                  const tplIds = eventTemplates[et.key] ?? [];
+                  const tplCount = tplIds.length;
+                  const availableTemplates = templates.filter(t => !tplIds.includes(t.id));
                   return (
                     <div key={et.key} className={`eye-event-row ${enabled ? '' : 'eye-event-row--off'}`}>
                       <div className="eye-event-row-header">
@@ -505,34 +505,59 @@ export function EyeModal({ onClose }: EyeModalProps) {
                             onClick={() => setExpandedEvents(prev => ({ ...prev, [et.key]: !expanded }))}
                             type="button"
                           >
-                            {templateName ?? 'No template'}
+                            {tplCount === 0 ? 'No templates' : `${tplCount} template${tplCount > 1 ? 's' : ''}`}
                             <span className={`eye-event-row-chevron ${expanded ? 'eye-event-row-chevron--open' : ''}`}>&#x25B8;</span>
                           </button>
                         )}
                       </div>
                       {enabled && expanded && (
                         <div className="eye-event-row-body">
-                          <select
-                            value={eventTemplates[et.key] ?? ''}
-                            onChange={e => {
-                              const val = e.target.value;
-                              setEventTemplates(prev => {
-                                const next = { ...prev };
-                                if (val) {
-                                  next[et.key] = val;
-                                } else {
-                                  delete next[et.key];
-                                }
-                                return next;
-                              });
-                            }}
-                            style={{ width: '100%', fontSize: 12 }}
-                          >
-                            <option value="">No template</option>
-                            {templates.map(t => (
-                              <option key={t.id} value={t.id}>{t.name}</option>
-                            ))}
-                          </select>
+                          {tplIds.length > 0 && (
+                            <div className="eye-event-template-list">
+                              {tplIds.map(tplId => {
+                                const tpl = templates.find(t => t.id === tplId);
+                                return (
+                                  <div key={tplId} className="eye-event-template-item">
+                                    <span className="eye-event-template-name">{tpl?.name ?? tplId}</span>
+                                    <button
+                                      className="eye-event-template-remove"
+                                      type="button"
+                                      onClick={() => {
+                                        setEventTemplates(prev => {
+                                          const next = { ...prev };
+                                          next[et.key] = (next[et.key] ?? []).filter(id => id !== tplId);
+                                          if (next[et.key].length === 0) delete next[et.key];
+                                          return next;
+                                        });
+                                      }}
+                                      title="Remove template"
+                                    >
+                                      &#x2715;
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {availableTemplates.length > 0 && (
+                            <select
+                              value=""
+                              onChange={e => {
+                                const val = e.target.value;
+                                if (!val) return;
+                                setEventTemplates(prev => ({
+                                  ...prev,
+                                  [et.key]: [...(prev[et.key] ?? []), val],
+                                }));
+                              }}
+                              style={{ width: '100%', fontSize: 12 }}
+                            >
+                              <option value="">Add template...</option>
+                              {availableTemplates.map(t => (
+                                <option key={t.id} value={t.id}>{t.name}</option>
+                              ))}
+                            </select>
+                          )}
                         </div>
                       )}
                     </div>

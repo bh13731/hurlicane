@@ -8,6 +8,7 @@ import { resolveWorktree } from './worktree.js';
 export interface ProcessEventResult {
   type: 'job' | 'debate';
   title: string;
+  count: number;
 }
 
 /**
@@ -48,12 +49,6 @@ export async function processEvent(
   // ── Fetch configurable prompts ──
   const prompts = await client.getPrompts();
 
-  // Assign per-event template if configured
-  const eventTemplate = prompts.eventTemplates[eventType];
-  if (eventTemplate) {
-    jobReq.templateId = eventTemplate;
-  }
-
   // Resolve worktree for branch isolation
   const wt = await resolveWorktree(client, repoName, branch);
   if (wt) {
@@ -79,11 +74,28 @@ export async function processEvent(
       postActionRole: 'claude',
     });
     if (!result) return null;
-    return { type: 'debate', title: result.debate.title };
+    return { type: 'debate', title: result.debate.title, count: 1 };
   }
 
-  // Simple job
-  const result = await client.createJob(jobReq);
-  if (!result) return null;
-  return { type: 'job', title: result.title };
+  // Get per-event templates — create a job for each, or one with no template
+  const eventTemplateIds = prompts.eventTemplates[eventType] ?? [];
+  const templateList = eventTemplateIds.length > 0 ? eventTemplateIds : [undefined];
+
+  let firstTitle: string | null = null;
+  let created = 0;
+
+  for (const templateId of templateList) {
+    const req: CreateJobRequest = { ...jobReq };
+    if (templateId) {
+      req.templateId = templateId;
+    }
+    const result = await client.createJob(req);
+    if (result) {
+      if (!firstTitle) firstTitle = result.title;
+      created++;
+    }
+  }
+
+  if (created === 0) return null;
+  return { type: 'job', title: firstTitle!, count: created };
 }
