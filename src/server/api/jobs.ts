@@ -51,14 +51,15 @@ router.post('/', async (req, res) => {
     res.status(400).json({ error: 'description is required (or select a template)' });
     return;
   }
-  if (!body.workDir) {
-    res.status(400).json({ error: 'A working directory (workDir) is required for all jobs' });
+  const tpl = body.templateId ? queries.getTemplateById(body.templateId) : null;
+  const isReadonlyEarly = body.readonly || !!tpl?.is_readonly;
+  if (!body.workDir && !isReadonlyEarly) {
+    res.status(400).json({ error: 'A working directory (workDir) is required for non-readonly jobs' });
     return;
   }
 
   const explicitTitle = body.title?.trim();
   let titleSource = body.description;
-  const tpl = body.templateId ? queries.getTemplateById(body.templateId) : null;
   if (!titleSource && tpl) {
     titleSource = tpl.content ?? '';
   }
