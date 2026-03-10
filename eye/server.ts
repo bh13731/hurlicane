@@ -66,8 +66,8 @@ export function createApp(config: EyeConfig, client: OrchestratorClient): expres
 
     dispatch(eventType, payload, config, client).then(result => {
       if (result) {
-        jobsCreated++;
-        console.log(`[eye] ${eventType}: ${result}`);
+        jobsCreated += result.count;
+        console.log(`[eye] ${eventType}: ${result.title} (${result.count} job${result.count > 1 ? 's' : ''})`);
       }
     }).catch(err => {
       console.error(`[eye] error processing ${eventType}:`, err);

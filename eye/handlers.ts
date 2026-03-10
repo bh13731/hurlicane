@@ -501,11 +501,11 @@ export async function dispatch(
       author,
       decision: result.type === 'debate' ? 'debated' : 'ran',
       job_title: result.title,
-      detail: `type=${result.type}`,
+      detail: `type=${result.type}, count=${result.count}`,
     });
   }
 
-  return result?.title ?? null;
+  return result ? { title: result.title, count: result.count } : null;
 }
 
 export function getDedupStats(): { size: number } {
