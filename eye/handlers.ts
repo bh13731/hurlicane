@@ -78,25 +78,12 @@ function buildJob(
   };
 }
 
-/**
- * Look up the PR owner for a given repo + PR number via gh CLI.
- * Returns the login string or null if the lookup fails.
- */
-function fetchPrOwner(repo: string, prNum: number): string | null {
-  try {
-    return execSync(
-      `gh pr view ${prNum} --repo ${repo} --json author --jq .author.login`,
-      { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
-    ).toString().trim() || null;
-  } catch {
-    return null;
-  }
-}
-
 // ─── Event Handlers ─────────────────────────────────────────────────────────
 //
 // Each handler returns either a CreateJobRequest (matched) or a reason string
 // explaining why the event was ignored.
+// Filtration (author, conclusion, draft state, etc.) is handled by template
+// binding filters in middleware — handlers only do structural validation and dedup.
 
 type HandlerResult = CreateJobRequest | string;
 
@@ -107,7 +94,6 @@ function handleCheckSuite(
   if (payload.action !== 'completed') return `action "${payload.action}" (want "completed")`;
   const suite = payload.check_suite;
   if (!suite) return 'no check_suite in payload';
-  if (suite.conclusion !== 'failure') return `suite ${suite.conclusion ?? 'pending'}`;
 
   const repo = payload.repository?.full_name;
   if (!repo) return 'no repo in payload';
@@ -115,32 +101,27 @@ function handleCheckSuite(
   const prs: any[] = suite.pull_requests ?? [];
   if (prs.length === 0) return 'no linked PRs';
 
-  for (const pr of prs) {
-    const prNum = pr.number;
+  const pr = prs[0];
+  const prNum = pr.number;
 
-    // Check PR owner (sender on CI events is the bot, not the PR author)
-    const owner = fetchPrOwner(repo, prNum);
-    if (owner !== config.author) return `PR owner "${owner}" is not author`;
+  const dedupKey = `ci:${repo}#${prNum}:${suite.head_sha ?? suite.id}`;
+  if (isDuplicate(dedupKey)) return 'duplicate';
 
-    const dedupKey = `ci:${repo}#${prNum}:${suite.head_sha ?? suite.id}`;
-    if (isDuplicate(dedupKey)) continue;
+  const name = suite.app?.name ?? 'CI';
+  const conclusion = suite.conclusion ?? 'unknown';
+  const title = `CI: ${name} ${conclusion} on ${repo}#${prNum}`;
+  const description = [
+    `CI check suite "${name}" completed on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
+    `Conclusion: ${conclusion}.`,
+    conclusion === 'failure' ? `Investigate the failure and push a fix.` : `Review the results.`,
+  ].join('\n');
 
-    const name = suite.app?.name ?? 'CI';
-    const title = `Fix CI: ${name} on ${repo}#${prNum}`;
-    const description = [
-      `CI check suite "${name}" failed on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
-      `Conclusion: ${suite.conclusion}.`,
-      `Investigate the failure and push a fix.`,
-    ].join('\n');
-
-    return buildJob(config, title, description, 5, {
-      repo,
-      pr: String(prNum),
-      branch: pr.head?.ref ?? '',
-      check_suite_id: String(suite.id),
-    });
-  }
-  return 'duplicate';
+  return buildJob(config, title, description, 5, {
+    repo,
+    pr: String(prNum),
+    branch: pr.head?.ref ?? '',
+    check_suite_id: String(suite.id),
+  });
 }
 
 function handleCheckRun(
@@ -150,7 +131,6 @@ function handleCheckRun(
   if (payload.action !== 'completed') return `action "${payload.action}" (want "completed")`;
   const run = payload.check_run;
   if (!run) return 'no check_run in payload';
-  if (run.conclusion !== 'failure') return `run ${run.conclusion ?? 'pending'}`;
 
   const repo = payload.repository?.full_name;
   if (!repo) return 'no repo in payload';
@@ -158,32 +138,27 @@ function handleCheckRun(
   const prs: any[] = run.pull_requests ?? [];
   if (prs.length === 0) return 'no linked PRs';
 
-  for (const pr of prs) {
-    const prNum = pr.number;
+  const pr = prs[0];
+  const prNum = pr.number;
 
-    // Check PR owner (sender on CI events is the bot, not the PR author)
-    const owner = fetchPrOwner(repo, prNum);
-    if (owner !== config.author) return `PR owner "${owner}" is not author`;
+  const dedupKey = `ci:${repo}#${prNum}:${run.head_sha ?? run.id}`;
+  if (isDuplicate(dedupKey)) return 'duplicate';
 
-    const dedupKey = `ci:${repo}#${prNum}:${run.head_sha ?? run.id}`;
-    if (isDuplicate(dedupKey)) continue;
+  const name = run.name ?? 'CI';
+  const conclusion = run.conclusion ?? 'unknown';
+  const title = `CI: ${name} ${conclusion} on ${repo}#${prNum}`;
+  const description = [
+    `CI check run "${name}" completed on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
+    `Conclusion: ${conclusion}.`,
+    conclusion === 'failure' ? `Investigate the failure and push a fix.` : `Review the results.`,
+  ].join('\n');
 
-    const name = run.name ?? 'CI';
-    const title = `Fix CI: ${name} on ${repo}#${prNum}`;
-    const description = [
-      `CI check run "${name}" failed on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
-      `Conclusion: ${run.conclusion}.`,
-      `Investigate the failure and push a fix.`,
-    ].join('\n');
-
-    return buildJob(config, title, description, 5, {
-      repo,
-      pr: String(prNum),
-      branch: pr.head?.ref ?? '',
-      check_run_id: String(run.id),
-    });
-  }
-  return 'duplicate';
+  return buildJob(config, title, description, 5, {
+    repo,
+    pr: String(prNum),
+    branch: pr.head?.ref ?? '',
+    check_run_id: String(run.id),
+  });
 }
 
 /**
@@ -207,10 +182,6 @@ async function checkAllSuitesPassed(
 
   const prNum = prs[0].number;
   const branch = prs[0].head?.ref ?? '';
-
-  // Only notify for PRs owned by the configured author
-  const owner = fetchPrOwner(repo, prNum);
-  if (owner !== config.author) return;
 
   const dedupKey = `all-checks:${repo}#${prNum}:${sha}`;
   if (isDuplicate(dedupKey)) return;
@@ -322,63 +293,40 @@ function handlePullRequestReview(
   const repo = payload.repository?.full_name;
   if (!review || !pr || !repo) return 'missing review/pr/repo';
 
+  if (payload.action !== 'submitted') return `action "${payload.action}" (want "submitted")`;
+
   const reviewer = review.user?.login;
   const prNum = pr.number;
   const state = review.state ?? 'unknown';
 
-  // On published (non-draft) PRs, only respond to reviews from the registered author
-  if (!pr.draft && reviewer && reviewer !== config.author) return `reviewer "${reviewer}" is not registered author (published PR)`;
+  const dedupKey = `review:${repo}#${prNum}:${review.id}`;
+  if (isDuplicate(dedupKey)) return 'duplicate';
 
-  if (payload.action === 'submitted' && state === 'changes_requested') {
-    const dedupKey = `review:${repo}#${prNum}:${review.id}`;
-    if (isDuplicate(dedupKey)) return 'duplicate';
+  const inlineComments = fetchReviewComments(repo, prNum, review.id, botPrefix);
 
-    const inlineComments = fetchReviewComments(repo, prNum, review.id, botPrefix);
+  const priority = state === 'changes_requested' ? 4 : 1;
+  const title = state === 'changes_requested'
+    ? `Address review on ${repo}#${prNum}`
+    : `Review ${state} on ${repo}#${prNum}`;
 
-    const title = `Address review on ${repo}#${prNum}`;
-    const parts = [
-      `${reviewer} requested changes on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
-    ];
-    if (review.body) parts.push(`\nReview comment:\n${review.body}`);
-    if (inlineComments) parts.push(`\nInline comments:\n${inlineComments}`);
+  const parts = [
+    `${reviewer} left a ${state} review on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
+  ];
+  if (review.body) parts.push(`\nReview comment:\n${review.body}`);
+  if (inlineComments) parts.push(`\nInline comments:\n${inlineComments}`);
+  if (state === 'changes_requested') {
     parts.push(`\nAddress the requested changes and push a fix.`);
-
-    return buildJob(config, title, parts.join('\n'), 4, {
-      repo,
-      pr: String(prNum),
-      branch: pr.head?.ref ?? '',
-      reviewer: reviewer ?? '',
-      review_id: String(review.id),
-    });
-  }
-
-  if (payload.action === 'submitted' && state === 'commented') {
-    const dedupKey = `review-comment:${repo}#${prNum}:${review.id}`;
-    if (isDuplicate(dedupKey)) return 'duplicate';
-
-    const inlineComments = fetchReviewComments(repo, prNum, review.id, botPrefix);
-
-    // Skip if there's no body and no inline comments (empty review)
-    if (!review.body && !inlineComments) return 'empty review comment';
-
-    const title = `Review comment on ${repo}#${prNum}`;
-    const parts = [
-      `${reviewer} left a review comment on ${repo}#${prNum} (branch: ${pr.head?.ref ?? 'unknown'}).`,
-    ];
-    if (review.body) parts.push(`\nComment:\n${review.body}`);
-    if (inlineComments) parts.push(`\nInline comments:\n${inlineComments}`);
+  } else {
     parts.push(`\nReview and respond or address the comment as needed.`);
-
-    return buildJob(config, title, parts.join('\n'), 1, {
-      repo,
-      pr: String(prNum),
-      branch: pr.head?.ref ?? '',
-      reviewer: reviewer ?? '',
-      review_id: String(review.id),
-    });
   }
 
-  return `review state "${state}"`;
+  return buildJob(config, title, parts.join('\n'), priority, {
+    repo,
+    pr: String(prNum),
+    branch: pr.head?.ref ?? '',
+    reviewer: reviewer ?? '',
+    review_id: String(review.id),
+  });
 }
 
 async function handleIssueComment(
@@ -397,24 +345,17 @@ async function handleIssueComment(
   const commenter = comment.user?.login;
   const prNum = issue.number;
 
-  // Fetch PR branch and draft status via gh CLI (issue_comment payload doesn't include them)
+  // Fetch PR branch via gh CLI (issue_comment payload doesn't include it)
   let branch = '';
-  let isDraft = false;
   try {
-    const { execSync } = await import('child_process');
-    const prInfo = execSync(
-      `gh pr view ${prNum} --repo ${repo} --json headRefName,isDraft --jq '{branch: .headRefName, draft: .isDraft}'`,
+    const branchResult = execSync(
+      `gh pr view ${prNum} --repo ${repo} --json headRefName --jq .headRefName`,
       { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
     ).toString().trim();
-    const parsed = JSON.parse(prInfo);
-    branch = parsed.branch ?? '';
-    isDraft = parsed.draft === true;
+    branch = branchResult || '';
   } catch (err: any) {
-    console.warn(`[eye] failed to fetch PR info for ${repo}#${prNum}:`, err.message);
+    console.warn(`[eye] failed to fetch PR branch for ${repo}#${prNum}:`, err.message);
   }
-
-  // On published (non-draft) PRs, only respond to comments from the registered author
-  if (!isDraft && commenter && commenter !== config.author) return `commenter "${commenter}" is not registered author (published PR)`;
 
   const dedupKey = `comment:${repo}#${prNum}:${comment.id}`;
   if (isDuplicate(dedupKey)) return 'duplicate';
@@ -435,14 +376,10 @@ async function handleIssueComment(
   });
 }
 
-async function handlePullRequestMeta(payload: any, config: EyeConfig, client: OrchestratorClient): Promise<string | null> {
+async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: OrchestratorClient): Promise<string | null> {
   const pr = payload.pull_request;
   const repo = payload.repository?.full_name;
   if (!pr || !repo) return null;
-
-  // Only handle PRs owned by the configured author
-  const prOwner = pr.user?.login;
-  if (prOwner && prOwner !== config.author) return null;
 
   const prNum = pr.number;
   const prefix = `ci:${repo}#${prNum}:`;
@@ -502,12 +439,6 @@ export async function dispatch(
     return await handlePullRequestMeta(payload, config, client);
   }
 
-  // Skip events on branches/PRs not owned by the configured author
-  const prOwner = payload.pull_request?.user?.login ?? payload.issue?.user?.login;
-  if (prOwner && prOwner !== config.author) {
-    return null;
-  }
-
   // Check if all suites passed — runs even when check_suite is disabled for failures
   if (eventType === 'check_suite' && payload.check_suite?.conclusion === 'success') {
     checkAllSuitesPassed(payload, config, client).catch(err =>
@@ -521,20 +452,8 @@ export async function dispatch(
     return null;
   }
 
-  // Ignore events whose body starts with [botName] (our own bot's output)
-  if (prompts.botName) {
-    const name = prompts.botName.replace(/^\[|\]$/g, '');
-    const prefix = `[${name}]`;
-    const body =
-      payload.comment?.body ??
-      payload.review?.body ??
-      '';
-    if (typeof body === 'string' && body.trimStart().startsWith(prefix)) {
-      return null;
-    }
-  }
-
   // Get a CreateJobRequest from the appropriate handler
+  const botPrefix = prompts.botName ? `[${prompts.botName.replace(/^\[|\]$/g, '')}]` : undefined;
   let handlerResult: HandlerResult;
   switch (eventType) {
     case 'check_suite':
@@ -543,11 +462,9 @@ export async function dispatch(
     case 'check_run':
       handlerResult = handleCheckRun(payload, config);
       break;
-    case 'pull_request_review': {
-      const botPrefix = prompts.botName ? `[${prompts.botName.replace(/^\[|\]$/g, '')}]` : undefined;
+    case 'pull_request_review':
       handlerResult = handlePullRequestReview(payload, config, botPrefix);
       break;
-    }
     case 'issue_comment':
       handlerResult = await handleIssueComment(payload, config);
       break;

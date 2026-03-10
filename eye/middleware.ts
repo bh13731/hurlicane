@@ -9,31 +9,58 @@ import { resolveWorktree } from './worktree.js';
  * Extract filter-evaluable fields from the webhook payload.
  * Returns a flat record of field → string value.
  */
-function extractFilterFields(eventType: string, payload: any): Record<string, string> {
+function extractFilterFields(
+  eventType: string,
+  payload: any,
+  author: string,
+  botName: string,
+): Record<string, string> {
   const fields: Record<string, string> = {};
+
+  // PR author (owner of the PR)
+  const prAuthor = payload.pull_request?.user?.login ?? payload.issue?.user?.login;
+  if (prAuthor) {
+    fields['pr_author'] = prAuthor;
+    fields['pr_author_is_self'] = prAuthor === author ? 'true' : 'false';
+  }
+  // For check_suite/check_run, PR author isn't directly in payload — fetched below in processEvent
+
+  // Sender (who triggered this event)
+  if (payload.sender?.login) {
+    fields['sender'] = payload.sender.login;
+    fields['sender_is_self'] = payload.sender.login === author ? 'true' : 'false';
+  }
 
   // PR draft status — available on most event types
   const pr = payload.pull_request;
   if (pr) {
     fields['pr_draft'] = pr.draft ? 'true' : 'false';
   }
-  // For issue_comment, draft info isn't in payload — checked via gh CLI in handler,
-  // but we can check the issue labels/state
-  if (eventType === 'issue_comment' && payload.issue?.pull_request) {
-    // issue_comment doesn't carry draft status; we fetch it separately below
-  }
 
   // Review state
   if (eventType === 'pull_request_review' && payload.review) {
     fields['review_state'] = payload.review.state ?? '';
+    const hasBody = !!(payload.review.body && payload.review.body.trim());
+    fields['review_has_body'] = hasBody ? 'true' : 'false';
   }
 
-  // Check/suite name
+  // Check conclusion
   if (eventType === 'check_suite' && payload.check_suite) {
+    fields['check_conclusion'] = payload.check_suite.conclusion ?? '';
     fields['check_name'] = payload.check_suite.app?.name ?? '';
   }
   if (eventType === 'check_run' && payload.check_run) {
+    fields['check_conclusion'] = payload.check_run.conclusion ?? '';
     fields['check_name'] = payload.check_run.name ?? '';
+  }
+
+  // Bot detection — whether the comment/review body starts with bot prefix
+  if (botName) {
+    const prefix = `[${botName.replace(/^\[|\]$/g, '')}]`;
+    const body = payload.comment?.body ?? payload.review?.body ?? '';
+    fields['is_bot'] = (typeof body === 'string' && body.trimStart().startsWith(prefix)) ? 'true' : 'false';
+  } else {
+    fields['is_bot'] = 'false';
   }
 
   return fields;
@@ -75,26 +102,62 @@ export async function processEvent(
 
   console.log(`[eye] processEvent: ${eventType} repo=${repoName} branch="${branch}"`);
 
-  // Skip events for PRs that have already been merged or closed.
-  // After a merge, GitHub sends trailing check_suite/check_run events that would
-  // otherwise create new jobs and worktrees for a branch that's already done.
-  if (repoName && prNum) {
+  // ── Fetch configurable prompts ──
+  const prompts = await client.getPrompts();
+
+  // Extract filter fields from payload
+  const fields = extractFilterFields(eventType, payload, config.author, prompts.botName);
+
+  // For check_suite/check_run, PR author isn't in the payload — fetch via gh CLI
+  if ((eventType === 'check_suite' || eventType === 'check_run') && !fields['pr_author'] && repoName && prNum) {
+    try {
+      const prAuthor = execSync(
+        `gh pr view ${JSON.stringify(prNum)} --repo ${JSON.stringify(repoName)} --json author --jq .author.login`,
+        { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
+      ).toString().trim();
+      if (prAuthor) {
+        fields['pr_author'] = prAuthor;
+        fields['pr_author_is_self'] = prAuthor === config.author ? 'true' : 'false';
+      }
+    } catch { /* gh CLI failed — leave unset */ }
+  }
+
+  // For issue_comment, pr_draft isn't in the payload — fetch via gh CLI
+  if (eventType === 'issue_comment' && fields['pr_draft'] === undefined && repoName && prNum) {
+    try {
+      const isDraft = execSync(
+        `gh pr view ${JSON.stringify(prNum)} --repo ${JSON.stringify(repoName)} --json isDraft --jq .isDraft`,
+        { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
+      ).toString().trim();
+      fields['pr_draft'] = isDraft === 'true' ? 'true' : 'false';
+    } catch { /* gh CLI failed — leave unset */ }
+  }
+
+  // Fetch PR state (open/merged/closed) for filter evaluation
+  if (repoName && prNum && !fields['pr_state']) {
     try {
       const state = execSync(
         `gh pr view ${JSON.stringify(prNum)} --repo ${JSON.stringify(repoName)} --json state --jq .state`,
         { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
-      ).toString().trim();
-      if (state === 'MERGED' || state === 'CLOSED') {
-        console.log(`[eye] PR ${repoName}#${prNum} is ${state}, skipping event`);
-        return null;
-      }
-    } catch {
-      // gh CLI failed — continue processing
-    }
+      ).toString().trim().toLowerCase();
+      fields['pr_state'] = state; // "open", "merged", "closed"
+    } catch { /* gh CLI failed — leave unset */ }
   }
 
-  // ── Fetch configurable prompts ──
-  const prompts = await client.getPrompts();
+  // Get per-event template bindings — create a job for each that passes filters
+  const bindings = prompts.eventTemplates[eventType] ?? [];
+
+  // If no bindings configured, skip (no templates = no jobs)
+  if (bindings.length === 0) {
+    console.log(`[eye] no template bindings for ${eventType}, skipping`);
+    return null;
+  }
+
+  const matchingBindings = bindings.filter(b => filtersPass(b.filters, fields));
+  if (matchingBindings.length === 0) {
+    console.log(`[eye] no bindings matched filters for ${eventType} (fields: ${JSON.stringify(fields)})`);
+    return null;
+  }
 
   // Resolve worktree for branch isolation
   const wt = await resolveWorktree(client, repoName, branch);
@@ -123,26 +186,6 @@ export async function processEvent(
     if (!result) return null;
     return { type: 'debate', title: result.debate.title, count: 1 };
   }
-
-  // Get per-event template bindings — create a job for each that passes filters
-  const bindings = prompts.eventTemplates[eventType] ?? [];
-  const fields = extractFilterFields(eventType, payload);
-
-  // For issue_comment, pr_draft isn't in the payload — fetch via gh CLI
-  if (eventType === 'issue_comment' && fields['pr_draft'] === undefined && repoName && prNum) {
-    try {
-      const isDraft = execSync(
-        `gh pr view ${JSON.stringify(prNum)} --repo ${JSON.stringify(repoName)} --json isDraft --jq .isDraft`,
-        { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
-      ).toString().trim();
-      fields['pr_draft'] = isDraft === 'true' ? 'true' : 'false';
-    } catch { /* gh CLI failed — leave unset */ }
-  }
-
-  // If no bindings, create one job with no template
-  const matchingBindings = bindings.length > 0
-    ? bindings.filter(b => filtersPass(b.filters, fields))
-    : [{ templateId: undefined, filters: [] }] as { templateId: string | undefined; filters: TemplateFilter[] }[];
 
   let firstTitle: string | null = null;
   let created = 0;

@@ -52,19 +52,32 @@ interface Template {
 }
 
 /** Available filter fields per event type */
-const FILTER_FIELDS: Record<string, { field: string; label: string; values: { value: string; label: string }[] }[]> = {
+type FilterFieldDef = { field: string; label: string; values: { value: string; label: string }[] };
+
+const COMMON_FILTERS: FilterFieldDef[] = [
+  { field: 'pr_draft', label: 'PR State', values: [{ value: 'true', label: 'Draft' }, { value: 'false', label: 'Published' }] },
+  { field: 'pr_author_is_self', label: 'PR Author', values: [{ value: 'true', label: 'Self' }, { value: 'false', label: 'Others' }] },
+  { field: 'sender_is_self', label: 'Sender', values: [{ value: 'true', label: 'Self' }, { value: 'false', label: 'Others' }] },
+  { field: 'is_bot', label: 'Bot Message', values: [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] },
+  { field: 'pr_state', label: 'PR Open State', values: [{ value: 'open', label: 'Open' }, { value: 'merged', label: 'Merged' }, { value: 'closed', label: 'Closed' }] },
+];
+
+const FILTER_FIELDS: Record<string, FilterFieldDef[]> = {
   check_suite: [
-    { field: 'pr_draft', label: 'PR State', values: [{ value: 'true', label: 'Draft' }, { value: 'false', label: 'Published' }] },
+    ...COMMON_FILTERS,
+    { field: 'check_conclusion', label: 'Conclusion', values: [{ value: 'failure', label: 'Failure' }, { value: 'success', label: 'Success' }, { value: 'neutral', label: 'Neutral' }] },
   ],
   check_run: [
-    { field: 'pr_draft', label: 'PR State', values: [{ value: 'true', label: 'Draft' }, { value: 'false', label: 'Published' }] },
+    ...COMMON_FILTERS,
+    { field: 'check_conclusion', label: 'Conclusion', values: [{ value: 'failure', label: 'Failure' }, { value: 'success', label: 'Success' }, { value: 'neutral', label: 'Neutral' }] },
   ],
   pull_request_review: [
-    { field: 'pr_draft', label: 'PR State', values: [{ value: 'true', label: 'Draft' }, { value: 'false', label: 'Published' }] },
+    ...COMMON_FILTERS,
     { field: 'review_state', label: 'Review Type', values: [{ value: 'changes_requested', label: 'Changes Requested' }, { value: 'commented', label: 'Commented' }, { value: 'approved', label: 'Approved' }] },
+    { field: 'review_has_body', label: 'Has Body', values: [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] },
   ],
   issue_comment: [
-    { field: 'pr_draft', label: 'PR State', values: [{ value: 'true', label: 'Draft' }, { value: 'false', label: 'Published' }] },
+    ...COMMON_FILTERS,
   ],
 };
 
