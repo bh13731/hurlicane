@@ -48,9 +48,10 @@ export async function processEvent(
   // ── Fetch configurable prompts ──
   const prompts = await client.getPrompts();
 
-  // Assign template if configured
-  if (prompts.templateId) {
-    jobReq.templateId = prompts.templateId;
+  // Assign per-event template if configured
+  const eventTemplate = prompts.eventTemplates[eventType];
+  if (eventTemplate) {
+    jobReq.templateId = eventTemplate;
   }
 
   // Resolve worktree for branch isolation

@@ -1,7 +1,7 @@
 import type { CreateJobRequest, CreateDebateRequest, CreateDebateResponse, Repo, Worktree } from '../src/shared/types.js';
 
 export interface EyePrompts {
-  templateId: string;
+  eventTemplates: Record<string, string>;
   disabledEvents: string[];
   botName: string;
 }
@@ -17,7 +17,7 @@ export interface OrchestratorClient {
 }
 
 const DEFAULT_PROMPTS: EyePrompts = {
-  templateId: '',
+  eventTemplates: {},
   disabledEvents: [],
   botName: '',
 };

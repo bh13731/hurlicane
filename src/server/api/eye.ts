@@ -33,7 +33,7 @@ interface EyeSettings {
   webhookSecret: string;
   author: string;
   port: number;
-  templateId: string;
+  eventTemplates: Record<string, string>;
   disabledEvents: string[];
 }
 
@@ -44,11 +44,30 @@ function loadSettings(): EyeSettings {
     if (raw) disabledEvents = JSON.parse(raw);
   } catch { /* ignore bad JSON */ }
 
+  let eventTemplates: Record<string, string> = {};
+  try {
+    const raw = queries.getNote('setting:eye:eventTemplates')?.value;
+    if (raw) eventTemplates = JSON.parse(raw);
+  } catch { /* ignore bad JSON */ }
+
+  // Migrate legacy single templateId to per-event templates
+  if (Object.keys(eventTemplates).length === 0) {
+    const legacyTemplateId = queries.getNote('setting:eye:templateId')?.value;
+    if (legacyTemplateId) {
+      eventTemplates = {
+        check_suite: legacyTemplateId,
+        check_run: legacyTemplateId,
+        pull_request_review: legacyTemplateId,
+        issue_comment: legacyTemplateId,
+      };
+    }
+  }
+
   return {
     webhookSecret: queries.getNote('setting:eye:webhookSecret')?.value ?? '',
     author: queries.getNote('setting:eye:author')?.value ?? '',
     port: Number(queries.getNote('setting:eye:port')?.value ?? '4567'),
-    templateId: queries.getNote('setting:eye:templateId')?.value ?? '',
+    eventTemplates,
     disabledEvents,
   };
 }
@@ -57,7 +76,7 @@ function saveSettings(settings: EyeSettings): void {
   queries.upsertNote('setting:eye:webhookSecret', settings.webhookSecret, null);
   queries.upsertNote('setting:eye:author', settings.author, null);
   queries.upsertNote('setting:eye:port', String(settings.port), null);
-  queries.upsertNote('setting:eye:templateId', settings.templateId, null);
+  queries.upsertNote('setting:eye:eventTemplates', JSON.stringify(settings.eventTemplates), null);
   queries.upsertNote('setting:eye:disabledEvents', JSON.stringify(settings.disabledEvents), null);
 }
 
@@ -75,12 +94,12 @@ router.get('/', (_req, res) => {
 
 // PUT /api/eye — save config
 router.put('/', (req, res) => {
-  const { webhookSecret, author, port, templateId, disabledEvents } = req.body;
+  const { webhookSecret, author, port, eventTemplates, disabledEvents } = req.body;
   const settings: EyeSettings = {
     webhookSecret: String(webhookSecret ?? ''),
     author: String(author ?? ''),
     port: Number(port ?? 4567),
-    templateId: String(templateId ?? ''),
+    eventTemplates: (eventTemplates && typeof eventTemplates === 'object') ? eventTemplates : {},
     disabledEvents: Array.isArray(disabledEvents) ? disabledEvents : [],
   };
   saveSettings(settings);
@@ -91,7 +110,7 @@ router.put('/', (req, res) => {
 router.get('/prompts', (_req, res) => {
   const settings = loadSettings();
   res.json({
-    templateId: settings.templateId,
+    eventTemplates: settings.eventTemplates,
     disabledEvents: settings.disabledEvents,
     botName: queries.getNote('setting:botName')?.value ?? '',
   });
@@ -111,10 +130,6 @@ router.post('/start', (_req, res) => {
   }
   if (!settings.author) {
     res.status(400).json({ error: 'Author is required. Configure it first.' });
-    return;
-  }
-  if (!settings.templateId) {
-    res.status(400).json({ error: 'Template is required. Select a template first.' });
     return;
   }
 

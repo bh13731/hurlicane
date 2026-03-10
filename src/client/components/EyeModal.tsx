@@ -31,7 +31,7 @@ interface EyeSettings {
   webhookSecret: string;
   author: string;
   port: number;
-  templateId: string;
+  eventTemplates: Record<string, string>;
   disabledEvents: string[];
 }
 
@@ -104,7 +104,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
   const [webhookSecret, setWebhookSecret] = useState('');
   const [author, setAuthor] = useState('');
   const [port, setPort] = useState(4567);
-  const [templateId, setTemplateId] = useState('');
+  const [eventTemplates, setEventTemplates] = useState<Record<string, string>>({});
   const [templates, setTemplates] = useState<Template[]>([]);
   const [disabledEvents, setDisabledEvents] = useState<string[]>([]);
   const [showSecret, setShowSecret] = useState(false);
@@ -160,7 +160,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
         setWebhookSecret(state.settings.webhookSecret);
         setAuthor(state.settings.author);
         setPort(state.settings.port || 4567);
-        setTemplateId(state.settings.templateId ?? '');
+        setEventTemplates(state.settings.eventTemplates ?? {});
         setDisabledEvents(state.settings.disabledEvents ?? []);
       }
     });
@@ -186,10 +186,10 @@ export function EyeModal({ onClose }: EyeModalProps) {
       webhookSecret !== s.webhookSecret ||
       author !== s.author ||
       port !== s.port ||
-      templateId !== (s.templateId ?? '') ||
+      JSON.stringify(eventTemplates) !== JSON.stringify(s.eventTemplates ?? {}) ||
       JSON.stringify(disabledEvents) !== JSON.stringify(s.disabledEvents ?? [])
     );
-  }, [apiState, webhookSecret, author, port, templateId, disabledEvents]);
+  }, [apiState, webhookSecret, author, port, eventTemplates, disabledEvents]);
 
   // ─── Actions ────────────────────────────────────────────────────────────
 
@@ -200,7 +200,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
       const res = await fetch('/api/eye', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhookSecret, author, port, templateId, disabledEvents }),
+        body: JSON.stringify({ webhookSecret, author, port, eventTemplates, disabledEvents }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -271,7 +271,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
   const allEvents = eyeStatus?.recent_events ? [...eyeStatus.recent_events].reverse() : [];
   const events = hideIgnored ? allEvents.filter(ev => ev.decision !== 'ignored') : allEvents;
   const ignoredCount = allEvents.length - allEvents.filter(ev => ev.decision !== 'ignored').length;
-  const canLaunch = !!webhookSecret && !!author && !!templateId;
+  const canLaunch = !!webhookSecret && !!author;
 
   return (
     <div className="modal-overlay" onClick={onClose} onKeyDown={e => e.key === 'Escape' && onClose()}>
@@ -343,11 +343,18 @@ export function EyeModal({ onClose }: EyeModalProps) {
               )}
             </div>
 
-            {apiState?.settings?.templateId && (
+            {apiState?.settings?.eventTemplates && Object.keys(apiState.settings.eventTemplates).length > 0 && (
               <div className="eye-prompts-display" style={{ padding: '8px 12px', margin: '0 0 8px', fontSize: 12, color: 'var(--text-secondary)', background: 'var(--bg-secondary)', borderRadius: 6 }}>
-                <div>
-                  <span style={{ fontWeight: 600 }}>Template:</span> {templates.find(t => t.id === apiState.settings.templateId)?.name ?? apiState.settings.templateId}
-                </div>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Templates:</div>
+                {Object.entries(apiState.settings.eventTemplates).map(([eventKey, tplId]) => {
+                  const eventLabel = EVENT_TYPES.find(et => et.key === eventKey)?.label ?? eventKey;
+                  const tplName = templates.find(t => t.id === tplId)?.name ?? tplId;
+                  return (
+                    <div key={eventKey} style={{ marginLeft: 8 }}>
+                      <span style={{ color: 'var(--text-dim)' }}>{eventLabel}:</span> {tplName}
+                    </div>
+                  );
+                })}
               </div>
             )}
 
@@ -465,44 +472,55 @@ export function EyeModal({ onClose }: EyeModalProps) {
             </div>
 
             <div className="form-group" style={{ marginTop: 12 }}>
-              <label>Event Subscriptions</label>
+              <label>Event Subscriptions &amp; Templates</label>
               <div className="eye-event-toggles">
                 {EVENT_TYPES.map(et => {
                   const enabled = !disabledEvents.includes(et.key);
                   return (
-                    <label key={et.key} className={`eye-event-toggle ${enabled ? 'eye-event-toggle--on' : 'eye-event-toggle--off'}`}>
-                      <input
-                        type="checkbox"
-                        checked={enabled}
-                        onChange={() => {
-                          setDisabledEvents(prev =>
-                            prev.includes(et.key)
-                              ? prev.filter(k => k !== et.key)
-                              : [...prev, et.key]
-                          );
-                        }}
-                      />
-                      <span className="eye-event-toggle-label">{et.label}</span>
-                      <span className="eye-event-toggle-desc">{et.description}</span>
-                    </label>
+                    <div key={et.key} className={`eye-event-toggle ${enabled ? 'eye-event-toggle--on' : 'eye-event-toggle--off'}`}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={enabled}
+                          onChange={() => {
+                            setDisabledEvents(prev =>
+                              prev.includes(et.key)
+                                ? prev.filter(k => k !== et.key)
+                                : [...prev, et.key]
+                            );
+                          }}
+                        />
+                        <span className="eye-event-toggle-label">{et.label}</span>
+                        <span className="eye-event-toggle-desc">{et.description}</span>
+                      </label>
+                      {enabled && (
+                        <select
+                          value={eventTemplates[et.key] ?? ''}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setEventTemplates(prev => {
+                              const next = { ...prev };
+                              if (val) {
+                                next[et.key] = val;
+                              } else {
+                                delete next[et.key];
+                              }
+                              return next;
+                            });
+                          }}
+                          style={{ width: '100%', fontSize: 12, marginTop: 4 }}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <option value="">No template</option>
+                          {templates.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
                   );
                 })}
               </div>
-            </div>
-
-            <div className="form-group" style={{ marginTop: 12 }}>
-              <label>Template <span style={{ color: 'var(--danger)' }}>*</span></label>
-              <select
-                value={templateId}
-                onChange={e => setTemplateId(e.target.value)}
-                style={{ width: '100%', fontSize: 13 }}
-              >
-                <option value="">Select a template...</option>
-                {templates.map(t => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-              <div className="eye-field-hint">Template applied to all jobs created by Eye.</div>
             </div>
 
             {actionError && (
