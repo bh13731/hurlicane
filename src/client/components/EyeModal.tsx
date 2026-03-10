@@ -670,7 +670,13 @@ export function EyeModal({ onClose }: EyeModalProps) {
                                 if (!val) return;
                                 setEventTemplates(prev => ({
                                   ...prev,
-                                  [et.key]: [...(prev[et.key] ?? []), { templateId: val, filters: [] }],
+                                  [et.key]: [...(prev[et.key] ?? []), {
+                                    templateId: val,
+                                    filters: [
+                                      { field: 'pr_author_is_self', op: 'eq' as const, value: 'true' },
+                                      { field: 'is_bot', op: 'eq' as const, value: 'false' },
+                                    ],
+                                  }],
                                 }));
                               }}
                               style={{ width: '100%', fontSize: 12 }}
