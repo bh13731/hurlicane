@@ -108,6 +108,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [disabledEvents, setDisabledEvents] = useState<string[]>([]);
   const [showSecret, setShowSecret] = useState(false);
+  const [expandedEvents, setExpandedEvents] = useState<Record<string, boolean>>({});
 
   // Action state
   const [saving, setSaving] = useState(false);
@@ -472,13 +473,17 @@ export function EyeModal({ onClose }: EyeModalProps) {
             </div>
 
             <div className="form-group" style={{ marginTop: 12 }}>
-              <label>Event Subscriptions &amp; Templates</label>
-              <div className="eye-event-toggles">
+              <label>Events</label>
+              <div className="eye-event-list">
                 {EVENT_TYPES.map(et => {
                   const enabled = !disabledEvents.includes(et.key);
+                  const expanded = expandedEvents[et.key] ?? false;
+                  const templateName = eventTemplates[et.key]
+                    ? templates.find(t => t.id === eventTemplates[et.key])?.name
+                    : null;
                   return (
-                    <div key={et.key} className={`eye-event-toggle ${enabled ? 'eye-event-toggle--on' : 'eye-event-toggle--off'}`}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <div key={et.key} className={`eye-event-row ${enabled ? '' : 'eye-event-row--off'}`}>
+                      <div className="eye-event-row-header">
                         <input
                           type="checkbox"
                           checked={enabled}
@@ -490,32 +495,45 @@ export function EyeModal({ onClose }: EyeModalProps) {
                             );
                           }}
                         />
-                        <span className="eye-event-toggle-label">{et.label}</span>
-                        <span className="eye-event-toggle-desc">{et.description}</span>
-                      </label>
-                      {enabled && (
-                        <select
-                          value={eventTemplates[et.key] ?? ''}
-                          onChange={e => {
-                            const val = e.target.value;
-                            setEventTemplates(prev => {
-                              const next = { ...prev };
-                              if (val) {
-                                next[et.key] = val;
-                              } else {
-                                delete next[et.key];
-                              }
-                              return next;
-                            });
-                          }}
-                          style={{ width: '100%', fontSize: 12, marginTop: 4 }}
-                          onClick={e => e.stopPropagation()}
-                        >
-                          <option value="">No template</option>
-                          {templates.map(t => (
-                            <option key={t.id} value={t.id}>{t.name}</option>
-                          ))}
-                        </select>
+                        <div className="eye-event-row-info">
+                          <span className="eye-event-row-label">{et.label}</span>
+                          <span className="eye-event-row-desc">{et.description}</span>
+                        </div>
+                        {enabled && (
+                          <button
+                            className="eye-event-row-toggle"
+                            onClick={() => setExpandedEvents(prev => ({ ...prev, [et.key]: !expanded }))}
+                            type="button"
+                          >
+                            {templateName ?? 'No template'}
+                            <span className={`eye-event-row-chevron ${expanded ? 'eye-event-row-chevron--open' : ''}`}>&#x25B8;</span>
+                          </button>
+                        )}
+                      </div>
+                      {enabled && expanded && (
+                        <div className="eye-event-row-body">
+                          <select
+                            value={eventTemplates[et.key] ?? ''}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEventTemplates(prev => {
+                                const next = { ...prev };
+                                if (val) {
+                                  next[et.key] = val;
+                                } else {
+                                  delete next[et.key];
+                                }
+                                return next;
+                              });
+                            }}
+                            style={{ width: '100%', fontSize: 12 }}
+                          >
+                            <option value="">No template</option>
+                            {templates.map(t => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </select>
+                        </div>
                       )}
                     </div>
                   );

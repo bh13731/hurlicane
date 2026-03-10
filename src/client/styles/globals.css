@@ -3129,44 +3129,89 @@ body {
   margin-top: 3px;
 }
 
-.eye-event-toggles {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 6px;
+.eye-event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.eye-event-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 6px;
+.eye-event-row {
   border: 1px solid var(--border);
-  cursor: pointer;
+  border-radius: 6px;
   font-size: 13px;
   transition: opacity 0.15s;
 }
 
-.eye-event-toggle--off {
+.eye-event-row--off {
   opacity: 0.45;
 }
 
-.eye-event-toggle input[type="checkbox"] {
-  margin: 0;
-  cursor: pointer;
+.eye-event-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
 }
 
-.eye-event-toggle-label {
+.eye-event-row-header input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.eye-event-row-info {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.eye-event-row-label {
   font-weight: 600;
   white-space: nowrap;
 }
 
-.eye-event-toggle-desc {
+.eye-event-row-desc {
   color: var(--text-dim);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.eye-event-row-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.eye-event-row-toggle:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.eye-event-row-chevron {
+  display: inline-block;
+  transition: transform 0.15s;
+  font-size: 10px;
+}
+
+.eye-event-row-chevron--open {
+  transform: rotate(90deg);
+}
+
+.eye-event-row-body {
+  padding: 0 10px 8px 32px;
 }
 
 .eye-config-actions {
