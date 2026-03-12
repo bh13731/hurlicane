@@ -104,7 +104,7 @@ function handleCheckSuite(
   const pr = prs[0];
   const prNum = pr.number;
 
-  const dedupKey = `ci:${repo}#${prNum}:${suite.head_sha ?? suite.id}`;
+  const dedupKey = `ci:${repo}#${prNum}:suite:${suite.id}`;
   if (isDuplicate(dedupKey)) return 'duplicate';
 
   const name = suite.app?.name ?? 'CI';
@@ -141,7 +141,7 @@ function handleCheckRun(
   const pr = prs[0];
   const prNum = pr.number;
 
-  const dedupKey = `ci:${repo}#${prNum}:${run.head_sha ?? run.id}`;
+  const dedupKey = `ci:${repo}#${prNum}:run:${run.id}`;
   if (isDuplicate(dedupKey)) return 'duplicate';
 
   const name = run.name ?? 'CI';
@@ -376,7 +376,7 @@ async function handleIssueComment(
   });
 }
 
-async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: OrchestratorClient): Promise<string | null> {
+async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: OrchestratorClient): Promise<null> {
   const pr = payload.pull_request;
   const repo = payload.repository?.full_name;
   if (!pr || !repo) return null;
@@ -387,7 +387,8 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
   if (payload.action === 'synchronize') {
     // New push — reset CI dedup so new failures create jobs
     clearDedupPrefix(prefix);
-    return `reset CI dedup for ${repo}#${prNum}`;
+    console.log(`[eye] reset CI dedup for ${repo}#${prNum}`);
+    return null;
   }
 
   if (payload.action === 'converted_to_draft') {
@@ -396,7 +397,8 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
     clearDedupPrefix(`review:${repo}#${prNum}:`);
     clearDedupPrefix(`review-comment:${repo}#${prNum}:`);
     clearDedupPrefix(`comment:${repo}#${prNum}:`);
-    return `cleaned dedup for ${repo}#${prNum} (converted to draft)`;
+    console.log(`[eye] cleaned dedup for ${repo}#${prNum} (converted to draft)`);
+    return null;
   }
 
   if (payload.action === 'closed') {
@@ -412,11 +414,13 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
     if (branch) {
       const cleanup = await client.cleanupBranch(branch, merged);
       if (cleanup?.found) {
-        return `cleaned dedup + worktree for ${repo}#${prNum} (cancelled ${cleanup.cancelledJobs} jobs)`;
+        console.log(`[eye] cleaned dedup + worktree for ${repo}#${prNum} (cancelled ${cleanup.cancelledJobs} jobs)`);
+        return null;
       }
     }
 
-    return `cleaned dedup for ${repo}#${prNum}`;
+    console.log(`[eye] cleaned dedup for ${repo}#${prNum}`);
+    return null;
   }
 
   return null;
@@ -429,7 +433,7 @@ export async function dispatch(
   payload: any,
   config: EyeConfig,
   client: OrchestratorClient,
-): Promise<string | null> {
+): Promise<{ title: string; count: number } | null> {
   const repo = payload.repository?.full_name ?? '';
   const action = payload.action ?? '';
   const author = payload.sender?.login ?? '';
