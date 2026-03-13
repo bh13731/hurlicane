@@ -1,0 +1,22 @@
+node_modules/
+dist/
+
+# Runtime data (databases, logs, scripts)
+data/agent-logs/
+data/agent-scripts/
+github-monitor/state.json
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+
+# Environment
+.env
+.env.*
+!.env.example
+
+.local.config.json
+
+# OS / editor
+.DS_Store
+*.log
