@@ -1,4 +1,6 @@
-# Claude Orchestrator
+# Hurlicane
+
+> **Warning:** This project is experimental and under active development. APIs, features, and behavior may change without notice. Use at your own risk.
 
 A web-based dashboard for running multiple Claude Code (and Codex) agents in parallel. Agents can coordinate through file locks, spawn sub-agents, ask the user questions, share data via a scratchpad, learn from past tasks through a persistent knowledge base, and engage in structured multi-round debates — all visible in a real-time UI.
 
@@ -138,7 +140,8 @@ After an agent finishes or fails, you have several options:
 | Batch | Create and run batch template lists |
 | Debate | Set up a structured multi-round debate between two models |
 | Projects | Organize jobs into named groups |
-| KB | Browse, search, and manage the agent knowledge base |
+| Memory | Browse, search, and manage the agent knowledge base |
+| Eye | Autonomous monitoring agent — discussions, proposals, and PR reviews |
 | Settings | Configure global options (e.g., max concurrent agents) |
 
 ## Projects
@@ -330,6 +333,66 @@ Typical KB entries include:
 - Naming conventions and architectural patterns
 - Debugging tips for recurring issues
 - File paths and project structure notes
+
+## Eye — Autonomous Monitoring Agent
+
+**Eye** is a background agent that runs on a configurable cycle (default: every 2 minutes), continuously monitoring your codebase for bugs, improvements, and open pull requests. It communicates findings through three channels: discussions, proposals, and PR reviews.
+
+Click **Eye** in the header to open the Eye panel. A badge shows the count of items awaiting your response.
+
+### Discussions
+
+Bidirectional conversation threads between Eye and the user. Eye can start discussions to ask questions, share observations, or raise alerts. You can also send messages to Eye from the **Send to Eye** tab.
+
+Agents use:
+```
+start_discussion(topic, message, category?, priority?)
+check_discussions(unread_only?)
+reply_discussion(discussion_id, message, resolve?, requires_user_reply?)
+```
+
+### Proposals
+
+Structured improvement suggestions with confidence scores, categories (`bug_fix`, `product_improvement`, `tech_debt`, `security`, `performance`), and an implementation plan. Eye must independently verify each finding with a separate Codex agent before creating a proposal.
+
+Proposal lifecycle: `pending` → `approved` / `rejected` / `discussing` → `in_progress` → `done` / `failed`
+
+When you approve a proposal, Eye spawns a worker agent in a worktree to implement it.
+
+Agents use:
+```
+create_proposal(title, summary, rationale, confidence, estimated_complexity, category, ...)
+check_proposals(status_filter?)
+update_proposal(proposal_id, status?, execution_job_id?)
+reply_proposal(proposal_id, message)
+```
+
+### PR Reviews
+
+Eye reviews GitHub pull requests and posts draft review comments with severity levels (`info`, `suggestion`, `warning`, `issue`). Reviews stay in draft until you submit or dismiss them from the dashboard.
+
+Agents use:
+```
+report_pr_review(pr_number, pr_url, pr_title, repo, summary, comments[])
+check_pr_reviews(unread_only?)
+reply_pr_review(review_id, message, updated_comments?)
+```
+
+### Eye Panel Tabs
+
+| Tab | Description |
+|-----|-------------|
+| Send to Eye | Send a message or question to Eye |
+| Discussions | View and reply to discussion threads |
+| Proposals | Review, approve, or reject proposals |
+| PR Reviews | Review draft PR comments; submit or dismiss |
+| Activity | History of Eye agent runs with cost and duration |
+| Summary | Daily summary bullets from Eye's monitoring cycles |
+| Config | Configure targets, prompt, repeat interval, and integrations |
+
+### Starting & Stopping Eye
+
+Eye is started and stopped from the Config tab. When you reply to a discussion, proposal, or PR review, Eye is automatically woken from its sleep cycle to respond promptly.
 
 ## Model Auto-Classification
 
