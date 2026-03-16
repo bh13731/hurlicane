@@ -214,6 +214,9 @@ router.post('/:id/cancel', (req, res) => {
     }
   }
 
+  // Always kill the tmux session (no-op if already gone or PID-based agent)
+  disconnectAgent(agent.id);
+
   // Update DB immediately so the UI reflects the change right away
   queries.updateAgent(agent.id, { status: 'cancelled', finished_at: Date.now() });
   queries.updateJobStatus(agent.job_id, 'cancelled');
@@ -250,6 +253,9 @@ router.post('/:id/requeue', (req, res) => {
       // ESRCH = process already gone — still requeue
     }
   }
+
+  // Always kill the tmux session (no-op if already gone or PID-based agent)
+  disconnectAgent(agent.id);
 
   // Mark agent cancelled, but set job back to queued so WorkQueueManager re-dispatches it
   queries.updateAgent(agent.id, { status: 'cancelled', finished_at: Date.now() });

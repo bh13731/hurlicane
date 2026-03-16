@@ -1,7 +1,8 @@
 import * as fs from 'fs';
+import { execFileSync } from 'child_process';
 import * as queries from '../db/queries.js';
 import { reattachAgent, getLogPath } from './AgentRunner.js';
-import { isTmuxSessionAlive, attachPty } from './PtyManager.js';
+import { isTmuxSessionAlive, attachPty, disconnectAgent } from './PtyManager.js';
 import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
 import { orphanedWaits } from '../mcp/McpServer.js';
 import type { ClaudeStreamEvent } from '../../shared/types.js';
@@ -174,4 +175,24 @@ export function runRecovery(): void {
   if (tmuxReattached > 0) console.log(`[recovery] reattached ${tmuxReattached} tmux agents`);
   if (tmuxRecovered > 0) console.log(`[recovery] recovered ${tmuxRecovered} completed tmux agents`);
   if (tmuxFailed > 0) console.log(`[recovery] failed ${tmuxFailed} dead tmux agents`);
+
+  // Kill any orchestrator tmux sessions whose agent is already in a terminal state
+  // (or not in the DB at all). These are orphaned sessions left behind when the cancel
+  // endpoint failed to kill the session (e.g. pid=NULL for interactive agents).
+  try {
+    const raw = execFileSync('tmux', ['list-sessions', '-F', '#{session_name}'], { stdio: 'pipe' }).toString();
+    const terminalStatuses = new Set(['done', 'failed', 'cancelled']);
+    let orphansKilled = 0;
+    for (const line of raw.split('\n')) {
+      const name = line.trim();
+      if (!name.startsWith('orchestrator-')) continue;
+      const agentId = name.slice('orchestrator-'.length);
+      const agent = queries.getAgentById(agentId);
+      if (!agent || terminalStatuses.has(agent.status)) {
+        disconnectAgent(agentId);
+        orphansKilled++;
+      }
+    }
+    if (orphansKilled > 0) console.log(`[recovery] killed ${orphansKilled} orphaned tmux session(s)`);
+  } catch { /* tmux not available or no sessions */ }
 }
