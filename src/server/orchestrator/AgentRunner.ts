@@ -12,6 +12,7 @@ import { triageLearnings } from './MemoryTriager.js';
 import type { Job, ClaudeStreamEvent, CodexStreamEvent } from '../../shared/types.js';
 import { isCodexModel, codexModelName } from '../../shared/types.js';
 import { buildEyePrompt, isEyeJob } from './EyeConfig.js';
+import { ensureCodexTrusted } from './PtyManager.js';
 
 // ─── Adaptive Eye Interval ──────────────────────────────────────────────────
 const EYE_MIN_INTERVAL_MS = 120_000;   // 2 minutes
@@ -183,6 +184,7 @@ export function runAgent(options: RunOptions): void {
   const maxTurns = (job as any).max_turns ?? 50;
   const model: string | null = (job as any).model ?? null;
   const useCodex = isCodexModel(model);
+  if (useCodex) ensureCodexTrusted(workDir);
 
   const mcpUrl = `http://localhost:${mcpPort}/mcp/${agentId}`;
 

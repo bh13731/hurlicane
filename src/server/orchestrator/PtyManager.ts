@@ -15,6 +15,26 @@ const MCP_PORT = process.env.MCP_PORT ?? '3001';
 const SCRIPTS_DIR = path.join(process.cwd(), 'data', 'agent-scripts');
 const PTY_LOG_DIR = path.join(process.cwd(), 'data', 'agent-logs');
 
+/**
+ * Ensure a directory is marked as trusted in Codex's config.toml so the
+ * "Do you trust this directory?" prompt doesn't appear. The bypass flag
+ * doesn't suppress this prompt in codex v0.115.0+.
+ */
+export function ensureCodexTrusted(workDir: string): void {
+  const configPath = path.join(process.env.HOME ?? '', '.codex', 'config.toml');
+  try {
+    let content = '';
+    try { content = fs.readFileSync(configPath, 'utf8'); } catch { /* file doesn't exist yet */ }
+    const key = `[projects.${JSON.stringify(workDir)}]`;
+    if (content.includes(key)) return; // already trusted
+    const entry = `\n${key}\ntrust_level = "trusted"\n`;
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.appendFileSync(configPath, entry);
+  } catch (err) {
+    console.warn(`[codex] failed to add trust for ${workDir}:`, err);
+  }
+}
+
 // agentId → active PTY instance
 const _ptys = new Map<string, IPty>();
 
@@ -165,6 +185,7 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
   // Write a launcher script — receives the prompt as a positional arg (pre-fills input)
   const script = scriptPath(agentId);
   const useCodex = isCodexModel(model);
+  if (useCodex) ensureCodexTrusted(workDir);
 
   // Debate-stage jobs (post_action, verification_*) run Claude with --print so the process
   // exits automatically when the task is done, triggering the next verification stage.
