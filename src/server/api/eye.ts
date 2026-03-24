@@ -110,11 +110,24 @@ function saveSettings(settings: EyeSettings): void {
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
 // GET /api/eye — return saved config + process status
-router.get('/', (_req, res) => {
+router.get('/', async (_req, res) => {
   const settings = loadSettings();
+  let running = isEyeRunning();
+
+  // Detect orphaned Eye process (e.g. server restarted but child survived)
+  if (!running) {
+    const eyePort = settings.port || 4567;
+    try {
+      const probe = await fetch(`http://localhost:${eyePort}/health`, {
+        signal: AbortSignal.timeout(1000),
+      });
+      if (probe.ok) running = true;
+    } catch { /* not reachable */ }
+  }
+
   res.json({
     settings,
-    running: isEyeRunning(),
+    running,
     pid: eyeProcess?.pid ?? null,
   });
 });
@@ -144,7 +157,7 @@ router.get('/prompts', (_req, res) => {
 });
 
 // POST /api/eye/start — spawn the eye process
-router.post('/start', (_req, res) => {
+router.post('/start', async (_req, res) => {
   if (isEyeRunning()) {
     res.status(409).json({ error: 'Eye is already running', pid: eyeProcess!.pid });
     return;
@@ -159,6 +172,20 @@ router.post('/start', (_req, res) => {
     res.status(400).json({ error: 'Author is required. Configure it first.' });
     return;
   }
+
+  // Check if an orphaned Eye process is still listening on the port
+  // (e.g. server restarted via HMR but child process survived)
+  const eyePort = settings.port || 4567;
+  try {
+    const probe = await fetch(`http://localhost:${eyePort}/health`, {
+      signal: AbortSignal.timeout(1000),
+    });
+    if (probe.ok) {
+      // Eye is actually running — adopt it by updating our state
+      res.status(409).json({ error: 'Eye is already running on port ' + eyePort + ' (orphaned process)' });
+      return;
+    }
+  } catch { /* port not in use — safe to start */ }
 
   const args = [
     'eye/index.ts',
@@ -215,25 +242,47 @@ router.post('/start', (_req, res) => {
 });
 
 // POST /api/eye/stop — kill the eye process
-router.post('/stop', (_req, res) => {
-  if (!isEyeRunning()) {
-    res.json({ ok: true, message: 'Eye was not running' });
+router.post('/stop', async (_req, res) => {
+  if (isEyeRunning()) {
+    appendLog('[eye] Stopping...');
+    eyeProcess!.kill('SIGTERM');
+
+    // Force kill after 5s
+    const forceTimer = setTimeout(() => {
+      if (isEyeRunning()) {
+        eyeProcess!.kill('SIGKILL');
+        appendLog('[eye] Force killed');
+      }
+    }, 5000);
+    forceTimer.unref();
+
+    res.json({ ok: true });
     return;
   }
 
-  appendLog('[eye] Stopping...');
-  eyeProcess!.kill('SIGTERM');
-
-  // Force kill after 5s
-  const forceTimer = setTimeout(() => {
-    if (isEyeRunning()) {
-      eyeProcess!.kill('SIGKILL');
-      appendLog('[eye] Force killed');
+  // Handle orphaned process: find and kill whatever is on the Eye port
+  const settings = loadSettings();
+  const eyePort = settings.port || 4567;
+  try {
+    const probe = await fetch(`http://localhost:${eyePort}/health`, {
+      signal: AbortSignal.timeout(1000),
+    });
+    if (probe.ok) {
+      // Find the PID listening on the port and kill it
+      const { execSync } = await import('child_process');
+      try {
+        const pid = execSync(`lsof -ti tcp:${eyePort}`, { timeout: 5000 }).toString().trim().split('\n')[0];
+        if (pid) {
+          process.kill(Number(pid), 'SIGTERM');
+          appendLog(`[eye] Killed orphaned process (pid ${pid}) on port ${eyePort}`);
+          res.json({ ok: true, message: `Killed orphaned process (pid ${pid})` });
+          return;
+        }
+      } catch { /* lsof failed or process already gone */ }
     }
-  }, 5000);
-  forceTimer.unref();
+  } catch { /* not reachable — nothing to stop */ }
 
-  res.json({ ok: true });
+  res.json({ ok: true, message: 'Eye was not running' });
 });
 
 // GET /api/eye/logs — return recent logs
