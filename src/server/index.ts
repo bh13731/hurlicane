@@ -1,5 +1,6 @@
 import { createServer } from 'http';
 import express from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -61,6 +62,7 @@ async function main() {
 
   // 3. Main Express app
   const app = express();
+  app.use(compression());
   app.use(cors());
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
@@ -97,17 +99,27 @@ async function main() {
   });
 
   // Send snapshot on connect; also respond to explicit re-requests (e.g. after StrictMode remount or HMR)
-  io.on('connection', (socket) => {
-    const buildSnapshot = () => ({
-      jobs: queries.listJobs(),
-      agents: queries.getAgentsWithJob(),
+  // Short-TTL cache so multiple rapid connections (HMR, tabs) don't each run the full query set.
+  let snapshotCache: { data: any; expires: number } | null = null;
+  const SNAPSHOT_CACHE_TTL = 1500; // 1.5s
+
+  const buildSnapshot = () => {
+    const now = Date.now();
+    if (snapshotCache && now < snapshotCache.expires) return snapshotCache.data;
+    const data = {
+      jobs: queries.listJobsSlim(),
+      agents: queries.getAgentsWithJobForSnapshot(),
       locks: queries.getAllActiveLocks(),
       templates: queries.listTemplates(),
       projects: queries.listProjects(),
       batchTemplates: queries.listBatchTemplates(),
       debates: queries.listDebates(),
-    });
+    };
+    snapshotCache = { data, expires: now + SNAPSHOT_CACHE_TTL };
+    return data;
+  };
 
+  io.on('connection', (socket) => {
     try { socket.emit('queue:snapshot', buildSnapshot()); } catch (err) { console.error('[socket] snapshot error:', err); }
 
     socket.on('request:snapshot', () => {

@@ -115,14 +115,30 @@ router.post('/', async (req, res) => {
   res.status(201).json(job);
 });
 
+// Short-TTL cache for jobs listing
+let jobsCache: { data: any; expires: number } | null = null;
+const JOBS_CACHE_TTL = 1500; // 1.5s
+
 router.get('/', (req, res) => {
   if (req.query.archived === '1' || req.query.archived === 'true') {
-    res.json(queries.listArchivedJobs());
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const offset = req.query.offset ? Number(req.query.offset) : undefined;
+    res.json(queries.listArchivedJobsSlim(limit, offset));
     return;
   }
   const status = req.query.status as string | undefined;
-  const jobs = queries.listJobs(status as any);
-  res.json(jobs);
+  if (!status) {
+    const now = Date.now();
+    if (jobsCache && now < jobsCache.expires) {
+      res.json(jobsCache.data);
+      return;
+    }
+    const data = queries.listJobsSlim();
+    jobsCache = { data, expires: now + JOBS_CACHE_TTL };
+    res.json(data);
+  } else {
+    res.json(queries.listJobs(status as any));
+  }
 });
 
 router.get('/:id', (req, res) => {

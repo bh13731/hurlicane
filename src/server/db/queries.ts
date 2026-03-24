@@ -104,10 +104,47 @@ export function listActiveJobsByWorkDir(workDir: string): Job[] {
   return rows.map(r => cast<Job>(r));
 }
 
-export function listArchivedJobs(): Job[] {
+/** Slim version for snapshot — truncates description to keep payload small. */
+export function listJobsSlim(status?: JobStatus): Job[] {
+  const jobs = listJobs(status);
+  for (const j of jobs) {
+    if (j.description && j.description.length > 300) {
+      j.description = j.description.slice(0, 300) + '…';
+    }
+  }
+  return jobs;
+}
+
+export function listArchivedJobs(limit?: number, offset?: number): Job[] {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM jobs WHERE archived_at IS NOT NULL ORDER BY archived_at DESC').all();
+  let sql = 'SELECT * FROM jobs WHERE archived_at IS NOT NULL ORDER BY updated_at DESC';
+  const args: number[] = [];
+  if (limit != null) {
+    sql += ' LIMIT ?';
+    args.push(limit);
+    if (offset != null) {
+      sql += ' OFFSET ?';
+      args.push(offset);
+    }
+  }
+  const rows = db.prepare(sql).all(...args);
   return rows.map(r => cast<Job>(r));
+}
+
+export function listArchivedJobsSlim(limit?: number, offset?: number): Job[] {
+  const jobs = listArchivedJobs(limit, offset);
+  for (const j of jobs) {
+    if (j.description && j.description.length > 300) {
+      j.description = j.description.slice(0, 300) + '…';
+    }
+  }
+  return jobs;
+}
+
+export function countArchivedJobs(): number {
+  const db = getDb();
+  const row = db.prepare('SELECT COUNT(*) as cnt FROM jobs WHERE archived_at IS NOT NULL').get();
+  return cast<{ cnt: number }>(row).cnt;
 }
 
 export function archiveJob(id: string): void {
@@ -309,6 +346,114 @@ export function getAgentsWithJob(): AgentWithJob[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM agents ORDER BY started_at DESC').all();
   return rows.map(r => enrichAgent(cast<Agent>(r)));
+}
+
+/**
+ * Lightweight version for the snapshot/API: all active agents plus the
+ * most recent finished agents (non-archived). Strips diff to keep payload small.
+ * Uses batched queries instead of N+1 enrichment.
+ */
+export function getAgentsWithJobForSnapshot(): AgentWithJob[] {
+  const db = getDb();
+  // Active agents — always include all of these
+  const activeRows = db.prepare(`
+    SELECT a.* FROM agents a
+    JOIN jobs j ON j.id = a.job_id
+    WHERE a.status IN ('starting', 'running', 'waiting_user')
+      AND j.archived_at IS NULL
+  `).all();
+  const activeIds = new Set((activeRows as any[]).map((r: any) => r.id));
+
+  // Most recent finished agents (capped) — fills the grid
+  const recentRows = db.prepare(`
+    SELECT a.* FROM agents a
+    JOIN jobs j ON j.id = a.job_id
+    WHERE a.status IN ('done', 'failed', 'cancelled')
+      AND j.archived_at IS NULL
+    ORDER BY a.finished_at DESC
+    LIMIT 100
+  `).all();
+
+  // Merge and dedup
+  const allRows = [...activeRows, ...(recentRows as any[]).filter((r: any) => !activeIds.has(r.id))];
+  const agents = allRows.map(r => cast<Agent>(r));
+  if (agents.length === 0) return [];
+
+  // Batch-enrich: one query per relation instead of N queries per agent
+  const agentIds = agents.map(a => a.id);
+  const jobIds = [...new Set(agents.map(a => a.job_id))];
+
+  const ph = (n: number) => Array(n).fill('?').join(',');
+
+  // Jobs — one query
+  const jobRows = db.prepare(`SELECT * FROM jobs WHERE id IN (${ph(jobIds.length)})`).all(...jobIds);
+  const jobMap = new Map(jobRows.map(r => { const j = cast<Job>(r); return [j.id, j]; }));
+
+  // Pending questions — one query
+  const qRows = db.prepare(`SELECT * FROM questions WHERE agent_id IN (${ph(agentIds.length)}) AND status = 'pending'`).all(...agentIds);
+  const questionMap = new Map<string, Question>();
+  for (const r of qRows) {
+    const q = cast<Question>(r);
+    if (!questionMap.has(q.agent_id)) questionMap.set(q.agent_id, q);
+  }
+
+  // Active locks — one query
+  const lockRows = db.prepare(`SELECT * FROM file_locks WHERE agent_id IN (${ph(agentIds.length)}) AND released_at IS NULL`).all(...agentIds);
+  const lockMap = new Map<string, FileLock[]>();
+  for (const r of lockRows) {
+    const l = cast<FileLock>(r);
+    if (!lockMap.has(l.agent_id)) lockMap.set(l.agent_id, []);
+    lockMap.get(l.agent_id)!.push(l);
+  }
+
+  // Child agents — one query
+  const childRows = db.prepare(`
+    SELECT a.id, a.status, a.parent_agent_id, j.title as job_title, j.description as job_description
+    FROM agents a JOIN jobs j ON j.id = a.job_id
+    WHERE a.parent_agent_id IN (${ph(agentIds.length)})
+    ORDER BY a.started_at ASC
+  `).all(...agentIds);
+  const childMap = new Map<string, ChildAgentSummary[]>();
+  for (const r of childRows) {
+    const c = cast<ChildAgentSummary & { parent_agent_id: string }>(r);
+    if (!childMap.has(c.parent_agent_id)) childMap.set(c.parent_agent_id, []);
+    childMap.get(c.parent_agent_id)!.push({ id: c.id, status: c.status, job_title: c.job_title, job_description: c.job_description });
+  }
+
+  // Warnings — one query
+  const warnRows = db.prepare(`SELECT * FROM agent_warnings WHERE agent_id IN (${ph(agentIds.length)}) AND dismissed = 0`).all(...agentIds);
+  const warnMap = new Map<string, AgentWarning[]>();
+  for (const r of warnRows) {
+    const w = cast<AgentWarning>(r);
+    if (!warnMap.has(w.agent_id)) warnMap.set(w.agent_id, []);
+    warnMap.get(w.agent_id)!.push(w);
+  }
+
+  // Template names — one query
+  const templateIds = [...new Set(jobRows.map((r: any) => r.template_id).filter(Boolean))];
+  const templateMap = new Map<string, string>();
+  if (templateIds.length > 0) {
+    const tRows = db.prepare(`SELECT id, name FROM templates WHERE id IN (${ph(templateIds.length)})`).all(...templateIds) as Array<{ id: string; name: string }>;
+    for (const t of tRows) templateMap.set(t.id, t.name);
+  }
+
+  return agents.map(agent => {
+    const job = jobMap.get(agent.job_id);
+    if (!job) {
+      const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, work_dir: null, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_loop: null, debate_round: null, debate_role: null, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, review_config: null, review_status: null, review_parent_job_id: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
+      return { ...agent, diff: null, job: stub, template_name: null, pending_question: null, active_locks: [], child_agents: [], warnings: [] } as AgentWithJob;
+    }
+    return {
+      ...agent,
+      diff: null,
+      job,
+      template_name: job.template_id ? (templateMap.get(job.template_id) ?? null) : null,
+      pending_question: questionMap.get(agent.id) ?? null,
+      active_locks: lockMap.get(agent.id) ?? [],
+      child_agents: childMap.get(agent.id) ?? [],
+      warnings: warnMap.get(agent.id) ?? [],
+    } as AgentWithJob;
+  });
 }
 
 export function getAgentsWithJobByJobId(jobId: string): AgentWithJob[] {
@@ -1199,8 +1344,12 @@ export function insertWorktree(wt: { id: string; repo_id: string; agent_id: stri
   return cast<Worktree>(db.prepare('SELECT * FROM worktrees WHERE id = ?').get(wt.id));
 }
 
-export function getWorktreeByBranch(branch: string): Worktree | null {
+export function getWorktreeByBranch(branch: string, repoId?: string): Worktree | null {
   const db = getDb();
+  if (repoId) {
+    const row = db.prepare('SELECT * FROM worktrees WHERE branch = ? AND repo_id = ? AND cleaned_at IS NULL ORDER BY created_at DESC LIMIT 1').get(branch, repoId);
+    return row ? cast<Worktree>(row) : null;
+  }
   const row = db.prepare('SELECT * FROM worktrees WHERE branch = ? AND cleaned_at IS NULL ORDER BY created_at DESC LIMIT 1').get(branch);
   return row ? cast<Worktree>(row) : null;
 }

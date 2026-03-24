@@ -57,9 +57,9 @@ COORDINATION:
   - ask_user(question): Ask the human a question and WAIT for their answer before continuing.
 
 ORCHESTRATION (spawn and coordinate sub-agents):
-  - create_worktree(repo_name?, branch?, from_remote?):
-      Create a git worktree with a new branch (from main) or check out an existing remote branch.
-      Returns { worktree_path, branch }. Pass worktree_path as work_dir to create_job.
+  - create_worktree(branch?, from_remote?):
+      Create a git worktree for your current repo with a new branch (from main) or check out an existing remote branch.
+      The worktree is always created for the repo you are running in. Returns { worktree_path, branch }. Pass worktree_path as work_dir to create_job.
   - create_job(description, title?, priority?, work_dir?, max_turns?, model?, depends_on?):
       Create a new job that will be run by another agent. Returns { job_id, title, status }.
       work_dir defaults to your own working directory. Pass a worktree_path from create_worktree
@@ -420,7 +420,8 @@ export function stopTailing(agentId: string): void {
  * Returns the job_ids it was waiting on, or null if not found.
  */
 function findLastWaitForJobsIds(agentId: string): string[] | null {
-  const output = queries.getAgentOutput(agentId);
+  // Only scan last 50 output rows — wait_for_jobs is always near the tail
+  const output = queries.getAgentOutput(agentId, 50);
   // Walk backwards — last assistant event is most recent tool call
   for (let i = output.length - 1; i >= 0; i--) {
     if (output[i].event_type !== 'assistant') continue;

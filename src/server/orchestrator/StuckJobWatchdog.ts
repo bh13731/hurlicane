@@ -64,7 +64,9 @@ function killProcess(pid: number): void {
  * Returns the job_ids it was waiting on, or null if not found.
  */
 function findLastWaitForJobsIds(agentId: string): string[] | null {
-  const output = queries.getAgentOutput(agentId);
+  // Only scan the last 50 output rows instead of loading all output.
+  // The wait_for_jobs call is always near the tail of the transcript.
+  const output = queries.getAgentOutput(agentId, 50);
   for (let i = output.length - 1; i >= 0; i--) {
     if (output[i].event_type !== 'assistant') continue;
     try {

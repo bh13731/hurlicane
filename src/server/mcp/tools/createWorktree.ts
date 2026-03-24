@@ -7,26 +7,37 @@ import * as queries from '../../db/queries.js';
 const WORKTREES_DIR = path.resolve('data', 'worktrees');
 
 export const createWorktreeSchema = z.object({
-  repo_name: z.string().optional().describe('Name of the registered repo. If omitted, uses the first registered repo.'),
+  repo_name: z.string().optional().describe('Ignored — the worktree is always created for the repo the agent is currently running in.'),
   branch: z.string().optional().describe('Branch name for the new worktree. Auto-generated if omitted.'),
   from_remote: z.boolean().optional().describe('If true, check out an existing remote branch instead of creating a new one from main.'),
 });
 
-export async function createWorktreeHandler(agentId: string, input: z.infer<typeof createWorktreeSchema>): Promise<string> {
-  const { repo_name, branch, from_remote } = input;
+/**
+ * Resolve the repo that the calling agent is running in, based on its job's work_dir.
+ * The work_dir may be the repo root itself or a worktree inside the repo.
+ */
+function resolveAgentRepo(agentId: string): ReturnType<typeof queries.getRepoByPath> {
+  const agent = queries.getAgentById(agentId);
+  if (!agent) return null;
+  const job = queries.getJobById(agent.job_id);
+  const workDir = job?.work_dir;
+  if (!workDir) return null;
 
-  // Resolve the repo
-  let repo;
-  if (repo_name) {
-    repo = queries.getRepoByName(repo_name);
-    if (!repo) {
-      const repos = queries.listRepos();
-      return JSON.stringify({
-        success: false,
-        error: `Repo "${repo_name}" not found. Available repos: ${repos.map(r => r.name).join(', ') || '(none)'}`,
-      });
-    }
-  } else {
+  // Check if work_dir is a known worktree — if so, use its repo_id
+  const wt = queries.getWorktreeByPath(workDir);
+  if (wt?.repo_id) return queries.getRepoById(wt.repo_id);
+
+  // Otherwise check if it's a repo path directly
+  return queries.getRepoByPath(workDir);
+}
+
+export async function createWorktreeHandler(agentId: string, input: z.infer<typeof createWorktreeSchema>): Promise<string> {
+  const { branch, from_remote } = input;
+
+  // Always resolve the repo from the agent's own working directory
+  let repo = resolveAgentRepo(agentId);
+  if (!repo) {
+    // Fallback: if agent has no work_dir yet (e.g. top-level orchestrator), use first repo
     const repos = queries.listRepos();
     if (repos.length === 0) {
       return JSON.stringify({ success: false, error: 'No repos registered.' });
@@ -44,8 +55,8 @@ export async function createWorktreeHandler(agentId: string, input: z.infer<type
     return JSON.stringify({ success: false, error: 'Branch name is empty after sanitization.' });
   }
 
-  // Check if a worktree for this branch already exists
-  const existing = queries.getWorktreeByBranch(sanitized);
+  // Check if a worktree for this branch already exists in this repo
+  const existing = queries.getWorktreeByBranch(sanitized, repo.id);
   if (existing) {
     return JSON.stringify({
       success: true,

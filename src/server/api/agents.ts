@@ -8,8 +8,19 @@ import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 
 const router = Router();
 
+// Short-TTL cache — when CPU is contended, prevents duplicate heavy work
+let agentsCache: { data: any; expires: number } | null = null;
+const AGENTS_CACHE_TTL = 1500; // 1.5s
+
 router.get('/', (_req, res) => {
-  res.json(queries.getAgentsWithJob());
+  const now = Date.now();
+  if (agentsCache && now < agentsCache.expires) {
+    res.json(agentsCache.data);
+    return;
+  }
+  const data = queries.getAgentsWithJobForSnapshot();
+  agentsCache = { data, expires: now + AGENTS_CACHE_TTL };
+  res.json(data);
 });
 
 // Must be registered before /:id to avoid param capture
