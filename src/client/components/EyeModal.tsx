@@ -644,7 +644,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
                                       <span className="eye-event-template-name">{tpl?.name ?? binding.templateId}</span>
                                       <select
                                         className="eye-binding-mode"
-                                        value={binding.mode ?? 'auto'}
+                                        value={binding.mode ?? 'job'}
                                         onChange={e => {
                                           const mode = e.target.value as 'job' | 'debate' | 'auto';
                                           setEventTemplates(prev => {
