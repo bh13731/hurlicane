@@ -321,7 +321,10 @@ export function EyeModal({ onClose }: EyeModalProps) {
 
   // ─── Derived ────────────────────────────────────────────────────────────
 
-  const isRunning = eyeConnected === true;
+  // Use apiState.running (which probes the health endpoint) as primary source
+  // of truth. eyeConnected only reflects whether the /status detail endpoint
+  // responded — transient failures there shouldn't flip the UI to the launch page.
+  const isRunning = apiState?.running === true || eyeConnected === true;
   const allEvents = eyeStatus?.recent_events ? [...eyeStatus.recent_events].reverse() : [];
   const events = hideIgnored ? allEvents.filter(ev => ev.decision !== 'ignored') : allEvents;
   const ignoredCount = allEvents.length - allEvents.filter(ev => ev.decision !== 'ignored').length;
