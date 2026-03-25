@@ -148,6 +148,7 @@ export async function processEvent(
   for (const binding of matchingBindings) {
     const bindingMode = binding.mode ?? 'job';
     const useDebate = bindingMode === 'debate' || (bindingMode === 'auto' && autoComplexity === 'debate');
+    console.log(`[eye] binding: templateId=${binding.templateId} mode=${binding.mode} (resolved=${bindingMode}) useDebate=${useDebate}`);
 
     if (useDebate) {
       const dc: DebateBindingConfig = binding.debateConfig ?? {};
