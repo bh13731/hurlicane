@@ -28,6 +28,7 @@ export interface TemplateBinding {
 export interface EyePrompts {
   eventTemplates: Record<string, TemplateBinding[]>;
   disabledEvents: string[];
+  globalFilters: TemplateFilter[];
   botName: string;
 }
 

@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import type { EyeConfig, OrchestratorClient } from './types.js';
 import type { CreateJobRequest } from '../../shared/types.js';
-import { processEvent } from './middleware.js';
+import { processEvent, extractFilterFields, filtersPass } from './middleware.js';
 
 // ─── Recent Events Log ─────────────────────────────────────────────────────
 
@@ -357,6 +357,15 @@ export async function dispatch(
   }
 
   const prompts = await client.getPrompts();
+
+  // Global filters — evaluated before handlers run. Events that don't pass are silently dropped.
+  if (prompts.globalFilters.length > 0) {
+    const fields = extractFilterFields(eventType, payload, config.author, prompts.botName);
+    if (!filtersPass(prompts.globalFilters, fields)) {
+      return null;
+    }
+  }
+
   if (prompts.disabledEvents.includes(eventType)) {
     logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: 'event type disabled' });
     return null;

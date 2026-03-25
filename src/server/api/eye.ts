@@ -39,6 +39,7 @@ interface EyeSettings {
   author: string;
   eventTemplates: Record<string, TemplateBinding[]>;
   disabledEvents: string[];
+  globalFilters: TemplateFilter[];
 }
 
 function loadSettings(): EyeSettings {
@@ -79,11 +80,18 @@ function loadSettings(): EyeSettings {
     }
   }
 
+  let globalFilters: TemplateFilter[] = [];
+  try {
+    const raw = queries.getNote('setting:eye:globalFilters')?.value;
+    if (raw) globalFilters = JSON.parse(raw);
+  } catch { /* ignore bad JSON */ }
+
   return {
     webhookSecret: queries.getNote('setting:eye:webhookSecret')?.value ?? '',
     author: queries.getNote('setting:eye:author')?.value ?? '',
     eventTemplates,
     disabledEvents,
+    globalFilters,
   };
 }
 
@@ -92,6 +100,7 @@ function saveSettings(settings: EyeSettings): void {
   queries.upsertNote('setting:eye:author', settings.author, null);
   queries.upsertNote('setting:eye:eventTemplates', JSON.stringify(settings.eventTemplates), null);
   queries.upsertNote('setting:eye:disabledEvents', JSON.stringify(settings.disabledEvents), null);
+  queries.upsertNote('setting:eye:globalFilters', JSON.stringify(settings.globalFilters ?? []), null);
 }
 
 // ─── Webhook handler (mounted with raw body parsing) ────────────────────────
@@ -169,12 +178,13 @@ router.get('/', (_req, res) => {
 
 // PUT /api/eye — save config
 router.put('/', (req, res) => {
-  const { webhookSecret, author, eventTemplates, disabledEvents } = req.body;
+  const { webhookSecret, author, eventTemplates, disabledEvents, globalFilters } = req.body;
   const settings: EyeSettings = {
     webhookSecret: String(webhookSecret ?? ''),
     author: String(author ?? ''),
     eventTemplates: (eventTemplates && typeof eventTemplates === 'object') ? eventTemplates : {},
     disabledEvents: Array.isArray(disabledEvents) ? disabledEvents : [],
+    globalFilters: Array.isArray(globalFilters) ? globalFilters : [],
   };
   saveSettings(settings);
   res.json({ settings });
@@ -186,6 +196,7 @@ router.get('/prompts', (_req, res) => {
   res.json({
     eventTemplates: settings.eventTemplates,
     disabledEvents: settings.disabledEvents,
+    globalFilters: settings.globalFilters,
     botName: queries.getNote('setting:botName')?.value ?? '',
   });
 });

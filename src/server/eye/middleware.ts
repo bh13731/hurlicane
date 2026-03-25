@@ -4,7 +4,7 @@ import type { CreateJobRequest } from '../../shared/types.js';
 import { extractSignals, evaluateComplexity } from './complexity.js';
 import { resolveWorktree } from './worktree.js';
 
-function extractFilterFields(
+export function extractFilterFields(
   eventType: string,
   payload: any,
   author: string,
@@ -54,7 +54,7 @@ function extractFilterFields(
   return fields;
 }
 
-function filtersPass(filters: TemplateFilter[], fields: Record<string, string>): boolean {
+export function filtersPass(filters: TemplateFilter[], fields: Record<string, string>): boolean {
   for (const f of filters) {
     const actual = fields[f.field] ?? '';
     if (f.op === 'eq' && actual !== f.value) return false;

@@ -56,6 +56,7 @@ interface EyeSettings {
   port?: number; // legacy — no longer used
   eventTemplates: Record<string, TemplateBinding[]>;
   disabledEvents: string[];
+  globalFilters?: TemplateFilter[];
 }
 
 interface Template {
@@ -159,6 +160,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
   const [eventTemplates, setEventTemplates] = useState<Record<string, TemplateBinding[]>>({});
   const [templates, setTemplates] = useState<Template[]>([]);
   const [disabledEvents, setDisabledEvents] = useState<string[]>([]);
+  const [globalFilters, setGlobalFilters] = useState<TemplateFilter[]>([]);
   const [showSecret, setShowSecret] = useState(false);
   const [expandedEvents, setExpandedEvents] = useState<Record<string, boolean>>({});
 
@@ -215,6 +217,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
         // port no longer used
         setEventTemplates(state.settings.eventTemplates ?? {});
         setDisabledEvents(state.settings.disabledEvents ?? []);
+        setGlobalFilters(state.settings.globalFilters ?? []);
       }
     });
     // Fetch available templates
@@ -238,11 +241,11 @@ export function EyeModal({ onClose }: EyeModalProps) {
     setConfigDirty(
       webhookSecret !== s.webhookSecret ||
       author !== s.author ||
-      // port removed
       JSON.stringify(eventTemplates) !== JSON.stringify(s.eventTemplates ?? {}) ||
-      JSON.stringify(disabledEvents) !== JSON.stringify(s.disabledEvents ?? [])
+      JSON.stringify(disabledEvents) !== JSON.stringify(s.disabledEvents ?? []) ||
+      JSON.stringify(globalFilters) !== JSON.stringify(s.globalFilters ?? [])
     );
-  }, [apiState, webhookSecret, author, eventTemplates, disabledEvents]);
+  }, [apiState, webhookSecret, author, eventTemplates, disabledEvents, globalFilters]);
 
   // ─── Actions ────────────────────────────────────────────────────────────
 
@@ -253,7 +256,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
       const res = await fetch('/api/eye', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhookSecret, author, eventTemplates, disabledEvents }),
+        body: JSON.stringify({ webhookSecret, author, eventTemplates, disabledEvents, globalFilters }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -517,6 +520,77 @@ export function EyeModal({ onClose }: EyeModalProps) {
                   <div className="eye-field-hint">Your GitHub username (to filter PRs)</div>
                 </div>
                 {/* Port removed — Eye runs in-process */}
+              </div>
+            </div>
+
+            <div className="form-group" style={{ marginTop: 12 }}>
+              <label>Global Filters</label>
+              <div className="eye-field-hint" style={{ marginBottom: 6 }}>Events that don't match all global filters are silently dropped before processing.</div>
+              <div className="eye-global-filters">
+                {globalFilters.map((f, i) => {
+                  const allFields = COMMON_FILTERS;
+                  const fieldDef = allFields.find(d => d.field === f.field);
+                  return (
+                    <div key={i} className="eye-filter-row">
+                      <select
+                        value={f.field}
+                        onChange={e => {
+                          const next = [...globalFilters];
+                          next[i] = { ...next[i], field: e.target.value, value: '' };
+                          setGlobalFilters(next);
+                        }}
+                      >
+                        <option value="">Field...</option>
+                        {allFields.map(d => <option key={d.field} value={d.field}>{d.label}</option>)}
+                      </select>
+                      <select
+                        value={f.op}
+                        onChange={e => {
+                          const next = [...globalFilters];
+                          next[i] = { ...next[i], op: e.target.value as 'eq' | 'neq' };
+                          setGlobalFilters(next);
+                        }}
+                      >
+                        <option value="eq">=</option>
+                        <option value="neq">!=</option>
+                      </select>
+                      {fieldDef ? (
+                        <select
+                          value={f.value}
+                          onChange={e => {
+                            const next = [...globalFilters];
+                            next[i] = { ...next[i], value: e.target.value };
+                            setGlobalFilters(next);
+                          }}
+                        >
+                          <option value="">Value...</option>
+                          {fieldDef.values.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={f.value}
+                          onChange={e => {
+                            const next = [...globalFilters];
+                            next[i] = { ...next[i], value: e.target.value };
+                            setGlobalFilters(next);
+                          }}
+                          placeholder="value"
+                          style={{ width: 80 }}
+                        />
+                      )}
+                      <button
+                        className="btn btn-sm btn-danger"
+                        onClick={() => setGlobalFilters(globalFilters.filter((_, j) => j !== i))}
+                        title="Remove filter"
+                      >x</button>
+                    </div>
+                  );
+                })}
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => setGlobalFilters([...globalFilters, { field: 'pr_author_is_self', op: 'eq', value: 'true' }])}
+                >+ Add Filter</button>
               </div>
             </div>
 

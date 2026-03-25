@@ -282,9 +282,16 @@ export function createDirectClient(): OrchestratorClient {
         }
       } catch { /* ignore */ }
 
+      let globalFilters: import('./types.js').TemplateFilter[] = [];
+      try {
+        const raw = queries.getNote('setting:eye:globalFilters')?.value;
+        if (raw) globalFilters = JSON.parse(raw);
+      } catch { /* ignore */ }
+
       return {
         eventTemplates,
         disabledEvents,
+        globalFilters,
         botName: queries.getNote('setting:botName')?.value ?? '',
       };
     },
