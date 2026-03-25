@@ -177,7 +177,7 @@ export async function processEvent(
   let anyDebate = false;
 
   for (const binding of matchingBindings) {
-    const bindingMode = binding.mode ?? 'auto';
+    const bindingMode = binding.mode ?? 'job';
     const useDebate = bindingMode === 'debate' || (bindingMode === 'auto' && autoComplexity === 'debate');
 
     if (useDebate) {
