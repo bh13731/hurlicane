@@ -453,6 +453,16 @@ export async function dispatch(
   // Check if this event type is disabled via config toggles
   const prompts = await client.getPrompts();
   if (prompts.disabledEvents.includes(eventType)) {
+    logEvent({
+      ts: Date.now(),
+      event_type: eventType,
+      action,
+      repo,
+      author,
+      decision: 'ignored',
+      job_title: null,
+      detail: 'event type disabled',
+    });
     return null;
   }
 
@@ -473,6 +483,16 @@ export async function dispatch(
       handlerResult = await handleIssueComment(payload, config);
       break;
     default:
+      logEvent({
+        ts: Date.now(),
+        event_type: eventType,
+        action,
+        repo,
+        author,
+        decision: 'ignored',
+        job_title: null,
+        detail: `unhandled event type "${eventType}"`,
+      });
       return null;
   }
 
@@ -506,6 +526,17 @@ export async function dispatch(
       decision: result.type === 'debate' ? 'debated' : 'ran',
       job_title: result.title,
       detail: `type=${result.type}, count=${result.count}`,
+    });
+  } else {
+    logEvent({
+      ts: Date.now(),
+      event_type: eventType,
+      action,
+      repo,
+      author,
+      decision: 'ignored',
+      job_title: null,
+      detail: 'no bindings matched filters or job creation failed',
     });
   }
 
