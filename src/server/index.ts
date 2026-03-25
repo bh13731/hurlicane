@@ -14,7 +14,7 @@ import { startHealthMonitor, stopHealthMonitor } from './orchestrator/HealthMoni
 import { startKBConsolidator, stopKBConsolidator } from './orchestrator/KBConsolidator.js';
 import { runRecovery } from './orchestrator/recovery.js';
 import { writeInput, resizePty } from './orchestrator/PtyManager.js';
-import { stopEyeProcess } from './api/eye.js';
+import { stopEye, createWebhookHandler } from './api/eye.js';
 import { startSlackBot, stopSlackBot } from './slack/bot.js';
 import * as queries from './db/queries.js';
 import { authMiddleware, handleLogin, handleLogout, handleMe, isSocketAuthenticated, isAuthEnabled } from './auth.js';
@@ -64,6 +64,10 @@ async function main() {
   const app = express();
   app.use(compression());
   app.use(cors());
+
+  // Mount Eye webhook routes BEFORE express.json() — they need raw body for signature verification
+  app.use(createWebhookHandler());
+
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
 
@@ -185,7 +189,7 @@ async function main() {
     stopWatchdog();
     stopHealthMonitor();
     stopKBConsolidator();
-    stopEyeProcess();
+    stopEye();
     await stopSlackBot();
 
     // Stop accepting new HTTP connections; wait for in-flight requests to drain

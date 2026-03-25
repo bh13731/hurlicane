@@ -1,30 +1,24 @@
 import { Router } from 'express';
-import { spawn, type ChildProcess } from 'child_process';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import express from 'express';
 import * as queries from '../db/queries.js';
+import { verifySignature } from '../eye/signature.js';
+import { dispatch, getRecentEvents, getDedupStats, startDedupCleanup, stopDedupCleanup, resetState } from '../eye/handlers.js';
+import { createDirectClient } from '../eye/directClient.js';
+import type { EyeConfig } from '../eye/types.js';
 
 const router = Router();
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 
-// ─── Eye process management ────────────────────────────────────────────────
+// ─── In-process Eye state ───────────────────────────────────────────────────
 
-let eyeProcess: ChildProcess | null = null;
-let eyeLogs: string[] = [];
-const MAX_LOG_LINES = 200;
+let eyeActive = false;
+let eyeStartedAt: number | null = null;
+let eventsReceived = 0;
+let jobsCreated = 0;
 
-function appendLog(line: string): void {
-  eyeLogs.push(line);
-  if (eyeLogs.length > MAX_LOG_LINES) eyeLogs.splice(0, eyeLogs.length - MAX_LOG_LINES);
-}
+const client = createDirectClient();
 
-function isEyeRunning(): boolean {
-  if (!eyeProcess || eyeProcess.exitCode !== null || eyeProcess.killed) {
-    eyeProcess = null;
-    return false;
-  }
-  return true;
+export function isEyeActive(): boolean {
+  return eyeActive;
 }
 
 // ─── Config persistence ────────────────────────────────────────────────────
@@ -43,7 +37,6 @@ interface TemplateBinding {
 interface EyeSettings {
   webhookSecret: string;
   author: string;
-  port: number;
   eventTemplates: Record<string, TemplateBinding[]>;
   disabledEvents: string[];
 }
@@ -62,11 +55,8 @@ function loadSettings(): EyeSettings {
       const parsed = JSON.parse(raw);
       for (const [key, val] of Object.entries(parsed)) {
         if (Array.isArray(val)) {
-          // Migrate from string[] to TemplateBinding[]
           eventTemplates[key] = (val as any[]).map(item => {
-            if (typeof item === 'string') {
-              return { templateId: item, filters: [] };
-            }
+            if (typeof item === 'string') return { templateId: item, filters: [] };
             return item as TemplateBinding;
           });
         } else if (typeof val === 'string' && val) {
@@ -76,7 +66,6 @@ function loadSettings(): EyeSettings {
     }
   } catch { /* ignore bad JSON */ }
 
-  // Migrate legacy single templateId
   if (Object.keys(eventTemplates).length === 0) {
     const legacyTemplateId = queries.getNote('setting:eye:templateId')?.value;
     if (legacyTemplateId) {
@@ -93,7 +82,6 @@ function loadSettings(): EyeSettings {
   return {
     webhookSecret: queries.getNote('setting:eye:webhookSecret')?.value ?? '',
     author: queries.getNote('setting:eye:author')?.value ?? '',
-    port: Number(queries.getNote('setting:eye:port')?.value ?? '4567'),
     eventTemplates,
     disabledEvents,
   };
@@ -102,43 +90,89 @@ function loadSettings(): EyeSettings {
 function saveSettings(settings: EyeSettings): void {
   queries.upsertNote('setting:eye:webhookSecret', settings.webhookSecret, null);
   queries.upsertNote('setting:eye:author', settings.author, null);
-  queries.upsertNote('setting:eye:port', String(settings.port), null);
   queries.upsertNote('setting:eye:eventTemplates', JSON.stringify(settings.eventTemplates), null);
   queries.upsertNote('setting:eye:disabledEvents', JSON.stringify(settings.disabledEvents), null);
 }
 
-// ─── Routes ─────────────────────────────────────────────────────────────────
+// ─── Webhook handler (mounted with raw body parsing) ────────────────────────
 
-// GET /api/eye — return saved config + process status
-router.get('/', async (_req, res) => {
-  const settings = loadSettings();
-  let running = isEyeRunning();
+export function createWebhookHandler() {
+  const webhookRouter = Router();
 
-  // Detect orphaned Eye process (e.g. server restarted but child survived)
-  if (!running) {
-    const eyePort = settings.port || 4567;
-    try {
-      const probe = await fetch(`http://localhost:${eyePort}/health`, {
-        signal: AbortSignal.timeout(1000),
+  webhookRouter.post(
+    ['/webhook', '/github-webhook'],
+    express.raw({ type: 'application/json' }),
+    (req, res) => {
+      if (!eyeActive) {
+        res.status(503).json({ error: 'Eye is not active' });
+        return;
+      }
+
+      const settings = loadSettings();
+      const signature = req.headers['x-hub-signature-256'] as string | undefined;
+      const rawBody = req.body as Buffer;
+
+      if (!verifySignature(settings.webhookSecret, rawBody, signature)) {
+        console.warn('[eye] invalid signature, rejecting');
+        res.status(401).json({ error: 'invalid signature' });
+        return;
+      }
+
+      const eventType = req.headers['x-github-event'] as string | undefined;
+      if (!eventType) {
+        res.status(400).json({ error: 'missing X-GitHub-Event header' });
+        return;
+      }
+
+      let payload: any;
+      try {
+        payload = JSON.parse(rawBody.toString('utf-8'));
+      } catch {
+        res.status(400).json({ error: 'invalid JSON body' });
+        return;
+      }
+
+      eventsReceived++;
+
+      // Fire-and-forget: ack immediately, process async
+      res.status(200).json({ ok: true, event: eventType });
+
+      const config: EyeConfig = {
+        webhookSecret: settings.webhookSecret,
+        author: settings.author,
+      };
+
+      dispatch(eventType, payload, config, client).then(result => {
+        if (result) {
+          jobsCreated += result.count;
+          console.log(`[eye] ${eventType}: ${result.title} (${result.count} job${result.count > 1 ? 's' : ''})`);
+        }
+      }).catch(err => {
+        console.error(`[eye] error processing ${eventType}:`, err);
       });
-      if (probe.ok) running = true;
-    } catch { /* not reachable */ }
-  }
+    }
+  );
 
+  return webhookRouter;
+}
+
+// ─── API Routes ─────────────────────────────────────────────────────────────
+
+// GET /api/eye — return saved config + state
+router.get('/', (_req, res) => {
+  const settings = loadSettings();
   res.json({
     settings,
-    running,
-    pid: eyeProcess?.pid ?? null,
+    running: eyeActive,
   });
 });
 
 // PUT /api/eye — save config
 router.put('/', (req, res) => {
-  const { webhookSecret, author, port, eventTemplates, disabledEvents } = req.body;
+  const { webhookSecret, author, eventTemplates, disabledEvents } = req.body;
   const settings: EyeSettings = {
     webhookSecret: String(webhookSecret ?? ''),
     author: String(author ?? ''),
-    port: Number(port ?? 4567),
     eventTemplates: (eventTemplates && typeof eventTemplates === 'object') ? eventTemplates : {},
     disabledEvents: Array.isArray(disabledEvents) ? disabledEvents : [],
   };
@@ -156,10 +190,10 @@ router.get('/prompts', (_req, res) => {
   });
 });
 
-// POST /api/eye/start — spawn the eye process
-router.post('/start', async (_req, res) => {
-  if (isEyeRunning()) {
-    res.status(409).json({ error: 'Eye is already running', pid: eyeProcess!.pid });
+// POST /api/eye/start — activate Eye webhook handling
+router.post('/start', (_req, res) => {
+  if (eyeActive) {
+    res.status(409).json({ error: 'Eye is already running' });
     return;
   }
 
@@ -173,149 +207,62 @@ router.post('/start', async (_req, res) => {
     return;
   }
 
-  // Check if an orphaned Eye process is still listening on the port
-  // (e.g. server restarted via HMR but child process survived)
-  const eyePort = settings.port || 4567;
-  try {
-    const probe = await fetch(`http://localhost:${eyePort}/health`, {
-      signal: AbortSignal.timeout(1000),
-    });
-    if (probe.ok) {
-      // Eye is actually running — adopt it by updating our state
-      res.status(409).json({ error: 'Eye is already running on port ' + eyePort + ' (orphaned process)' });
-      return;
-    }
-  } catch { /* port not in use — safe to start */ }
+  eyeActive = true;
+  eyeStartedAt = Date.now();
+  eventsReceived = 0;
+  jobsCreated = 0;
+  resetState();
+  startDedupCleanup();
 
-  const args = [
-    'eye/index.ts',
-    '--webhook-secret', settings.webhookSecret,
-    '--author', settings.author,
-    '--port', String(settings.port || 4567),
-    '--orchestrator-url', `http://localhost:${process.env.PORT ?? 3000}`,
-  ];
-
-  eyeLogs = [];
-  appendLog(`[eye] Starting: npx tsx ${args.join(' ')}`);
-
-  try {
-    const child = spawn('npx', ['tsx', ...args], {
-      cwd: PROJECT_ROOT,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false,
-    });
-
-    eyeProcess = child;
-
-    child.stdout?.on('data', (data: Buffer) => {
-      const lines = data.toString().split('\n').filter(Boolean);
-      for (const line of lines) {
-        appendLog(line);
-        console.log(`[eye:stdout] ${line}`);
-      }
-    });
-
-    child.stderr?.on('data', (data: Buffer) => {
-      const lines = data.toString().split('\n').filter(Boolean);
-      for (const line of lines) {
-        appendLog(`[stderr] ${line}`);
-        console.error(`[eye:stderr] ${line}`);
-      }
-    });
-
-    child.on('close', (code) => {
-      appendLog(`[eye] Process exited with code ${code}`);
-      console.log(`[eye] Process exited with code ${code}`);
-      eyeProcess = null;
-    });
-
-    child.on('error', (err) => {
-      appendLog(`[eye] Spawn error: ${err.message}`);
-      console.error(`[eye] Spawn error:`, err);
-      eyeProcess = null;
-    });
-
-    res.json({ ok: true, pid: child.pid });
-  } catch (err: any) {
-    res.status(500).json({ error: `Failed to spawn: ${err.message}` });
-  }
+  console.log(`[eye] activated (author: ${settings.author})`);
+  res.json({ ok: true });
 });
 
-// POST /api/eye/stop — kill the eye process
-router.post('/stop', async (_req, res) => {
-  if (isEyeRunning()) {
-    appendLog('[eye] Stopping...');
-    eyeProcess!.kill('SIGTERM');
-
-    // Force kill after 5s
-    const forceTimer = setTimeout(() => {
-      if (isEyeRunning()) {
-        eyeProcess!.kill('SIGKILL');
-        appendLog('[eye] Force killed');
-      }
-    }, 5000);
-    forceTimer.unref();
-
-    res.json({ ok: true });
+// POST /api/eye/stop — deactivate Eye webhook handling
+router.post('/stop', (_req, res) => {
+  if (!eyeActive) {
+    res.json({ ok: true, message: 'Eye was not running' });
     return;
   }
 
-  // Handle orphaned process: find and kill whatever is on the Eye port
-  const settings = loadSettings();
-  const eyePort = settings.port || 4567;
-  try {
-    const probe = await fetch(`http://localhost:${eyePort}/health`, {
-      signal: AbortSignal.timeout(1000),
-    });
-    if (probe.ok) {
-      // Find the PID listening on the port and kill it
-      const { execSync } = await import('child_process');
-      try {
-        const pid = execSync(`lsof -ti tcp:${eyePort}`, { timeout: 5000 }).toString().trim().split('\n')[0];
-        if (pid) {
-          process.kill(Number(pid), 'SIGTERM');
-          appendLog(`[eye] Killed orphaned process (pid ${pid}) on port ${eyePort}`);
-          res.json({ ok: true, message: `Killed orphaned process (pid ${pid})` });
-          return;
-        }
-      } catch { /* lsof failed or process already gone */ }
-    }
-  } catch { /* not reachable — nothing to stop */ }
-
-  res.json({ ok: true, message: 'Eye was not running' });
+  eyeActive = false;
+  stopDedupCleanup();
+  console.log('[eye] deactivated');
+  res.json({ ok: true });
 });
 
-// GET /api/eye/logs — return recent logs
-router.get('/logs', (_req, res) => {
-  res.json({ logs: eyeLogs });
-});
-
-// GET /api/eye/status — proxy to the eye service's /status endpoint
-// This avoids the client hitting the eye port directly (which causes
-// ECONNREFUSED proxy errors in Vite when eye is down).
-router.get('/status', async (_req, res) => {
-  const settings = loadSettings();
-  const eyePort = settings.port || 4567;
-  try {
-    const upstream = await fetch(`http://localhost:${eyePort}/status`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    if (!upstream.ok) {
-      res.status(502).json({ error: `Eye returned ${upstream.status}` });
-      return;
-    }
-    const data = await upstream.json();
-    res.json(data);
-  } catch {
-    res.status(502).json({ error: 'Eye is not reachable' });
+// GET /api/eye/status — return in-process status (no proxy needed)
+router.get('/status', (_req, res) => {
+  if (!eyeActive) {
+    res.status(502).json({ error: 'Eye is not active' });
+    return;
   }
+
+  const settings = loadSettings();
+  res.json({
+    uptime_ms: eyeStartedAt ? Date.now() - eyeStartedAt : 0,
+    events_received: eventsReceived,
+    jobs_created: jobsCreated,
+    dedup: getDedupStats(),
+    recent_events: getRecentEvents(),
+    config: {
+      author: settings.author,
+      orchestratorUrl: '(in-process)',
+    },
+  });
+});
+
+// GET /api/eye/logs — no longer needed (logs go to stdout), but keep for compat
+router.get('/logs', (_req, res) => {
+  res.json({ logs: [] });
 });
 
 // ─── Exported for shutdown ──────────────────────────────────────────────────
 
-export function stopEyeProcess(): void {
-  if (isEyeRunning() && eyeProcess) {
-    eyeProcess.kill('SIGTERM');
+export function stopEye(): void {
+  if (eyeActive) {
+    eyeActive = false;
+    stopDedupCleanup();
   }
 }
 

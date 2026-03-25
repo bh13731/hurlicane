@@ -53,7 +53,7 @@ interface TemplateBinding {
 interface EyeSettings {
   webhookSecret: string;
   author: string;
-  port: number;
+  port?: number; // legacy — no longer used
   eventTemplates: Record<string, TemplateBinding[]>;
   disabledEvents: string[];
 }
@@ -103,7 +103,6 @@ const EVENT_TYPES: { key: string; label: string; description: string }[] = [
 interface EyeApiState {
   settings: EyeSettings;
   running: boolean;
-  pid: number | null;
 }
 
 interface EyeModalProps {
@@ -156,7 +155,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
   // Local form state
   const [webhookSecret, setWebhookSecret] = useState('');
   const [author, setAuthor] = useState('');
-  const [port, setPort] = useState(4567);
+  // port removed — Eye now runs in-process
   const [eventTemplates, setEventTemplates] = useState<Record<string, TemplateBinding[]>>({});
   const [templates, setTemplates] = useState<Template[]>([]);
   const [disabledEvents, setDisabledEvents] = useState<string[]>([]);
@@ -213,7 +212,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
       if (state) {
         setWebhookSecret(state.settings.webhookSecret);
         setAuthor(state.settings.author);
-        setPort(state.settings.port || 4567);
+        // port no longer used
         setEventTemplates(state.settings.eventTemplates ?? {});
         setDisabledEvents(state.settings.disabledEvents ?? []);
       }
@@ -239,11 +238,11 @@ export function EyeModal({ onClose }: EyeModalProps) {
     setConfigDirty(
       webhookSecret !== s.webhookSecret ||
       author !== s.author ||
-      port !== s.port ||
+      // port removed
       JSON.stringify(eventTemplates) !== JSON.stringify(s.eventTemplates ?? {}) ||
       JSON.stringify(disabledEvents) !== JSON.stringify(s.disabledEvents ?? [])
     );
-  }, [apiState, webhookSecret, author, port, eventTemplates, disabledEvents]);
+  }, [apiState, webhookSecret, author, eventTemplates, disabledEvents]);
 
   // ─── Actions ────────────────────────────────────────────────────────────
 
@@ -254,7 +253,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
       const res = await fetch('/api/eye', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhookSecret, author, port, eventTemplates, disabledEvents }),
+        body: JSON.stringify({ webhookSecret, author, eventTemplates, disabledEvents }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -284,12 +283,10 @@ export function EyeModal({ onClose }: EyeModalProps) {
         setActionError(data.error ?? 'Failed to start');
         return;
       }
-      // Wait a moment for the process to start, then refresh
-      setTimeout(() => {
-        fetchEyeStatus();
-        fetchApiState();
-        setLaunching(false);
-      }, 2000);
+      // In-process — no delay needed
+      fetchEyeStatus();
+      fetchApiState();
+      setLaunching(false);
     } catch (e: any) {
       setActionError(e.message ?? 'Network error');
       setLaunching(false);
@@ -306,11 +303,10 @@ export function EyeModal({ onClose }: EyeModalProps) {
         setActionError(data.error ?? 'Failed to stop');
         return;
       }
-      setTimeout(() => {
-        fetchEyeStatus();
-        fetchApiState();
-        setStopping(false);
-      }, 1500);
+      // In-process — no delay needed
+      fetchEyeStatus();
+      fetchApiState();
+      setStopping(false);
     } catch (e: any) {
       setActionError(e.message ?? 'Network error');
       setStopping(false);
@@ -321,10 +317,9 @@ export function EyeModal({ onClose }: EyeModalProps) {
 
   // ─── Derived ────────────────────────────────────────────────────────────
 
-  // Use apiState.running (which probes the health endpoint) as primary source
-  // of truth. eyeConnected only reflects whether the /status detail endpoint
-  // responded — transient failures there shouldn't flip the UI to the launch page.
-  const isRunning = apiState?.running === true || eyeConnected === true;
+  // Eye runs in-process — apiState.running is the source of truth.
+  // eyeConnected reflects whether the /status detail endpoint responded (for event data).
+  const isRunning = apiState?.running === true;
   const allEvents = eyeStatus?.recent_events ? [...eyeStatus.recent_events].reverse() : [];
   const events = hideIgnored ? allEvents.filter(ev => ev.decision !== 'ignored') : allEvents;
   const ignoredCount = allEvents.length - allEvents.filter(ev => ev.decision !== 'ignored').length;
@@ -521,17 +516,7 @@ export function EyeModal({ onClose }: EyeModalProps) {
                   />
                   <div className="eye-field-hint">Your GitHub username (to filter PRs)</div>
                 </div>
-                <div className="form-group" style={{ flex: '0 0 100px' }}>
-                  <label>Port</label>
-                  <input
-                    type="number"
-                    value={port}
-                    onChange={e => setPort(Number(e.target.value))}
-                    min={1024}
-                    max={65535}
-                    style={{ width: 90 }}
-                  />
-                </div>
+                {/* Port removed — Eye runs in-process */}
               </div>
             </div>
 
