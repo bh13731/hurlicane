@@ -447,7 +447,7 @@ export function getAgentsWithJobForSnapshot(): AgentWithJob[] {
       ...agent,
       diff: null,
       job,
-      template_name: job.template_id ? (templateMap.get(job.template_id) ?? null) : null,
+      template_name: (job as Job).template_id ? (templateMap.get((job as Job).template_id!) ?? null) : null,
       pending_question: questionMap.get(agent.id) ?? null,
       active_locks: lockMap.get(agent.id) ?? [],
       child_agents: childMap.get(agent.id) ?? [],
