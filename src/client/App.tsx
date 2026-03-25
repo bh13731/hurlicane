@@ -17,7 +17,7 @@ import { ProjectSelector } from './components/ProjectSelector';
 import { SettingsModal } from './components/SettingsModal';
 import { DebateForm } from './components/DebateForm';
 import { KnowledgeBaseModal } from './components/KnowledgeBaseModal';
-import { EyeModal } from './components/EyeModal';
+import { EyePage } from './components/EyePage';
 import { SlackModal } from './components/SlackModal';
 import { GitModal } from './components/GitModal';
 import { WorktreesSidebar } from './components/WorktreesSidebar';
@@ -381,6 +381,9 @@ export default function App() {
       <div className={`drawer-backdrop${drawerOpen ? ' drawer-backdrop-visible' : ''}`} onClick={() => setDrawerOpen(false)} />
       {headerMenuOpen && <div className="header-menu-backdrop" onClick={() => setHeaderMenuOpen(false)} />}
 
+      {showEye ? (
+        <EyePage onBack={() => setShowEye(false)} />
+      ) : (
       <div className="main-layout">
         <div className={`left-sidebar-stack ${(leftTab === 'lineage' && selectedAgent) || leftTab === 'worktrees' ? '' : 'left-sidebar-stack--narrow'}${drawerOpen ? ' drawer-open' : ''}`}>
           <div className="left-sidebar-tabs">
@@ -462,6 +465,7 @@ export default function App() {
           />
         ) : null}
       </div>
+      )}
 
       {showJobForm && (
         <JobForm
@@ -540,9 +544,6 @@ export default function App() {
         <KnowledgeBaseModal onClose={() => setShowKnowledgeBase(false)} />
       )}
 
-      {showEye && (
-        <EyeModal onClose={() => setShowEye(false)} />
-      )}
 
       {showSlack && (
         <SlackModal onClose={() => setShowSlack(false)} />

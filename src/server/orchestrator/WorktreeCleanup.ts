@@ -40,6 +40,7 @@ function cleanupOrphanedWorktrees(): void {
   if (!fs.existsSync(WORKTREES_DIR)) return;
 
   const tracked = new Set(queries.listActiveWorktrees().map(w => w.path));
+  const repos = queries.listRepos();
   let cleaned = 0;
 
   try {
@@ -49,20 +50,32 @@ function cleanupOrphanedWorktrees(): void {
       if (!fs.statSync(fullPath).isDirectory()) continue;
       if (tracked.has(fullPath)) continue;
 
-      // Orphaned directory — remove it
-      try {
-        fs.rmSync(fullPath, { recursive: true, force: true });
-        cleaned++;
-      } catch { /* ignore */ }
+      // Orphaned directory — try proper git worktree remove first to avoid
+      // leaving stale index entries that show up as "deleted" in git status
+      let removed = false;
+      for (const repo of repos) {
+        try {
+          execSync(`git worktree remove --force ${JSON.stringify(fullPath)}`, {
+            cwd: repo.path, timeout: 15_000, stdio: 'pipe',
+          });
+          removed = true;
+          break;
+        } catch { /* not a worktree of this repo */ }
+      }
+      if (!removed) {
+        try { fs.rmSync(fullPath, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+      cleaned++;
     }
   } catch { /* directory listing may fail */ }
 
-  // Prune worktree references in all registered repos
+  // Always prune worktree references in all registered repos to clean up
+  // stale internal .git/worktrees/ entries from previously removed worktrees
+  for (const repo of repos) {
+    try { execSync('git worktree prune', { cwd: repo.path, timeout: 10000 }); } catch { /* ignore */ }
+  }
+
   if (cleaned > 0) {
-    const repos = queries.listRepos();
-    for (const repo of repos) {
-      try { execSync('git worktree prune', { cwd: repo.path, timeout: 10000 }); } catch { /* ignore */ }
-    }
     console.log(`[worktree-cleanup] cleaned ${cleaned} orphaned worktrees`);
   }
 }

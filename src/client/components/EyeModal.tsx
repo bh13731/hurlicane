@@ -33,9 +33,21 @@ interface TemplateFilter {
   value: string;
 }
 
+interface DebateBindingConfig {
+  claudeModel?: string;
+  codexModel?: string;
+  maxRounds?: number;
+  postActionVerification?: boolean;
+  postActionPrompt?: string;
+  postActionRole?: 'claude' | 'codex';
+  completionChecks?: string[];
+}
+
 interface TemplateBinding {
   templateId: string;
   filters: TemplateFilter[];
+  mode?: 'job' | 'debate' | 'auto';
+  debateConfig?: DebateBindingConfig;
 }
 
 interface EyeSettings {
@@ -398,7 +410,8 @@ export function EyeModal({ onClose }: EyeModalProps) {
                         const filterDesc = b.filters.length > 0
                           ? ` (${b.filters.map(f => `${f.field} ${f.op} ${f.value}`).join(', ')})`
                           : '';
-                        return <span key={i}>{i > 0 ? ', ' : ''}{name}{filterDesc}</span>;
+                        const modeTag = b.mode === 'debate' ? ' [debate]' : b.mode === 'job' ? ' [job]' : '';
+                        return <span key={i}>{i > 0 ? ', ' : ''}{name}{modeTag}{filterDesc}</span>;
                       })}
                     </div>
                   );
@@ -567,6 +580,28 @@ export function EyeModal({ onClose }: EyeModalProps) {
                                   <div key={idx} className="eye-event-binding">
                                     <div className="eye-event-template-item">
                                       <span className="eye-event-template-name">{tpl?.name ?? binding.templateId}</span>
+                                      <select
+                                        className="eye-binding-mode"
+                                        value={binding.mode ?? 'auto'}
+                                        onChange={e => {
+                                          const mode = e.target.value as 'job' | 'debate' | 'auto';
+                                          setEventTemplates(prev => {
+                                            const next = { ...prev };
+                                            const b = { ...next[et.key][idx], mode };
+                                            if (mode === 'debate' && !b.debateConfig) {
+                                              b.debateConfig = { postActionVerification: true };
+                                            }
+                                            next[et.key] = [...next[et.key]];
+                                            next[et.key][idx] = b;
+                                            return next;
+                                          });
+                                        }}
+                                        title="Dispatch mode"
+                                      >
+                                        <option value="auto">Auto</option>
+                                        <option value="job">Job</option>
+                                        <option value="debate">Debate</option>
+                                      </select>
                                       <button
                                         className="eye-event-template-remove"
                                         type="button"
@@ -583,6 +618,86 @@ export function EyeModal({ onClose }: EyeModalProps) {
                                         &#x2715;
                                       </button>
                                     </div>
+                                    {/* Debate config (shown when mode is debate) */}
+                                    {(binding.mode === 'debate') && (
+                                      <div className="eye-debate-config">
+                                        <div className="eye-debate-config-row">
+                                          <label>
+                                            Side A
+                                            <input
+                                              type="text"
+                                              value={binding.debateConfig?.claudeModel ?? 'sonnet'}
+                                              onChange={e => {
+                                                setEventTemplates(prev => {
+                                                  const next = { ...prev };
+                                                  const b = { ...next[et.key][idx] };
+                                                  b.debateConfig = { ...b.debateConfig, claudeModel: e.target.value };
+                                                  next[et.key] = [...next[et.key]];
+                                                  next[et.key][idx] = b;
+                                                  return next;
+                                                });
+                                              }}
+                                              placeholder="sonnet"
+                                            />
+                                          </label>
+                                          <label>
+                                            Side B
+                                            <input
+                                              type="text"
+                                              value={binding.debateConfig?.codexModel ?? 'codex'}
+                                              onChange={e => {
+                                                setEventTemplates(prev => {
+                                                  const next = { ...prev };
+                                                  const b = { ...next[et.key][idx] };
+                                                  b.debateConfig = { ...b.debateConfig, codexModel: e.target.value };
+                                                  next[et.key] = [...next[et.key]];
+                                                  next[et.key][idx] = b;
+                                                  return next;
+                                                });
+                                              }}
+                                              placeholder="codex"
+                                            />
+                                          </label>
+                                          <label>
+                                            Rounds
+                                            <input
+                                              type="number"
+                                              value={binding.debateConfig?.maxRounds ?? 3}
+                                              min={1}
+                                              max={10}
+                                              onChange={e => {
+                                                setEventTemplates(prev => {
+                                                  const next = { ...prev };
+                                                  const b = { ...next[et.key][idx] };
+                                                  b.debateConfig = { ...b.debateConfig, maxRounds: Number(e.target.value) };
+                                                  next[et.key] = [...next[et.key]];
+                                                  next[et.key][idx] = b;
+                                                  return next;
+                                                });
+                                              }}
+                                              style={{ width: 50 }}
+                                            />
+                                          </label>
+                                        </div>
+                                        <label className="eye-debate-config-check">
+                                          <input
+                                            type="checkbox"
+                                            checked={binding.debateConfig?.postActionVerification ?? true}
+                                            onChange={e => {
+                                              setEventTemplates(prev => {
+                                                const next = { ...prev };
+                                                const b = { ...next[et.key][idx] };
+                                                b.debateConfig = { ...b.debateConfig, postActionVerification: e.target.checked };
+                                                next[et.key] = [...next[et.key]];
+                                                next[et.key][idx] = b;
+                                                return next;
+                                              });
+                                            }}
+                                          />
+                                          Post-action verification (reviewer checks implementation)
+                                        </label>
+                                      </div>
+                                    )}
                                     {/* Filter tags */}
                                     {binding.filters.length > 0 && (
                                       <div className="eye-filter-tags">

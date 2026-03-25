@@ -3311,6 +3311,62 @@ body {
   cursor: pointer;
 }
 
+.eye-binding-mode {
+  font-size: 11px;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-left: auto;
+  margin-right: 6px;
+}
+
+.eye-debate-config {
+  padding: 6px 8px;
+  margin-top: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.eye-debate-config-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.eye-debate-config-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.eye-debate-config-row input[type="text"] {
+  width: 80px;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+
+.eye-debate-config-row input[type="number"] {
+  font-size: 11px;
+  padding: 2px 4px;
+}
+
+.eye-debate-config-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
 .eye-config-actions {
   display: flex;
   justify-content: flex-end;
@@ -3319,6 +3375,113 @@ body {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
+}
+
+/* ─── Eye Page Layout ──────────────────────────────────────────────────── */
+
+.eye-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 20px 20px;
+}
+
+.eye-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 10;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.eye-page-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.eye-page-header-left h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.eye-page-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eye-page-back {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 18px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.eye-page-back:hover {
+  background: var(--bg-secondary);
+}
+
+.eye-page-status-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.eye-page-tabs {
+  display: none;  /* hidden on desktop, shown on mobile */
+}
+
+.eye-page-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+.eye-page-body--single {
+  grid-template-columns: 1fr;
+  max-width: 600px;
+}
+
+.eye-page-col {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.eye-events-section--page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.eye-events-list--page {
+  flex: 1;
+  max-height: none;
+  min-height: 200px;
+}
+
+.eye-config-form--page {
+  /* override modal-specific styling */
+  padding: 0;
 }
 
 .eye-action-error {
@@ -4272,6 +4435,136 @@ body {
   .worktree-detail-back {
     min-width: 44px;
     min-height: 44px;
+  }
+
+  /* --- Eye Page (mobile) --- */
+
+  .eye-page {
+    padding: 0 12px 12px;
+  }
+
+  .eye-page-header {
+    padding: 12px 0;
+    margin-bottom: 12px;
+  }
+
+  .eye-page-header-left h2 {
+    font-size: 16px;
+  }
+
+  .eye-page-back {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .eye-page-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+
+  .eye-page-tab {
+    flex: 1;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    padding: 10px 0;
+    cursor: pointer;
+    font-weight: 500;
+    min-height: 44px;
+  }
+
+  .eye-page-tab--active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .eye-page-body {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .eye-page-body--single {
+    max-width: none;
+  }
+
+  .eye-page-col--hidden-mobile {
+    display: none;
+  }
+
+  .eye-stats-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .eye-stat {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 0;
+  }
+
+  .eye-config-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .eye-debate-config-row {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .eye-debate-config-row input[type="text"] {
+    width: 100%;
+  }
+
+  .eye-debate-config-row input[type="number"] {
+    width: 100%;
+  }
+
+  .eye-event {
+    font-size: 12px;
+    padding: 8px 6px;
+  }
+
+  .eye-event-author {
+    display: none;
+  }
+
+  .eye-config-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg);
+    padding: 12px 0;
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .eye-config-actions .btn {
+    min-height: 44px;
+    flex: 1;
+  }
+
+  .eye-event-template-item {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .eye-binding-mode {
+    font-size: 13px;
+    min-height: 36px;
+    padding: 4px 8px;
+  }
+
+  .eye-filter-add {
+    font-size: 13px;
+    min-height: 36px;
+  }
+
+  .eye-event-row-header input[type="checkbox"] {
+    min-width: 20px;
+    min-height: 20px;
   }
 }
 

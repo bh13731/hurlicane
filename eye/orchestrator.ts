@@ -6,9 +6,23 @@ export interface TemplateFilter {
   value: string;
 }
 
+export interface DebateBindingConfig {
+  claudeModel?: string;
+  codexModel?: string;
+  maxRounds?: number;
+  postActionVerification?: boolean;
+  postActionPrompt?: string;
+  postActionRole?: 'claude' | 'codex';
+  completionChecks?: string[];
+}
+
 export interface TemplateBinding {
   templateId: string;
   filters: TemplateFilter[];
+  /** 'job' = always simple job, 'debate' = always debate, 'auto' = complexity heuristic (default) */
+  mode?: 'job' | 'debate' | 'auto';
+  /** Debate configuration — used when mode is 'debate' or auto evaluates to debate */
+  debateConfig?: DebateBindingConfig;
 }
 
 export interface EyePrompts {
