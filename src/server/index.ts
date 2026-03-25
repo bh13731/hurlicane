@@ -151,6 +151,17 @@ async function main() {
     socket.setKeepAlive(true, 30_000);
   });
 
+  // 5b. Webhook proxy on legacy Eye port (4567) — forwards to the main server's webhook handler
+  const WEBHOOK_PORT = Number(process.env.WEBHOOK_PORT ?? 4567);
+  if (WEBHOOK_PORT !== PORT) {
+    const webhookProxy = express();
+    webhookProxy.use(createWebhookHandler());
+    webhookProxy.get('/health', (_req, res) => res.json({ ok: true }));
+    webhookProxy.listen(WEBHOOK_PORT, () => {
+      console.log(`[server] Webhook proxy listening on :${WEBHOOK_PORT}`);
+    });
+  }
+
   // 6. Start work queue + stuck-job watchdog
   startWorkQueue();
   startWatchdog();
