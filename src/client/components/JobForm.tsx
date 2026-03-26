@@ -86,13 +86,13 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
     const tpl = templates.find(t => t.id === newTemplateId);
     if (!tpl) return;
     if (tpl.model) setModel(tpl.model);
-    if (tpl.is_readonly) setReadonly(true);
+    setReadonly(!!tpl.is_readonly);
     if (tpl.repo_id) {
       setBranchRepoId(tpl.repo_id);
       setBranchMode('new');
     }
     if (tpl.priority) setPriority(tpl.priority);
-    if (tpl.is_interactive) setInteractive(true);
+    setInteractive(!!tpl.is_interactive);
     if (tpl.retry_policy && tpl.retry_policy !== 'none') {
       setRetryPolicy(tpl.retry_policy);
       setMaxRetries(tpl.max_retries ?? 3);
