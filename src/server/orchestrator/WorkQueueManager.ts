@@ -136,8 +136,8 @@ function ensureWorktree(job: Job, agentId: string): Job {
 
   const baseBranch = repo.default_branch || 'main';
 
-  // Pull latest base branch so the worktree branches from the newest commit
-  try { execSync(`git pull origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+  // Fetch latest so origin/baseBranch is up to date (fetch, not pull, to avoid merging into the wrong branch)
+  try { execSync(`git fetch origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
 
   // If base branch has no commits yet (empty repo), create an initial empty commit
   try {
@@ -147,7 +147,8 @@ function ensureWorktree(job: Job, agentId: string): Job {
   }
 
   console.log(`[queue] creating worktree: ${worktreeDir} (branch: ${branchName}, base: ${baseBranch})`);
-  execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branchName)} ${JSON.stringify(baseBranch)}`, {
+  const remoteBase = `origin/${baseBranch}`;
+  execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branchName)} ${JSON.stringify(remoteBase)}`, {
     cwd: repo.path,
     timeout: 30_000,
   });

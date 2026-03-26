@@ -131,7 +131,7 @@ export function createDirectClient(): OrchestratorClient {
         const worktreeDir = path.join(WORKTREES_DIR, shortId);
         const baseBranch = repo.default_branch || 'main';
 
-        try { execSync(`git pull origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+        try { execSync(`git fetch origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
         try { execSync(`git rev-parse ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 5_000, stdio: 'pipe' }); } catch {
           execSync('git commit --allow-empty -m "Initial commit"', { cwd: repo.path, timeout: 10_000, stdio: 'pipe' });
         }
@@ -161,7 +161,8 @@ export function createDirectClient(): OrchestratorClient {
             execSync(`git checkout -B ${JSON.stringify(sanitized)} ${JSON.stringify(remoteRef)}`, { cwd: worktreeDir, timeout: 10_000 });
           }
         } else {
-          execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(sanitized)} ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000 });
+          const remoteBase = `origin/${baseBranch}`;
+          execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(sanitized)} ${JSON.stringify(remoteBase)}`, { cwd: repo.path, timeout: 30_000 });
         }
 
         return queries.insertWorktree({ id: shortId, repo_id: repo.id, agent_id: '', job_id: '', path: worktreeDir, branch: sanitized });

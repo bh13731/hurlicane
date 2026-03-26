@@ -67,8 +67,8 @@ router.post('/', (req, res) => {
 
     const baseBranch = repo.default_branch || 'main';
 
-    // Pull latest base branch so worktrees branch from the newest commit
-    try { execSync(`git pull origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+    // Fetch latest so origin/baseBranch is up to date (fetch, not pull, to avoid merging into the wrong branch)
+    try { execSync(`git fetch origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
 
     // If base branch has no commits yet (empty repo), create an initial empty commit
     try {
@@ -118,7 +118,8 @@ router.post('/', (req, res) => {
         });
       }
     } else {
-      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(sanitized)} ${JSON.stringify(baseBranch)}`, {
+      const remoteBase = `origin/${baseBranch}`;
+      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(sanitized)} ${JSON.stringify(remoteBase)}`, {
         cwd: repo.path,
         timeout: 30_000,
       });

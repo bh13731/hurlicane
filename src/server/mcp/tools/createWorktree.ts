@@ -63,8 +63,8 @@ export async function createWorktreeHandler(agentId: string, input: z.infer<type
 
     const baseBranch = repo.default_branch || 'main';
 
-    // Pull latest base branch
-    try { execSync(`git pull origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
+    // Fetch latest so origin/baseBranch is up to date (fetch, not pull, to avoid merging into the wrong branch)
+    try { execSync(`git fetch origin ${JSON.stringify(baseBranch)}`, { cwd: repo.path, timeout: 30_000, stdio: 'pipe' }); } catch { /* ignore */ }
 
     // Ensure base branch exists
     try {
@@ -93,8 +93,9 @@ export async function createWorktreeHandler(agentId: string, input: z.infer<type
         });
       }
     } else {
-      // Create new branch from base branch
-      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(sanitized)} ${JSON.stringify(baseBranch)}`, {
+      // Create new branch from the latest remote base branch
+      const remoteBase = `origin/${baseBranch}`;
+      execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(sanitized)} ${JSON.stringify(remoteBase)}`, {
         cwd: repo.path,
         timeout: 30_000,
       });
