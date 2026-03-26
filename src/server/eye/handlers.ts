@@ -515,6 +515,7 @@ export async function dispatch(
   if (prompts.globalFilters.length > 0) {
     const fields = extractFilterFields(eventType, payload, config.author, prompts.botName);
     if (!filtersPass(prompts.globalFilters, fields)) {
+      logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: 'rejected by global filters' });
       return null;
     }
   }
