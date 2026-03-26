@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { CreateJobRequest, Job, Template, RetryPolicy, ReviewConfig, Repo, Worktree } from '@shared/types';
+import type { CreateJobRequest, Job, Template, RetryPolicy, Repo, Worktree } from '@shared/types';
 import { TemplateModelStats } from './TemplateModelStats';
 
 interface JobFormProps {
@@ -23,9 +23,6 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [checkDiffNotEmpty, setCheckDiffNotEmpty] = useState(false);
   const [checkNoErrors, setCheckNoErrors] = useState(false);
   const [customCheckCmd, setCustomCheckCmd] = useState('');
-  const [reviewEnabled, setReviewEnabled] = useState(false);
-  const [reviewModels, setReviewModels] = useState<string[]>([]);
-  const [reviewAuto, setReviewAuto] = useState(true);
   const [readonly, setReadonly] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -109,10 +106,6 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
       if (checkNoErrors) completionChecks.push('no_error_in_output');
       if (customCheckCmd.trim()) completionChecks.push(`custom_command:${customCheckCmd.trim()}`);
 
-      const reviewConfig: ReviewConfig | undefined = reviewEnabled && reviewModels.length > 0
-        ? { models: reviewModels, auto: reviewAuto }
-        : undefined;
-
       const selectedWorktree = worktrees.find(w => w.id === selectedWorktreeId);
       const selectedRepo = repos.find(r => r.id === branchRepoId);
 
@@ -153,7 +146,6 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         retryPolicy: retryPolicy !== 'none' ? retryPolicy : undefined,
         maxRetries: retryPolicy !== 'none' ? maxRetries : undefined,
         completionChecks: completionChecks.length > 0 ? completionChecks : undefined,
-        reviewConfig,
       });
       onClose();
     } catch (err) {
@@ -566,49 +558,6 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
             />
           </div>
 
-          <div className="form-group">
-            <label className="form-checkbox-label">
-              <input
-                type="checkbox"
-                checked={reviewEnabled}
-                onChange={e => setReviewEnabled(e.target.checked)}
-              />
-              Review on completion
-              <span className="tooltip-icon" data-tip="After job completes, spawn review agents to validate the work. Job is marked approved only if reviews pass.">?</span>
-            </label>
-          </div>
-
-          {reviewEnabled && (
-            <div className="form-group" style={{ paddingLeft: 20 }}>
-              <label>Review Models</label>
-              <div className="completion-checks-list">
-                {[
-                  { value: 'claude-haiku-4-5-20251001', label: 'Haiku' },
-                  { value: 'claude-sonnet-4-6[1m]', label: 'Sonnet' },
-                  { value: 'claude-opus-4-6[1m]', label: 'Opus' },
-                ].map(m => (
-                  <label key={m.value} className="form-checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={reviewModels.includes(m.value)}
-                      onChange={e => setReviewModels(prev =>
-                        e.target.checked ? [...prev, m.value] : prev.filter(x => x !== m.value)
-                      )}
-                    />
-                    {m.label}
-                  </label>
-                ))}
-              </div>
-              <label className="form-checkbox-label" style={{ marginTop: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={reviewAuto}
-                  onChange={e => setReviewAuto(e.target.checked)}
-                />
-                Auto-trigger reviews
-              </label>
-            </div>
-          )}
           </>}
 
           {error && <div className="form-error">{error}</div>}

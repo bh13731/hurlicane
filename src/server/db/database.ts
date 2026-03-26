@@ -228,31 +228,6 @@ export function initDb(dbPath: string): DatabaseSync {
     db.exec('ALTER TABLE knowledge_base ADD COLUMN last_hit_at INTEGER');
   }
 
-  // ── Feature 3: Multi-Model Review Pipeline ────────────────────────────────
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS reviews (
-      id              TEXT PRIMARY KEY,
-      parent_job_id   TEXT NOT NULL,
-      reviewer_job_id TEXT,
-      model           TEXT NOT NULL,
-      verdict         TEXT,
-      summary         TEXT,
-      created_at      INTEGER NOT NULL,
-      completed_at    INTEGER
-    )
-  `);
-  db.exec('CREATE INDEX IF NOT EXISTS idx_reviews_parent ON reviews(parent_job_id)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_reviews_reviewer ON reviews(reviewer_job_id)');
-
-  if (!jobCols.includes('review_config')) {
-    db.exec('ALTER TABLE jobs ADD COLUMN review_config TEXT');
-  }
-  if (!jobCols.includes('review_status')) {
-    db.exec('ALTER TABLE jobs ADD COLUMN review_status TEXT');
-  }
-  if (!jobCols.includes('review_parent_job_id')) {
-    db.exec('ALTER TABLE jobs ADD COLUMN review_parent_job_id TEXT');
-  }
   if (!jobCols.includes('archived_at')) {
     db.exec('ALTER TABLE jobs ADD COLUMN archived_at INTEGER');
   }

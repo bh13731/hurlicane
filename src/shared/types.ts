@@ -5,7 +5,6 @@ export type AgentStatus = 'starting' | 'running' | 'waiting_user' | 'done' | 'fa
 export type QuestionStatus = 'pending' | 'answered' | 'timeout';
 export type RetryPolicy = 'none' | 'same' | 'analyze';
 export type WarningType = 'stalled' | 'high_turns' | 'long_running';
-export type ReviewStatus = 'pending_review' | 'approved' | 'needs_revision';
 
 export interface Job {
   id: string;
@@ -30,9 +29,6 @@ export interface Job {
   retry_count: number;
   original_job_id: string | null;
   completion_checks: string | null; // JSON array of check names
-  review_config: string | null;         // JSON: ReviewConfig
-  review_status: ReviewStatus | null;
-  review_parent_job_id: string | null;  // for review jobs, links to parent
   created_by_agent_id: string | null;   // agent that created this job via create_job MCP tool
   archived_at: number | null;
   created_at: number;
@@ -235,7 +231,6 @@ export interface CreateJobRequest {
   retryPolicy?: RetryPolicy;
   maxRetries?: number;
   completionChecks?: string[];
-  reviewConfig?: ReviewConfig;
 }
 
 export interface SearchResult {
@@ -397,24 +392,6 @@ export interface KBEntry {
   last_hit_at: number | null;
   created_at: number;
   updated_at: number;
-}
-
-// ─── Reviews (Feature 3) ────────────────────────────────────────────────────
-
-export interface ReviewConfig {
-  models: string[];
-  auto: boolean;
-}
-
-export interface Review {
-  id: string;
-  parent_job_id: string;
-  reviewer_job_id: string | null;
-  model: string;
-  verdict: string | null;
-  summary: string | null;
-  created_at: number;
-  completed_at: number | null;
 }
 
 // ─── Template Model Stats (Feature 2) ────────────────────────────────────────
