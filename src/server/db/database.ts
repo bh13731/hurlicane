@@ -103,14 +103,35 @@ export function initDb(dbPath: string): DatabaseSync {
   `);
 
   const tplCols: string[] = (db.prepare('PRAGMA table_info(templates)').all() as any[]).map((r: any) => r.name);
-  if (!tplCols.includes('work_dir')) {
-    db.exec('ALTER TABLE templates ADD COLUMN work_dir TEXT');
-  }
   if (!tplCols.includes('model')) {
     db.exec('ALTER TABLE templates ADD COLUMN model TEXT');
   }
   if (!tplCols.includes('is_readonly')) {
     db.exec('ALTER TABLE templates ADD COLUMN is_readonly INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!tplCols.includes('repo_id')) {
+    db.exec('ALTER TABLE templates ADD COLUMN repo_id TEXT');
+  }
+  if (!tplCols.includes('project_id')) {
+    db.exec('ALTER TABLE templates ADD COLUMN project_id TEXT');
+  }
+  if (!tplCols.includes('context')) {
+    db.exec('ALTER TABLE templates ADD COLUMN context TEXT');
+  }
+  if (!tplCols.includes('priority')) {
+    db.exec('ALTER TABLE templates ADD COLUMN priority INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!tplCols.includes('is_interactive')) {
+    db.exec('ALTER TABLE templates ADD COLUMN is_interactive INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!tplCols.includes('retry_policy')) {
+    db.exec("ALTER TABLE templates ADD COLUMN retry_policy TEXT NOT NULL DEFAULT 'none'");
+  }
+  if (!tplCols.includes('max_retries')) {
+    db.exec('ALTER TABLE templates ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!tplCols.includes('completion_checks')) {
+    db.exec('ALTER TABLE templates ADD COLUMN completion_checks TEXT');
   }
 
   // Batch templates

@@ -1,12 +1,19 @@
 CREATE TABLE IF NOT EXISTS templates (
-  id          TEXT PRIMARY KEY,
-  name        TEXT NOT NULL,
-  content     TEXT NOT NULL,
-  work_dir    TEXT,
-  model       TEXT,
-  is_readonly INTEGER NOT NULL DEFAULT 0,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL
+  id                TEXT PRIMARY KEY,
+  name              TEXT NOT NULL,
+  content           TEXT NOT NULL,
+  model             TEXT,
+  is_readonly       INTEGER NOT NULL DEFAULT 0,
+  repo_id           TEXT,
+  project_id        TEXT,
+  context           TEXT,
+  priority          INTEGER NOT NULL DEFAULT 0,
+  is_interactive    INTEGER NOT NULL DEFAULT 0,
+  retry_policy      TEXT NOT NULL DEFAULT 'none',
+  max_retries       INTEGER NOT NULL DEFAULT 0,
+  completion_checks TEXT,
+  created_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS jobs (

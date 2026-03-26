@@ -263,7 +263,15 @@ export interface Template {
   name: string;
   content: string;
   model: string | null;
-  is_readonly: number;  // 0=normal, 1=jobs using this template are forced readonly
+  is_readonly: number;        // 0=normal, 1=jobs using this template are forced readonly
+  repo_id: string | null;     // FK → repos.id — default repo for jobs
+  project_id: string | null;  // FK → projects.id — default project for jobs
+  context: string | null;     // JSON string of default extra k/v context
+  priority: number;           // default priority for jobs
+  is_interactive: number;     // 0=batch, 1=interactive tmux session
+  retry_policy: RetryPolicy;  // default retry policy
+  max_retries: number;        // default max retries
+  completion_checks: string | null; // JSON array of default check names
   created_at: number;
   updated_at: number;
 }
@@ -273,6 +281,14 @@ export interface CreateTemplateRequest {
   content: string;
   model?: string;
   is_readonly?: boolean;
+  repo_id?: string;
+  project_id?: string;
+  context?: Record<string, string>;
+  priority?: number;
+  is_interactive?: boolean;
+  retry_policy?: RetryPolicy;
+  max_retries?: number;
+  completion_checks?: string[];
 }
 
 export interface UpdateTemplateRequest {
@@ -280,6 +296,14 @@ export interface UpdateTemplateRequest {
   content?: string;
   model?: string | null;
   is_readonly?: boolean;
+  repo_id?: string | null;
+  project_id?: string | null;
+  context?: Record<string, string> | null;
+  priority?: number;
+  is_interactive?: boolean;
+  retry_policy?: RetryPolicy;
+  max_retries?: number;
+  completion_checks?: string[] | null;
 }
 
 // ─── Projects ──────────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ import * as queries from '../../db/queries.js';
 import * as socket from '../../socket/SocketManager.js';
 
 export const createJobSchema = z.object({
-  description: z.string().describe('Full task description for the new job'),
+  description: z.string().optional().describe('Task description. Optional when template_id is provided — the template content is used as the base prompt, and description (if given) is appended as additional instructions.'),
   title: z.string().optional().describe('Short title (auto-generated from first line if omitted)'),
   priority: z.number().optional().describe('Priority 0–10; higher runs sooner (default: 0)'),
   branch: z.string().optional().describe('Git branch for the job. Auto-generated if omitted. A worktree is created/reused for this branch.'),
@@ -12,7 +12,7 @@ export const createJobSchema = z.object({
   model: z.string().optional().describe('Model override, e.g. "claude-opus-4-6" (default: auto-classify)'),
   depends_on: z.array(z.string()).optional().describe('Job IDs that must complete before this job runs'),
   repeat_interval_ms: z.number().optional().describe('Re-queue the job automatically after it completes; value is the delay in ms before the next run'),
-  template_id: z.string().optional().describe('Template ID to use. The template content is prepended to the description, and its model/readonly settings are applied as defaults.'),
+  template_id: z.string().optional().describe('Template ID to use. The template content becomes the base prompt, and its settings (model, repo, project, retry, etc.) are applied as defaults. Use list_templates to discover available templates.'),
 });
 
 export async function createJobHandler(agentId: string, input: z.infer<typeof createJobSchema>): Promise<string> {
@@ -23,6 +23,15 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
   if (template_id && !tpl) {
     return JSON.stringify({ error: `Template '${template_id}' not found` });
   }
+
+  if (!description && !tpl) {
+    return JSON.stringify({ error: 'description is required when no template_id is provided' });
+  }
+
+  // Build the final description: template content as base, user description appended
+  const finalDescription = tpl
+    ? (description ? `${tpl.content}\n\n${description}` : tpl.content)
+    : description!;
 
   // Inherit repo_id, project_id, model, and is_readonly from calling agent's job if not specified
   let inheritedRepoId: string | null = null;
@@ -67,24 +76,25 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
 
   const job = queries.insertJob({
     id: randomUUID(),
-    title: title?.trim() || description.split('\n')[0].slice(0, 60),
-    description,
-    context: null,
-    priority: priority ?? 0,
-    repo_id: inheritedRepoId,
+    title: title?.trim() || finalDescription.split('\n')[0].slice(0, 60),
+    description: finalDescription,
+    context: tpl?.context ?? null,
+    priority: priority ?? tpl?.priority ?? 0,
+    repo_id: inheritedRepoId ?? tpl?.repo_id ?? null,
     branch: branch ?? null,
     max_turns: max_turns ?? 50,
     model: model ?? tpl?.model ?? inheritedModel,
     template_id: template_id ?? null,
     depends_on: depends_on?.length ? JSON.stringify(depends_on) : null,
+    is_interactive: tpl?.is_interactive ?? 0,
     is_readonly: isReadonly,
-    project_id: inheritedProjectId,
+    project_id: inheritedProjectId ?? tpl?.project_id ?? null,
     repeat_interval_ms: repeat_interval_ms ?? null,
-    retry_policy: retryPolicy,
-    max_retries: maxRetries,
+    retry_policy: retryPolicy !== 'none' ? retryPolicy : (tpl?.retry_policy ?? 'none'),
+    max_retries: maxRetries > 0 ? maxRetries : (tpl?.max_retries ?? 0),
     retry_count: retryCount,
     original_job_id: originalJobId,
-    completion_checks: completionChecks,
+    completion_checks: completionChecks ?? tpl?.completion_checks ?? null,
     created_by_agent_id: agentId,
   });
 

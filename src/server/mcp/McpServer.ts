@@ -16,6 +16,7 @@ import { searchKBHandler, searchKBSchema } from './tools/knowledgeBase.js';
 import { reportLearningsHandler, reportLearningsSchema } from './tools/reportLearnings.js';
 import { finishJobHandler, finishJobSchema } from './tools/finishJob.js';
 import { createWorktreeHandler, createWorktreeSchema } from './tools/createWorktree.js';
+import { listTemplatesHandler } from './tools/listTemplates.js';
 import { slackMessageHandler, slackMessageSchema } from './tools/slackMessage.js';
 
 // agentId → { sessionId → transport }
@@ -272,6 +273,16 @@ function buildMcpServer(agentId: string): MCP {
     },
     async (input) => {
       const result = await createJobHandler(agentId, input as any);
+      return { content: [{ type: 'text', text: result }] };
+    }
+  );
+
+  server.tool(
+    'list_templates',
+    'List available job templates. Returns { templates: [{ id, name, model, is_readonly, content_preview, ... }] }. Use a template_id with create_job to create jobs from templates.',
+    {},
+    async () => {
+      const result = await listTemplatesHandler();
       return { content: [{ type: 'text', text: result }] };
     }
   );

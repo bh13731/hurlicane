@@ -989,12 +989,36 @@ export function getActiveLocksForFiles(filePaths: string[]): FileLock[] {
 
 // ─── Templates ────────────────────────────────────────────────────────────────
 
-export function insertTemplate(template: Template): Template {
+export function insertTemplate(template: {
+  id: string;
+  name: string;
+  content: string;
+  model?: string | null;
+  is_readonly?: number;
+  repo_id?: string | null;
+  project_id?: string | null;
+  context?: string | null;
+  priority?: number;
+  is_interactive?: number;
+  retry_policy?: RetryPolicy;
+  max_retries?: number;
+  completion_checks?: string | null;
+  created_at: number;
+  updated_at: number;
+}): Template {
   const db = getDb();
   db.prepare(`
-    INSERT INTO templates (id, name, content, work_dir, model, is_readonly, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(template.id, template.name, template.content, null, template.model ?? null, template.is_readonly ?? 0, template.created_at, template.updated_at);
+    INSERT INTO templates (id, name, content, model, is_readonly, repo_id, project_id, context, priority, is_interactive, retry_policy, max_retries, completion_checks, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    template.id, template.name, template.content,
+    template.model ?? null, template.is_readonly ?? 0,
+    template.repo_id ?? null, template.project_id ?? null,
+    template.context ?? null, template.priority ?? 0,
+    template.is_interactive ?? 0, template.retry_policy ?? 'none',
+    template.max_retries ?? 0, template.completion_checks ?? null,
+    template.created_at, template.updated_at,
+  );
   return getTemplateById(template.id)!;
 }
 
@@ -1010,7 +1034,7 @@ export function listTemplates(): Template[] {
   return rows.map(r => cast<Template>(r));
 }
 
-export function updateTemplate(id: string, fields: Partial<Pick<Template, 'name' | 'content' | 'model' | 'is_readonly'>>): Template | null {
+export function updateTemplate(id: string, fields: Partial<Pick<Template, 'name' | 'content' | 'model' | 'is_readonly' | 'repo_id' | 'project_id' | 'context' | 'priority' | 'is_interactive' | 'retry_policy' | 'max_retries' | 'completion_checks'>>): Template | null {
   const db = getDb();
   const sets: string[] = ['updated_at = ?'];
   const values: unknown[] = [Date.now()];

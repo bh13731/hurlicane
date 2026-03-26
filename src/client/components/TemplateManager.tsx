@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { Template } from '@shared/types';
+import type { Template, Repo, Project, RetryPolicy } from '@shared/types';
 
 interface TemplateManagerProps {
   onClose: () => void;
@@ -13,11 +13,22 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
   const [content, setContent] = useState('');
   const [model, setModel] = useState('');
   const [isReadonly, setIsReadonly] = useState(false);
+  const [repoId, setRepoId] = useState('');
+  const [projectId, setProjectId] = useState('');
+  const [priority, setPriority] = useState(0);
+  const [isInteractive, setIsInteractive] = useState(false);
+  const [retryPolicy, setRetryPolicy] = useState<RetryPolicy>('none');
+  const [maxRetries, setMaxRetries] = useState(3);
+  const [completionChecks, setCompletionChecks] = useState('');
+  const [repos, setRepos] = useState<Repo[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteTpl, setConfirmDeleteTpl] = useState<Template | null>(null);
 
   useEffect(() => {
     fetch('/api/templates').then(r => r.json()).then(setTemplates).catch(console.error);
+    fetch('/api/repos').then(r => r.json()).then(setRepos).catch(() => {});
+    fetch('/api/projects').then(r => r.json()).then(setProjects).catch(() => {});
   }, []);
 
   function startCreate() {
@@ -26,6 +37,13 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
     setContent('');
     setModel('');
     setIsReadonly(false);
+    setRepoId('');
+    setProjectId('');
+    setPriority(0);
+    setIsInteractive(false);
+    setRetryPolicy('none');
+    setMaxRetries(3);
+    setCompletionChecks('');
     setCreating(true);
   }
 
@@ -36,6 +54,17 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
     setContent(t.content);
     setModel(t.model ?? '');
     setIsReadonly(!!t.is_readonly);
+    setRepoId(t.repo_id ?? '');
+    setProjectId(t.project_id ?? '');
+    setPriority(t.priority ?? 0);
+    setIsInteractive(!!t.is_interactive);
+    setRetryPolicy(t.retry_policy ?? 'none');
+    setMaxRetries(t.max_retries ?? 3);
+    // Parse completion_checks JSON array into comma-separated string for editing
+    try {
+      const checks = t.completion_checks ? JSON.parse(t.completion_checks) : [];
+      setCompletionChecks(Array.isArray(checks) ? checks.join(', ') : '');
+    } catch { setCompletionChecks(''); }
   }
 
   function cancelForm() {
@@ -47,12 +76,29 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
     e.preventDefault();
     if (!name.trim() || !content.trim()) return;
     setSaving(true);
+
+    const checksArray = completionChecks.split(',').map(s => s.trim()).filter(Boolean);
+
+    const payload = {
+      name: name.trim(),
+      content: content.trim(),
+      model: model.trim() || null,
+      is_readonly: isReadonly,
+      repo_id: repoId || null,
+      project_id: projectId || null,
+      priority,
+      is_interactive: isInteractive,
+      retry_policy: retryPolicy,
+      max_retries: retryPolicy !== 'none' ? maxRetries : 0,
+      completion_checks: checksArray.length > 0 ? checksArray : null,
+    };
+
     try {
       if (editing) {
         const res = await fetch(`/api/templates/${editing.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), content: content.trim(), model: model.trim() || null, is_readonly: isReadonly }),
+          body: JSON.stringify(payload),
         });
         const updated: Template = await res.json();
         setTemplates(prev => prev.map(t => t.id === updated.id ? updated : t));
@@ -60,7 +106,7 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
         const res = await fetch('/api/templates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), content: content.trim(), model: model.trim() || undefined, is_readonly: isReadonly }),
+          body: JSON.stringify(payload),
         });
         const created: Template = await res.json();
         setTemplates(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
@@ -159,6 +205,64 @@ export function TemplateManager({ onClose }: TemplateManagerProps) {
                     <span className="tooltip-icon" data-tip="Jobs using this template will be forced into readonly mode — no worktree, no file edits allowed.">?</span>
                   </label>
                 </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label htmlFor="tpl-repo">Default Repo</label>
+                    <select id="tpl-repo" value={repoId} onChange={e => setRepoId(e.target.value)}>
+                      <option value="">None</option>
+                      {repos.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="tpl-project">Default Project</label>
+                    <select id="tpl-project" value={projectId} onChange={e => setProjectId(e.target.value)}>
+                      <option value="">None</option>
+                      {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <div className="form-group form-group-sm">
+                    <label htmlFor="tpl-priority">Priority</label>
+                    <input id="tpl-priority" type="number" value={priority} onChange={e => setPriority(Number(e.target.value))} min={-10} max={10} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-checkbox-label" style={{ marginTop: 22 }}>
+                      <input type="checkbox" checked={isInteractive} onChange={e => setIsInteractive(e.target.checked)} />
+                      Interactive
+                    </label>
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <div className="form-group">
+                    <label htmlFor="tpl-retry">On Failure</label>
+                    <select id="tpl-retry" value={retryPolicy} onChange={e => setRetryPolicy(e.target.value as RetryPolicy)}>
+                      <option value="none">No retry</option>
+                      <option value="same">Retry same</option>
+                      <option value="analyze">Analyze & retry</option>
+                    </select>
+                  </div>
+                  {retryPolicy !== 'none' && (
+                    <div className="form-group form-group-sm">
+                      <label htmlFor="tpl-max-retries">Max Retries</label>
+                      <input id="tpl-max-retries" type="number" value={maxRetries} onChange={e => setMaxRetries(Number(e.target.value))} min={1} max={10} />
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="tpl-checks">Completion Checks <span className="form-label-hint">(comma-separated)</span></label>
+                  <input
+                    id="tpl-checks"
+                    type="text"
+                    value={completionChecks}
+                    onChange={e => setCompletionChecks(e.target.value)}
+                    placeholder="e.g. diff_not_empty, no_error_in_output"
+                  />
+                </div>
+
                 <div className="form-group template-content-group">
                   <label htmlFor="tpl-content">Content</label>
                   <textarea

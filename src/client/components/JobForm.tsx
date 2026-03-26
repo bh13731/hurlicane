@@ -29,7 +29,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [error, setError] = useState<string | null>(null);
 
   // Worktree-branch state
-  const [branchMode, setBranchMode] = useState<'existing' | 'new' | 'remote' | 'none'>('new');
+  const [branchMode, setBranchMode] = useState<'existing' | 'new' | 'remote' | 'none' | 'repo-only'>('new');
   const [selectedWorktreeId, setSelectedWorktreeId] = useState('');
   const [branchName, setBranchName] = useState('');
   const [branchRepoId, setBranchRepoId] = useState('');
@@ -84,14 +84,29 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const handleTemplateChange = (newTemplateId: string) => {
     setTemplateId(newTemplateId);
     const tpl = templates.find(t => t.id === newTemplateId);
-    if (tpl?.model) {
-      setModel(tpl.model);
+    if (!tpl) return;
+    if (tpl.model) setModel(tpl.model);
+    if (tpl.is_readonly) setReadonly(true);
+    if (tpl.repo_id) {
+      setBranchRepoId(tpl.repo_id);
+      setBranchMode('new');
     }
-    // Auto-set readonly when template is marked readonly
-    if (tpl?.is_readonly) {
-      setReadonly(true);
-    } else if (!newTemplateId) {
-      // Clearing template — don't force readonly off (user may have set it manually)
+    if (tpl.priority) setPriority(tpl.priority);
+    if (tpl.is_interactive) setInteractive(true);
+    if (tpl.retry_policy && tpl.retry_policy !== 'none') {
+      setRetryPolicy(tpl.retry_policy);
+      setMaxRetries(tpl.max_retries ?? 3);
+      setShowAdvanced(true);
+    }
+    if (tpl.completion_checks) {
+      try {
+        const checks = JSON.parse(tpl.completion_checks) as string[];
+        setCheckDiffNotEmpty(checks.includes('diff_not_empty'));
+        setCheckNoErrors(checks.includes('no_error_in_output'));
+        const custom = checks.find(c => c.startsWith('custom_command:'));
+        if (custom) setCustomCheckCmd(custom.replace('custom_command:', ''));
+        if (checks.length > 0) setShowAdvanced(true);
+      } catch { /* ignore */ }
     }
   };
 
@@ -113,6 +128,8 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
       let branch: string | undefined;
       if (branchMode === 'none') {
         // No repo/branch
+      } else if (branchMode === 'repo-only') {
+        repoId = branchRepoId || undefined;
       } else if (branchMode === 'existing' && selectedWorktree) {
         repoId = selectedWorktree.repo_id;
         branch = selectedWorktree.branch;
@@ -210,7 +227,7 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
                 checked={readonly}
                 onChange={e => {
                   setReadonly(e.target.checked);
-                  if (!e.target.checked && branchMode === 'none') setBranchMode('new');
+                  if (!e.target.checked && (branchMode === 'none' || branchMode === 'repo-only')) setBranchMode('new');
                 }}
                 disabled={!!selectedTemplate?.is_readonly}
               />
@@ -224,15 +241,26 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
             <label>Worktree</label>
             <div className="form-row" style={{ marginBottom: 8 }}>
               {readonly && (
-                <label className="form-checkbox-label">
-                  <input
-                    type="radio"
-                    name="branchMode"
-                    checked={branchMode === 'none'}
-                    onChange={() => setBranchMode('none')}
-                  />
-                  None
-                </label>
+                <>
+                  <label className="form-checkbox-label">
+                    <input
+                      type="radio"
+                      name="branchMode"
+                      checked={branchMode === 'none'}
+                      onChange={() => setBranchMode('none')}
+                    />
+                    None
+                  </label>
+                  <label className="form-checkbox-label">
+                    <input
+                      type="radio"
+                      name="branchMode"
+                      checked={branchMode === 'repo-only'}
+                      onChange={() => setBranchMode('repo-only')}
+                    />
+                    Repo only
+                  </label>
+                </>
               )}
               <label className="form-checkbox-label">
                 <input
@@ -263,7 +291,23 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
                 Remote branch
               </label>
             </div>
-            {branchMode === 'none' ? null : branchMode === 'existing' ? (
+            {branchMode === 'none' ? null : branchMode === 'repo-only' ? (
+              <select
+                value={branchRepoId}
+                onChange={e => setBranchRepoId(e.target.value)}
+              >
+                {repos.length === 0 ? (
+                  <option value="" disabled>No repos registered</option>
+                ) : (
+                  <>
+                    <option value="">Select a repo</option>
+                    {repos.map(r => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </>
+                )}
+              </select>
+            ) : branchMode === 'existing' ? (
               <select
                 value={selectedWorktreeId}
                 onChange={e => setSelectedWorktreeId(e.target.value)}

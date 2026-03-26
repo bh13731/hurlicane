@@ -65,28 +65,38 @@ export function createDirectClient(): OrchestratorClient {
         const titleSource = req.description || tpl?.content || '';
         const title = req.title?.trim() || (titleSource ? await generateSmartTitle(titleSource) : 'Untitled');
 
+        // Merge context: template context as base, request context overrides
+        let mergedContext: string | null = null;
+        if (tpl?.context || req.context) {
+          const tplCtx = tpl?.context ? JSON.parse(tpl.context) : {};
+          const merged = { ...tplCtx, ...req.context };
+          if (Object.keys(merged).length > 0) mergedContext = JSON.stringify(merged);
+        }
+
         const job = queries.insertJob({
           id: randomUUID(),
           title,
           description: req.description ?? '',
-          context: req.context ? JSON.stringify(req.context) : null,
-          priority: req.priority ?? 0,
-          repo_id: req.repoId ?? null,
+          context: mergedContext,
+          priority: req.priority ?? tpl?.priority ?? 0,
+          repo_id: req.repoId ?? tpl?.repo_id ?? null,
           branch: req.branch ?? null,
           max_turns: req.maxTurns ?? 50,
-          model: req.model ?? null,
+          model: req.model ?? tpl?.model ?? null,
           template_id: req.templateId ?? null,
           depends_on: req.dependsOn?.length ? JSON.stringify(req.dependsOn) : null,
-          is_interactive: req.interactive ? 1 : 0,
+          is_interactive: req.interactive !== undefined ? (req.interactive ? 1 : 0) : (tpl?.is_interactive ?? 0),
           is_readonly: isReadonly,
-          project_id: req.projectId ?? null,
+          project_id: req.projectId ?? tpl?.project_id ?? null,
           scheduled_at: req.scheduledAt ?? null,
           repeat_interval_ms: req.repeatIntervalMs ?? null,
-          retry_policy: req.retryPolicy ?? 'none',
-          max_retries: req.maxRetries ?? 0,
+          retry_policy: req.retryPolicy ?? tpl?.retry_policy ?? 'none',
+          max_retries: req.maxRetries ?? tpl?.max_retries ?? 0,
           retry_count: 0,
           original_job_id: null,
-          completion_checks: req.completionChecks?.length ? JSON.stringify(req.completionChecks) : null,
+          completion_checks: req.completionChecks?.length
+            ? JSON.stringify(req.completionChecks)
+            : tpl?.completion_checks ?? null,
         });
 
         socket.emitJobNew(job);

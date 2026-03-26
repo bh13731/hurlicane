@@ -59,9 +59,12 @@ ORCHESTRATION (spawn and coordinate sub-agents):
   - create_worktree(branch?, from_remote?):
       Create a git worktree for your current repo with a new branch (from main) or check out an existing remote branch.
       The worktree is always created for the repo you are running in. Returns { worktree_path, branch }.
-  - create_job(description, title?, priority?, max_turns?, model?, depends_on?):
+  - list_templates():
+      List available job templates. Returns { templates: [{ id, name, content_preview, ... }] }.
+  - create_job(description?, title?, priority?, max_turns?, model?, depends_on?, template_id?):
       Create a new job that will be run by another agent. Returns { job_id, title, status }.
       The job inherits your repo and gets its own worktree automatically.
+      Pass template_id to create a job from a template — description becomes optional.
   - wait_for_jobs(job_ids, timeout_ms?):
       Block until all specified jobs finish. Returns an array of { job_id, title, status, result_text }.
       Each call returns after at most ~90s. If some jobs still have non-terminal status (queued/running),

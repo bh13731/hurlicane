@@ -52,8 +52,9 @@ router.post('/', async (req, res) => {
     return;
   }
   const tpl = body.templateId ? queries.getTemplateById(body.templateId) : null;
-  const isReadonlyEarly = body.readonly || !!tpl?.is_readonly;
-  if (!body.repoId && !isReadonlyEarly) {
+  const isReadonly = (body.readonly || !!tpl?.is_readonly) ? 1 : 0;
+  const repoId = body.repoId ?? tpl?.repo_id ?? null;
+  if (!repoId && !isReadonly) {
     res.status(400).json({ error: 'A repository (repoId) is required for non-readonly jobs' });
     return;
   }
@@ -65,19 +66,24 @@ router.post('/', async (req, res) => {
   }
   const title = explicitTitle || (titleSource ? await generateSmartTitle(titleSource) : 'Untitled');
 
-  // If template is marked readonly, force the job to be readonly regardless of request
-  const isReadonly = (body.readonly || !!tpl?.is_readonly) ? 1 : 0;
-
   // Validate FK references exist before inserting
   const templateId = body.templateId ?? null;
   if (templateId && !queries.getTemplateById(templateId)) {
     res.status(400).json({ error: `Template '${templateId}' not found` });
     return;
   }
-  const projectId = body.projectId ?? null;
+  const projectId = body.projectId ?? tpl?.project_id ?? null;
   if (projectId && !queries.getProjectById(projectId)) {
     res.status(400).json({ error: `Project '${projectId}' not found` });
     return;
+  }
+
+  // Merge context: template context as base, request context overrides
+  let mergedContext: string | null = null;
+  if (tpl?.context || body.context) {
+    const tplCtx = tpl?.context ? JSON.parse(tpl.context) : {};
+    const merged = { ...tplCtx, ...body.context };
+    if (Object.keys(merged).length > 0) mergedContext = JSON.stringify(merged);
   }
 
   let job;
@@ -86,24 +92,26 @@ router.post('/', async (req, res) => {
       id: randomUUID(),
       title,
       description: body.description ?? '',
-      context: body.context ? JSON.stringify(body.context) : null,
-      priority: body.priority ?? 0,
-      repo_id: body.repoId ?? null,
+      context: mergedContext,
+      priority: body.priority ?? tpl?.priority ?? 0,
+      repo_id: repoId,
       branch: body.branch ?? null,
       max_turns: body.maxTurns ?? 50,
-      model: body.model ?? null,
+      model: body.model ?? tpl?.model ?? null,
       template_id: templateId,
       depends_on: body.dependsOn?.length ? JSON.stringify(body.dependsOn) : null,
-      is_interactive: body.interactive ? 1 : 0,
+      is_interactive: body.interactive !== undefined ? (body.interactive ? 1 : 0) : (tpl?.is_interactive ?? 0),
       is_readonly: isReadonly,
       project_id: projectId,
       scheduled_at: body.scheduledAt ?? null,
       repeat_interval_ms: body.repeatIntervalMs ?? null,
-      retry_policy: body.retryPolicy ?? 'none',
-      max_retries: body.maxRetries ?? 0,
+      retry_policy: body.retryPolicy ?? tpl?.retry_policy ?? 'none',
+      max_retries: body.maxRetries ?? tpl?.max_retries ?? 0,
       retry_count: 0,
       original_job_id: null,
-      completion_checks: body.completionChecks?.length ? JSON.stringify(body.completionChecks) : null,
+      completion_checks: body.completionChecks?.length
+        ? JSON.stringify(body.completionChecks)
+        : tpl?.completion_checks ?? null,
     });
   } catch (err: any) {
     console.error('[jobs] insert failed:', err);
