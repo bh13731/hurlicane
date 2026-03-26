@@ -39,16 +39,15 @@ export async function triageLearnings(agentId: string, job: Job): Promise<void> 
   }
 
   const projectId: string | null = (job as any).project_id ?? null;
-  const workDir: string | null = (job as any).work_dir ?? null;
-  // Use work_dir as fallback scoping key so learnings from different codebases don't mix
-  const effectiveProjectId: string | null = projectId ?? workDir ?? null;
+  // Use repo_id as fallback scoping key so learnings from different codebases don't mix
+  const effectiveProjectId: string | null = projectId ?? job.repo_id ?? null;
 
   // Find similar existing KB entries using FTS on each learning's title
   const candidates = findCandidateMatches(learnings, effectiveProjectId);
 
   let classifications: TriageResult[];
   try {
-    classifications = await classifyLearnings(learnings, candidates, job.title, workDir);
+    classifications = await classifyLearnings(learnings, candidates, job.title, job.repo_id);
   } catch (err) {
     console.error(`[memory-triage] API call failed for agent ${agentId}, storing all as project-scoped:`, err);
     classifications = learnings.map((_, i) => ({ index: i, classification: 'project' as const }));
@@ -133,7 +132,7 @@ async function classifyLearnings(
   learnings: Learning[],
   candidates: CandidateEntry[],
   jobTitle: string,
-  workDir?: string | null,
+  repoId?: string | null,
 ): Promise<TriageResult[]> {
   const learningsList = learnings.map((l, i) =>
     `${i}. "${l.title}": ${l.content.slice(0, 200)}${l.scope ? ` [hint: ${l.scope}]` : ''}`
@@ -143,10 +142,10 @@ async function classifyLearnings(
     ? `\nExisting KB entries (check for duplicates — compare CONTENT, not just titles):\n${candidates.map(c => `- [${c.id}] "${c.title}": ${c.excerpt}`).join('\n')}`
     : '';
 
-  const workDirLine = workDir ? `\nCodebase directory: ${workDir}` : '';
+  const repoLine = repoId ? `\nRepository: ${repoId}` : '';
 
   const prompt = `You are triaging learnings from an AI coding agent into a knowledge base.
-Job completed: "${jobTitle}"${workDirLine}
+Job completed: "${jobTitle}"${repoLine}
 
 Learnings to classify:
 ${learningsList}

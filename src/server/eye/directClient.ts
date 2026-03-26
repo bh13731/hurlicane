@@ -71,14 +71,14 @@ export function createDirectClient(): OrchestratorClient {
           description: req.description ?? '',
           context: req.context ? JSON.stringify(req.context) : null,
           priority: req.priority ?? 0,
-          work_dir: req.workDir ?? null,
+          repo_id: req.repoId ?? null,
+          branch: req.branch ?? null,
           max_turns: req.maxTurns ?? 50,
           model: req.model ?? null,
           template_id: req.templateId ?? null,
           depends_on: req.dependsOn?.length ? JSON.stringify(req.dependsOn) : null,
           is_interactive: req.interactive ? 1 : 0,
           is_readonly: isReadonly,
-          use_worktree: isReadonly ? 0 : (req.useWorktree ? 1 : 0),
           project_id: req.projectId ?? null,
           scheduled_at: req.scheduledAt ?? null,
           repeat_interval_ms: req.repeatIntervalMs ?? null,
@@ -168,7 +168,7 @@ export function createDirectClient(): OrchestratorClient {
       const wt = queries.getWorktreeByBranch(branch);
       if (!wt) return { found: false, cancelledJobs: 0 };
 
-      const activeJobs = queries.listActiveJobsByWorkDir(wt.path);
+      const activeJobs = wt.repo_id ? queries.listActiveJobsByRepoBranch(wt.repo_id, wt.branch) : [];
       let cancelledJobCount = 0;
       for (const job of activeJobs) {
         const agents = queries.getAgentsWithJobByJobId(job.id);

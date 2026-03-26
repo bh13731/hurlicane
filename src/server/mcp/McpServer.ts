@@ -264,7 +264,7 @@ function buildMcpServer(agentId: string): MCP {
       description: createJobSchema.shape.description,
       title: createJobSchema.shape.title,
       priority: createJobSchema.shape.priority,
-      work_dir: createJobSchema.shape.work_dir,
+      branch: createJobSchema.shape.branch,
       max_turns: createJobSchema.shape.max_turns,
       model: createJobSchema.shape.model,
       depends_on: createJobSchema.shape.depends_on,
@@ -278,7 +278,7 @@ function buildMcpServer(agentId: string): MCP {
 
   server.tool(
     'create_worktree',
-    'Create a git worktree (new branch from main, or checkout of an existing remote branch). Returns { worktree_path, branch }. Pass the worktree_path as work_dir to create_job so the child job runs in that worktree.',
+    'Create a git worktree (new branch from main, or checkout of an existing remote branch). Returns { worktree_path, branch }. Use the branch name when creating jobs with create_job.',
     {
       repo_name: createWorktreeSchema.shape.repo_name,
       branch: createWorktreeSchema.shape.branch,

@@ -58,11 +58,10 @@ COORDINATION:
 ORCHESTRATION (spawn and coordinate sub-agents):
   - create_worktree(branch?, from_remote?):
       Create a git worktree for your current repo with a new branch (from main) or check out an existing remote branch.
-      The worktree is always created for the repo you are running in. Returns { worktree_path, branch }. Pass worktree_path as work_dir to create_job.
-  - create_job(description, title?, priority?, work_dir?, max_turns?, model?, depends_on?):
+      The worktree is always created for the repo you are running in. Returns { worktree_path, branch }.
+  - create_job(description, title?, priority?, max_turns?, model?, depends_on?):
       Create a new job that will be run by another agent. Returns { job_id, title, status }.
-      work_dir defaults to your own working directory. Pass a worktree_path from create_worktree
-      to run the job on a specific branch.
+      The job inherits your repo and gets its own worktree automatically.
   - wait_for_jobs(job_ids, timeout_ms?):
       Block until all specified jobs finish. Returns an array of { job_id, title, status, result_text }.
       Each call returns after at most ~90s. If some jobs still have non-terminal status (queued/running),
@@ -155,7 +154,7 @@ export function runAgent(options: RunOptions): void {
   const logFd = fs.openSync(logPath, 'w');
   const errFd = fs.openSync(errPath, 'w');
 
-  const workDir = (job as any).work_dir ?? process.cwd();
+  const workDir = queries.resolveJobWorkDir(job);
   const maxTurns = (job as any).max_turns ?? 50;
   const model: string | null = (job as any).model ?? null;
   const useCodex = isCodexModel(model);
@@ -456,7 +455,7 @@ export async function handleJobCompletion(
 ): Promise<void> {
   // Capture git diff between base_sha and current HEAD (committed + staged changes)
   const agentRec = queries.getAgentById(agentId);
-  const workDir = (job as any).work_dir ?? process.cwd();
+  const workDir = queries.resolveJobWorkDir(job);
   if (agentRec?.base_sha) {
     try {
       const committed = execSync(
@@ -779,7 +778,7 @@ function buildPrompt(job: Job): string {
   }
 
   // Inject CLAUDE.md for Codex agents (Claude reads it natively)
-  const workDir = (job as any).work_dir ?? process.cwd();
+  const workDir = queries.resolveJobWorkDir(job);
   if (isCodexModel(model)) {
     const claudeMd = readClaudeMd(workDir);
     if (claudeMd) {
@@ -787,10 +786,9 @@ function buildPrompt(job: Job): string {
     }
   }
 
-  // Inject repo-specific instructions if the job is running in a worktree
-  const wt = queries.getWorktreeByPath(workDir);
-  if (wt?.repo_id) {
-    const repo = queries.getRepoById(wt.repo_id);
+  // Inject repo-specific instructions
+  if (job.repo_id) {
+    const repo = queries.getRepoById(job.repo_id);
     if (repo?.instructions?.trim()) {
       prompt += `\n\n## Repo Instructions (${repo.name})\n\n${repo.instructions}`;
     }
@@ -806,8 +804,7 @@ export const MEMORY_BUDGET = 2000;
 
 export function buildMemorySection(job: Job): string {
   const projectId: string | null = (job as any).project_id ?? null;
-  const workDir: string | null = (job as any).work_dir ?? null;
-  const effectiveProjectId: string | null = projectId ?? workDir ?? null;
+  const effectiveProjectId: string | null = projectId ?? job.repo_id ?? null;
   const memories = queries.getMemoryForJob(effectiveProjectId, job.title, job.description);
   if (memories.length === 0) return '';
 

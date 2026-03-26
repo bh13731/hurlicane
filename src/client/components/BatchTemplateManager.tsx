@@ -22,10 +22,10 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
   const [runProjectName, setRunProjectName] = useState('');
   const [runTemplateId, setRunTemplateId] = useState('');
   const [runModel, setRunModel] = useState('');
-  const [runWorkDir, setRunWorkDir] = useState('');
+  const [runRepoId, setRunRepoId] = useState('');
+  const [runBranch, setRunBranch] = useState('');
   const [runMaxTurns, setRunMaxTurns] = useState(50);
   const [runInteractive, setRunInteractive] = useState(false);
-  const [runUseWorktree, setRunUseWorktree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [confirmDeleteBt, setConfirmDeleteBt] = useState<BatchTemplate | null>(null);
 
@@ -129,8 +129,8 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
           templateId: runTemplateId || undefined,
           model: runModel || undefined,
           interactive: runInteractive || undefined,
-          useWorktree: runUseWorktree || undefined,
-          workDir: runWorkDir.trim() || undefined,
+          repoId: runRepoId || undefined,
+          branch: runBranch.trim() || undefined,
           maxTurns: runMaxTurns,
           projectName: runProjectName.trim() || undefined,
         }),
@@ -295,13 +295,23 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
 
                 <div className="form-row">
                   <div className="form-group">
-                    <label htmlFor="run-workdir">Working Directory</label>
+                    <label htmlFor="run-repoid">Repository ID</label>
                     <input
-                      id="run-workdir"
+                      id="run-repoid"
                       type="text"
-                      value={runWorkDir}
-                      onChange={e => setRunWorkDir(e.target.value)}
-                      placeholder="/path/to/project (optional)"
+                      value={runRepoId}
+                      onChange={e => setRunRepoId(e.target.value)}
+                      placeholder="repo id (optional)"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="run-branch">Branch</label>
+                    <input
+                      id="run-branch"
+                      type="text"
+                      value={runBranch}
+                      onChange={e => setRunBranch(e.target.value)}
+                      placeholder="branch name (optional, auto-generated)"
                     />
                   </div>
                   <div className="form-group form-group-sm">
@@ -321,13 +331,6 @@ export function BatchTemplateManager({ onClose, onRun }: BatchTemplateManagerPro
                   <label className="form-checkbox-label">
                     <input type="checkbox" checked={runInteractive} onChange={e => setRunInteractive(e.target.checked)} />
                     Interactive session
-                  </label>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-checkbox-label">
-                    <input type="checkbox" checked={runUseWorktree} onChange={e => setRunUseWorktree(e.target.checked)} />
-                    Use worktree
                   </label>
                 </div>
 

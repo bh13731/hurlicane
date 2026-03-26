@@ -134,7 +134,7 @@ export interface StartInteractiveOptions {
 }
 
 export function startInteractiveAgent({ agentId, job, cols = 220, rows = 50, resumeSessionId, autoFinish = false }: StartInteractiveOptions): void {
-  const workDir = (job as any).work_dir ?? process.cwd();
+  const workDir = queries.resolveJobWorkDir(job);
   const model: string | null = (job as any).model ?? null;
   const mcpPort = Number(MCP_PORT);
 
@@ -328,7 +328,7 @@ export async function attachPty(agentId: string, job: Job, cols = 220, rows = 50
         name: 'xterm-256color',
         cols,
         rows,
-        cwd: (job as any).work_dir ?? process.cwd(),
+        cwd: queries.resolveJobWorkDir(job),
         env: (() => {
           const env: Record<string, string> = {};
           for (const [k, v] of Object.entries(process.env)) {
@@ -498,7 +498,7 @@ function buildInteractivePrompt(job: Job): string {
   }
 
   // Inject CLAUDE.md for Codex agents (Claude reads it natively)
-  const workDir = (job as any).work_dir ?? process.cwd();
+  const workDir = queries.resolveJobWorkDir(job);
   if (isCodexModel(model)) {
     const claudeMd = readClaudeMd(workDir);
     if (claudeMd) {

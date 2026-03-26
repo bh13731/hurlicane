@@ -18,14 +18,14 @@ export function insertJob(job: {
   context: string | null;
   priority: number;
   status?: JobStatus;
-  work_dir?: string | null;
+  repo_id?: string | null;
+  branch?: string | null;
   max_turns?: number;
   model?: string | null;
   template_id?: string | null;
   depends_on?: string | null;
   is_interactive?: number;
   is_readonly?: number;
-  use_worktree?: number;
   project_id?: string | null;
   scheduled_at?: number | null;
   repeat_interval_ms?: number | null;
@@ -39,18 +39,18 @@ export function insertJob(job: {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, is_readonly, use_worktree, project_id, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, created_by_agent_id, created_at, updated_at)
+    INSERT INTO jobs (id, title, description, context, status, priority, repo_id, branch, max_turns, model, template_id, depends_on, is_interactive, is_readonly, project_id, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, created_by_agent_id, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     job.id, job.title, job.description, job.context,
     job.status ?? 'queued', job.priority,
-    job.work_dir ?? null, job.max_turns ?? 50,
+    job.repo_id ?? null, job.branch ?? null,
+    job.max_turns ?? 50,
     job.model ?? null,
     job.template_id ?? null,
     job.depends_on ?? null,
     job.is_interactive ?? 0,
     job.is_readonly ?? 0,
-    job.use_worktree ?? 0,
     job.project_id ?? null,
     job.scheduled_at ?? null,
     job.repeat_interval_ms ?? null,
@@ -82,12 +82,29 @@ export function listJobs(status?: JobStatus): Job[] {
   return rows.map(r => cast<Job>(r));
 }
 
-export function listActiveJobsByWorkDir(workDir: string): Job[] {
+export function listActiveJobsByRepoBranch(repoId: string, branch: string): Job[] {
   const db = getDb();
   const rows = db.prepare(
-    "SELECT * FROM jobs WHERE work_dir = ? AND status IN ('queued', 'assigned', 'running') ORDER BY created_at ASC"
-  ).all(workDir);
+    "SELECT * FROM jobs WHERE repo_id = ? AND branch = ? AND status IN ('queued', 'assigned', 'running') ORDER BY created_at ASC"
+  ).all(repoId, branch);
   return rows.map(r => cast<Job>(r));
+}
+
+/**
+ * Resolve the working directory for a job based on its repo_id and branch.
+ * Three modes:
+ *   - No repo_id → process.cwd()
+ *   - repo_id but no branch → repo root path
+ *   - repo_id + branch → worktree path (throws if worktree not found)
+ */
+export function resolveJobWorkDir(job: Job): string {
+  if (!job.repo_id) return process.cwd();
+  const repo = getRepoById(job.repo_id);
+  if (!repo) throw new Error(`Repo ${job.repo_id} not found for job ${job.id}`);
+  if (!job.branch) return repo.path;
+  const wt = getWorktreeByBranch(job.branch, job.repo_id);
+  if (!wt) throw new Error(`No worktree found for repo ${job.repo_id} branch ${job.branch}`);
+  return wt.path;
 }
 
 /** Slim version for snapshot — truncates description to keep payload small. */
@@ -168,6 +185,11 @@ export function updateJobScheduledAt(id: string, scheduledAt: number | null): vo
   db.prepare('UPDATE jobs SET scheduled_at = ?, updated_at = ? WHERE id = ?').run(scheduledAt, Date.now(), id);
 }
 
+export function updateJobBranch(id: string, branch: string): void {
+  const db = getDb();
+  db.prepare('UPDATE jobs SET branch = ?, updated_at = ? WHERE id = ?').run(branch, Date.now(), id);
+}
+
 export function getNextQueuedJob(): Job | null {
   const db = getDb();
   // Skip jobs whose dependencies have not all completed successfully
@@ -194,13 +216,13 @@ export function scheduleRepeatJob(job: Job): Job {
     description: job.description,
     context: job.context,
     priority: job.priority,
-    work_dir: (job as any).work_dir ?? null,
+    repo_id: job.repo_id ?? null,
+    branch: job.branch ?? null,
     max_turns: (job as any).max_turns ?? 50,
     model: job.model ?? null,
     template_id: job.template_id ?? null,
     depends_on: null,
     is_interactive: job.is_interactive,
-    use_worktree: job.use_worktree,
     project_id: job.project_id ?? null,
     scheduled_at: Date.now() + repeatIntervalMs,
     repeat_interval_ms: repeatIntervalMs,
@@ -426,7 +448,7 @@ export function getAgentsWithJobForSnapshot(): AgentWithJob[] {
   return agents.map(agent => {
     const job = jobMap.get(agent.job_id);
     if (!job) {
-      const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, work_dir: null, use_worktree: 0, project_id: null, flagged: 0, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
+      const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, repo_id: null, branch: null, project_id: null, flagged: 0, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
       return { ...agent, diff: null, job: stub, template_name: null, pending_question: null, active_locks: [], child_agents: [], warnings: [] } as AgentWithJob;
     }
     return {
@@ -471,7 +493,7 @@ function enrichAgent(agent: Agent): AgentWithJob {
   const jobRow = db.prepare('SELECT * FROM jobs WHERE id = ?').get(agent.job_id);
   if (!jobRow) {
     // Job was deleted while agent still references it — return a stub
-    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, work_dir: null, use_worktree: 0, project_id: null, flagged: 0, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
+    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, repo_id: null, branch: null, project_id: null, flagged: 0, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
     return { ...agent, job: stub, template_name: null, pending_question: null, active_locks: [], child_agents: [], warnings: [] };
   }
   const job = cast<Job>(jobRow);

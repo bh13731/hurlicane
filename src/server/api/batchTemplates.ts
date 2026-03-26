@@ -99,8 +99,8 @@ router.post('/:id/run', (req, res) => {
       template_id: body.templateId ?? null,
       is_interactive: body.interactive ? 1 : 0,
       is_readonly: isReadonly,
-      use_worktree: isReadonly ? 0 : 1,
-      work_dir: body.workDir ?? null,
+      repo_id: body.repoId ?? null,
+      branch: body.branch ?? null,
       max_turns: body.maxTurns ?? 50,
       project_id: project.id,
     });

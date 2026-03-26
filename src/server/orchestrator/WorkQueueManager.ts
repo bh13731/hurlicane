@@ -74,16 +74,15 @@ async function tick(): Promise<void> {
     queries.insertAgent({ id: agentId, job_id: job.id, status: 'starting', parent_agent_id: (readyJob as any).created_by_agent_id ?? undefined });
     socket.emitAgentNew(queries.getAgentWithJob(agentId)!);
 
-    // Readonly jobs skip worktree creation and run directly in the repo
-    // If worktree requested, create one and override the working directory
-    const dispatchJob = (readyJob.use_worktree && !readyJob.is_readonly)
-      ? createWorktree(readyJob, agentId)
+    // For non-readonly jobs with a repo_id, ensure a worktree exists for the repo/branch
+    const dispatchJob = (!readyJob.is_readonly && readyJob.repo_id)
+      ? ensureWorktree(readyJob, agentId)
       : readyJob;
 
     // Codex batch agents still use runAgent (stream-json path); all others use tmux.
     const useCodexBatch = isCodexModel((dispatchJob as any).model ?? null) && !dispatchJob.is_interactive;
     const autoFinish = !dispatchJob.is_interactive;
-    console.log(`[queue] dispatching "${job.title}" → agent ${agentId} (model: ${model}, interactive: ${!!readyJob.is_interactive}${readyJob.use_worktree ? ', worktree' : ''}${useCodexBatch ? ', codex-batch' : ''})`);
+    console.log(`[queue] dispatching "${job.title}" → agent ${agentId} (model: ${model}, interactive: ${!!readyJob.is_interactive}${readyJob.repo_id ? `, repo: ${readyJob.repo_id}` : ''}${readyJob.branch ? `, branch: ${readyJob.branch}` : ''}${useCodexBatch ? ', codex-batch' : ''})`);
     if (useCodexBatch) {
       runAgent({ agentId, job: dispatchJob });
     } else {
@@ -99,33 +98,36 @@ async function tick(): Promise<void> {
 }
 
 /**
- * Create a git worktree for a job and return a shallow copy of the job
- * with work_dir pointing to the new worktree.
+ * Ensure a worktree exists for the job's repo_id + branch.
+ * If one already exists, reuse it. Otherwise create a new one.
+ * Updates the job's branch in the DB if it was auto-generated.
  */
-function createWorktree(job: Job, agentId: string): Job {
-  const repoDir = (job as any).work_dir;
-  if (!repoDir) throw new Error('work_dir is required for worktree creation');
+function ensureWorktree(job: Job, agentId: string): Job {
+  if (!job.repo_id) throw new Error('repo_id is required for worktree creation');
 
-  // If work_dir is already a worktree, reuse it instead of creating a new one
-  const existingWt = queries.getWorktreeByPath(repoDir);
-  if (existingWt) {
-    console.log(`[queue] work_dir is already worktree ${existingWt.id} (branch: ${existingWt.branch}), reusing`);
-    return job;
+  const repo = queries.getRepoById(job.repo_id);
+  if (!repo) throw new Error(`No registered repo found for id: ${job.repo_id}`);
+
+  // If the job already has a branch, check for an existing worktree
+  if (job.branch) {
+    const existing = queries.getWorktreeByBranch(job.branch, job.repo_id);
+    if (existing) {
+      console.log(`[queue] reusing existing worktree for branch ${job.branch}: ${existing.path}`);
+      return job;
+    }
   }
-
-  // Look up the repo record so we know the repo path and id
-  const repo = queries.getRepoByPath(repoDir);
-  if (!repo) throw new Error(`No registered repo found for path: ${repoDir}`);
 
   const shortId = agentId.slice(0, 8);
 
-  // Slugify job title for the branch name
-  const slug = job.title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 40);
-  const branchName = `orchestrator/${slug}-${shortId}`;
+  // Generate branch name if not provided
+  const branchName = job.branch ?? (() => {
+    const slug = job.title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40);
+    return `orchestrator/${slug}-${shortId}`;
+  })();
 
   const worktreeDir = path.resolve('data', 'worktrees', shortId);
 
@@ -162,6 +164,10 @@ function createWorktree(job: Job, agentId: string): Job {
     });
   } catch (err) { console.warn('[queue] failed to record worktree:', err); }
 
-  // Return a copy of the job with the overridden work_dir
-  return { ...job, work_dir: worktreeDir } as any;
+  // If branch was auto-generated, persist it back to the job
+  if (!job.branch) {
+    queries.updateJobBranch(job.id, branchName);
+  }
+
+  return { ...job, branch: branchName };
 }

@@ -29,31 +29,20 @@ function retrySame(job: Job): boolean {
 
   console.log(`[retry] cloning job ${job.id} (same strategy, attempt ${retryCount}/${job.max_retries})`);
 
-  // Reuse existing worktree if the original job created one
-  let workDir = (job as any).work_dir ?? null;
-  let useWorktree = job.use_worktree;
-  if (useWorktree) {
-    const existingWt = queries.getWorktreeByJobId(job.id);
-    if (existingWt) {
-      workDir = existingWt.path;
-      useWorktree = 0; // already have a worktree, don't create another
-      console.log(`[retry] reusing worktree ${existingWt.path} (branch: ${existingWt.branch})`);
-    }
-  }
-
+  // Reuse same repo and branch — the worktree will be found at dispatch time
   const retryJob = queries.insertJob({
     id: randomUUID(),
     title: job.title,
     description: job.description,
     context: job.context,
     priority: job.priority,
-    work_dir: workDir,
+    repo_id: job.repo_id ?? null,
+    branch: job.branch ?? null,
     max_turns: (job as any).max_turns ?? 50,
     model: job.model ?? null,
     template_id: job.template_id ?? null,
     depends_on: null,
     is_interactive: 0,
-    use_worktree: useWorktree,
     project_id: job.project_id ?? null,
     retry_policy: job.retry_policy,
     max_retries: job.max_retries,
@@ -113,26 +102,19 @@ function retryAnalyze(job: Job, agentId: string): boolean {
     originalJob: job,
   });
 
-  // Reuse existing worktree for the analysis job
-  let analysisWorkDir = (job as any).work_dir ?? null;
-  if (job.use_worktree) {
-    const existingWt = queries.getWorktreeByJobId(job.id);
-    if (existingWt) analysisWorkDir = existingWt.path;
-  }
-
   const analysisJob = queries.insertJob({
     id: randomUUID(),
     title: `[Analysis] ${job.title}`.slice(0, 100),
     description: analysisPrompt,
     context: null,
     priority: job.priority + 1, // slightly higher to run soon
-    work_dir: analysisWorkDir,
+    repo_id: job.repo_id ?? null,
+    branch: job.branch ?? null,
     max_turns: 10,
     model: 'claude-haiku-4-5-20251001',
     template_id: null,
     depends_on: null,
     is_interactive: 0,
-    use_worktree: 0,
     project_id: job.project_id ?? null,
     retry_policy: 'none', // analysis jobs never retry themselves
     max_retries: 0,
@@ -160,7 +142,6 @@ interface AnalysisContext {
 }
 
 function buildAnalysisPrompt(ctx: AnalysisContext): string {
-  const workDir = (ctx.originalJob as any).work_dir ?? process.cwd();
   const retrySettings = [
     `retry_policy: '${ctx.originalJob.retry_policy}'`,
     `max_retries: ${ctx.originalJob.max_retries}`,
@@ -195,7 +176,6 @@ ${ctx.diff}
 2. **Write your diagnosis** to the scratchpad using write_note with key \`retry/${ctx.originalJobId}/attempt_${ctx.retryCount}\`.
 3. **Create a retry job** using create_job with:
    - The SAME task description as the original, PLUS an "## Previous Failure Analysis" section with your diagnosis and specific guidance on what to do differently
-   - work_dir: '${workDir}'
    - max_turns: ${(ctx.originalJob as any).max_turns ?? 50}
    ${ctx.originalJob.model ? `- model: '${ctx.originalJob.model}'` : ''}
    ${ctx.originalJob.template_id ? `- template_id is not available via create_job, so include any relevant template context in the description` : ''}

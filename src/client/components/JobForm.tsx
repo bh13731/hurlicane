@@ -109,39 +109,31 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
       const selectedWorktree = worktrees.find(w => w.id === selectedWorktreeId);
       const selectedRepo = repos.find(r => r.id === branchRepoId);
 
-      let workDir: string | undefined;
+      let repoId: string | undefined;
+      let branch: string | undefined;
       if (branchMode === 'none') {
-        // No worktree — workDir stays undefined
+        // No repo/branch
       } else if (branchMode === 'existing' && selectedWorktree) {
-        workDir = selectedWorktree.path;
+        repoId = selectedWorktree.repo_id;
+        branch = selectedWorktree.branch;
       } else if (branchMode === 'remote' && selectedRemoteBranch && branchRepoId) {
-        // Create a worktree tracking the remote branch
-        const wtRes = await fetch('/api/worktrees', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ branch: selectedRemoteBranch, repoId: branchRepoId, trackExisting: true }),
-        });
-        if (!wtRes.ok) {
-          const err = await wtRes.json();
-          throw new Error(err.error || 'Failed to create worktree from remote branch');
-        }
-        const wt = await wtRes.json();
-        workDir = wt.path;
+        repoId = branchRepoId;
+        branch = selectedRemoteBranch;
       } else {
-        workDir = selectedRepo?.path || undefined;
+        repoId = selectedRepo?.id || undefined;
       }
 
       await onSubmit({
         title: title.trim() || undefined,
         description: description.trim(),
-        workDir,
+        repoId,
+        branch,
         priority,
         model: model.trim() || undefined,
         templateId: templateId || undefined,
         dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
         interactive: interactive || undefined,
         readonly: readonly || undefined,
-        useWorktree: branchMode !== 'none',
         repeatIntervalMs: repeatSeconds ? (repeatSeconds as number) * 1000 : undefined,
         retryPolicy: retryPolicy !== 'none' ? retryPolicy : undefined,
         maxRetries: retryPolicy !== 'none' ? maxRetries : undefined,

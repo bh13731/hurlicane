@@ -7,17 +7,16 @@ export const createJobSchema = z.object({
   description: z.string().describe('Full task description for the new job'),
   title: z.string().optional().describe('Short title (auto-generated from first line if omitted)'),
   priority: z.number().optional().describe('Priority 0–10; higher runs sooner (default: 0)'),
-  work_dir: z.string().optional().describe("Working directory (defaults to this agent's working directory)"),
+  branch: z.string().optional().describe('Git branch for the job. Auto-generated if omitted. A worktree is created/reused for this branch.'),
   max_turns: z.number().optional().describe('Max agent turns (default: 50)'),
   model: z.string().optional().describe('Model override, e.g. "claude-opus-4-6" (default: auto-classify)'),
   depends_on: z.array(z.string()).optional().describe('Job IDs that must complete before this job runs'),
-  use_worktree: z.boolean().optional().describe('Create a git worktree so the agent works in an isolated checkout (always true)'),
   repeat_interval_ms: z.number().optional().describe('Re-queue the job automatically after it completes; value is the delay in ms before the next run'),
   template_id: z.string().optional().describe('Template ID to use. The template content is prepended to the description, and its model/readonly settings are applied as defaults.'),
 });
 
 export async function createJobHandler(agentId: string, input: z.infer<typeof createJobSchema>): Promise<string> {
-  const { description, title, priority, work_dir, max_turns, model, depends_on, use_worktree, repeat_interval_ms, template_id } = input;
+  const { description, title, priority, branch, max_turns, model, depends_on, repeat_interval_ms, template_id } = input;
 
   // Resolve template if specified
   const tpl = template_id ? queries.getTemplateById(template_id) : null;
@@ -25,8 +24,8 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     return JSON.stringify({ error: `Template '${template_id}' not found` });
   }
 
-  // Inherit work_dir, project_id, model, and is_readonly from calling agent's job if not specified
-  let resolvedWorkDir = work_dir ?? null;
+  // Inherit repo_id, project_id, model, and is_readonly from calling agent's job if not specified
+  let inheritedRepoId: string | null = null;
   let inheritedProjectId: string | null = null;
   let inheritedModel: string | null = null;
   let inheritedReadonly = 0;
@@ -34,7 +33,7 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
   if (agent) {
     const parentJob = queries.getJobById(agent.job_id);
     if (parentJob) {
-      if (!resolvedWorkDir) resolvedWorkDir = (parentJob as any)?.work_dir ?? null;
+      inheritedRepoId = parentJob.repo_id ?? null;
       inheritedProjectId = parentJob.project_id ?? null;
       inheritedModel = parentJob.model ?? null;
       inheritedReadonly = parentJob.is_readonly ?? 0;
@@ -72,13 +71,13 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     description,
     context: null,
     priority: priority ?? 0,
-    work_dir: resolvedWorkDir,
+    repo_id: inheritedRepoId,
+    branch: branch ?? null,
     max_turns: max_turns ?? 50,
     model: model ?? tpl?.model ?? inheritedModel,
     template_id: template_id ?? null,
     depends_on: depends_on?.length ? JSON.stringify(depends_on) : null,
     is_readonly: isReadonly,
-    use_worktree: isReadonly ? 0 : 1,
     project_id: inheritedProjectId,
     repeat_interval_ms: repeat_interval_ms ?? null,
     retry_policy: retryPolicy,

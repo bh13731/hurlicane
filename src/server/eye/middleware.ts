@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import type { EyeConfig, OrchestratorClient, TemplateBinding, TemplateFilter } from './types.js';
 import type { CreateJobRequest } from '../../shared/types.js';
-import { resolveWorktree } from './worktree.js';
+// resolveWorktree is no longer needed — worktrees are created at dispatch time
 
 export function extractFilterFields(
   eventType: string,
@@ -129,12 +129,16 @@ export async function processEvent(
     return null;
   }
 
-  const wt = await resolveWorktree(client, repoName, branch);
-  if (wt) {
-    console.log(`[eye] worktree resolved: ${wt.workDir} (branch: ${wt.branch}, new: ${wt.isNew})`);
-    jobReq.workDir = wt.workDir;
-  } else {
-    console.log(`[eye] no worktree resolved for branch="${branch}"`);
+  // Resolve repo by name and set repoId + branch on the job request
+  if (repoName && branch) {
+    const repo = await client.getRepoByName(repoName);
+    if (repo) {
+      jobReq.repoId = repo.id;
+      jobReq.branch = branch;
+      console.log(`[eye] resolved repo "${repoName}" → ${repo.id}, branch: ${branch}`);
+    } else {
+      console.log(`[eye] repo "${repoName}" not registered, skipping repo/branch`);
+    }
   }
 
   let firstTitle: string | null = null;

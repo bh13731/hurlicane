@@ -53,8 +53,8 @@ router.post('/', async (req, res) => {
   }
   const tpl = body.templateId ? queries.getTemplateById(body.templateId) : null;
   const isReadonlyEarly = body.readonly || !!tpl?.is_readonly;
-  if (!body.workDir && !isReadonlyEarly) {
-    res.status(400).json({ error: 'A working directory (workDir) is required for non-readonly jobs' });
+  if (!body.repoId && !isReadonlyEarly) {
+    res.status(400).json({ error: 'A repository (repoId) is required for non-readonly jobs' });
     return;
   }
 
@@ -88,14 +88,14 @@ router.post('/', async (req, res) => {
       description: body.description ?? '',
       context: body.context ? JSON.stringify(body.context) : null,
       priority: body.priority ?? 0,
-      work_dir: body.workDir ?? null,
+      repo_id: body.repoId ?? null,
+      branch: body.branch ?? null,
       max_turns: body.maxTurns ?? 50,
       model: body.model ?? null,
       template_id: templateId,
       depends_on: body.dependsOn?.length ? JSON.stringify(body.dependsOn) : null,
       is_interactive: body.interactive ? 1 : 0,
       is_readonly: isReadonly,
-      use_worktree: isReadonly ? 0 : (body.useWorktree ? 1 : 0),
       project_id: projectId,
       scheduled_at: body.scheduledAt ?? null,
       repeat_interval_ms: body.repeatIntervalMs ?? null,

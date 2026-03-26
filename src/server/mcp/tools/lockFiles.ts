@@ -24,9 +24,10 @@ export async function lockFilesHandler(agentId: string, input: z.infer<typeof lo
 
   // Resolve relative paths to absolute using the agent's work directory
   // so lock paths match the hook's resolved paths
-  const workDir = agent ? queries.getJobById(agent.job_id)?.work_dir : null;
+  const job = agent ? queries.getJobById(agent.job_id) : null;
+  const workDir = job ? queries.resolveJobWorkDir(job) : process.cwd();
   const resolvedFiles = files.map(f =>
-    f.startsWith('/') ? f : path.resolve(workDir || process.cwd(), f)
+    f.startsWith('/') ? f : path.resolve(workDir, f)
   );
 
   const registry = getFileLockRegistry();

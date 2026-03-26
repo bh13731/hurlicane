@@ -13,22 +13,14 @@ export const createWorktreeSchema = z.object({
 });
 
 /**
- * Resolve the repo that the calling agent is running in, based on its job's work_dir.
- * The work_dir may be the repo root itself or a worktree inside the repo.
+ * Resolve the repo that the calling agent is running in, based on its job's repo_id.
  */
-function resolveAgentRepo(agentId: string): ReturnType<typeof queries.getRepoByPath> {
+function resolveAgentRepo(agentId: string): ReturnType<typeof queries.getRepoById> {
   const agent = queries.getAgentById(agentId);
   if (!agent) return null;
   const job = queries.getJobById(agent.job_id);
-  const workDir = job?.work_dir;
-  if (!workDir) return null;
-
-  // Check if work_dir is a known worktree — if so, use its repo_id
-  const wt = queries.getWorktreeByPath(workDir);
-  if (wt?.repo_id) return queries.getRepoById(wt.repo_id);
-
-  // Otherwise check if it's a repo path directly
-  return queries.getRepoByPath(workDir);
+  if (!job?.repo_id) return null;
+  return queries.getRepoById(job.repo_id);
 }
 
 export async function createWorktreeHandler(agentId: string, input: z.infer<typeof createWorktreeSchema>): Promise<string> {
@@ -37,7 +29,7 @@ export async function createWorktreeHandler(agentId: string, input: z.infer<type
   // Always resolve the repo from the agent's own working directory
   let repo = resolveAgentRepo(agentId);
   if (!repo) {
-    // Fallback: if agent has no work_dir yet (e.g. top-level orchestrator), use first repo
+    // Fallback: if agent has no repo_id yet (e.g. top-level orchestrator), use first repo
     const repos = queries.listRepos();
     if (repos.length === 0) {
       return JSON.stringify({ success: false, error: 'No repos registered.' });

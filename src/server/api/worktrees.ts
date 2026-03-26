@@ -153,8 +153,8 @@ router.post('/cleanup-branch', (req, res) => {
     return;
   }
 
-  // Find and cancel all active jobs running in this worktree
-  const activeJobs = queries.listActiveJobsByWorkDir(wt.path);
+  // Find and cancel all active jobs running on this branch
+  const activeJobs = wt.repo_id ? queries.listActiveJobsByRepoBranch(wt.repo_id, wt.branch) : [];
   let cancelledJobCount = 0;
   for (const job of activeJobs) {
     const agents = queries.getAgentsWithJobByJobId(job.id);

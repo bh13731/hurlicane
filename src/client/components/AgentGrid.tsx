@@ -12,7 +12,7 @@ interface AgentGridProps {
   selectedAgentId?: string | null;
   ptyIdleAgentIds?: Set<string>;
   worktreesByJobId?: Map<string, Worktree>;
-  worktreesByPath?: Map<string, Worktree>;
+  worktreesByPath?: Map<string, Worktree>; // legacy, kept for compat
   repoById?: Map<string, Repo>;
 }
 
@@ -245,9 +245,10 @@ export function AgentGrid({ agents, queuedJobs = [], onSelectAgent, onArchiveJob
                 templateName={agent.template_name ?? undefined}
                 isSelected={selectedAgentId === agent.id}
                 isPtyIdle={ptyIdleAgentIds?.has(agent.id)}
-                worktree={worktreesByJobId?.get(agent.job_id) ?? (agent.job.work_dir ? worktreesByPath?.get(agent.job.work_dir) : undefined)}
+                worktree={worktreesByJobId?.get(agent.job_id)}
                 repoName={(() => {
-                  const wt = worktreesByJobId?.get(agent.job_id) ?? (agent.job.work_dir ? worktreesByPath?.get(agent.job.work_dir) : undefined);
+                  if (agent.job.repo_id) return repoById?.get(agent.job.repo_id)?.name;
+                  const wt = worktreesByJobId?.get(agent.job_id);
                   return wt ? repoById?.get(wt.repo_id)?.name : undefined;
                 })()}
               />

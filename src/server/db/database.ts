@@ -45,8 +45,11 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!jobCols.includes('is_interactive')) {
     db.exec('ALTER TABLE jobs ADD COLUMN is_interactive INTEGER NOT NULL DEFAULT 0');
   }
-  if (!jobCols.includes('use_worktree')) {
-    db.exec('ALTER TABLE jobs ADD COLUMN use_worktree INTEGER NOT NULL DEFAULT 0');
+  if (!jobCols.includes('repo_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN repo_id TEXT');
+  }
+  if (!jobCols.includes('branch')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN branch TEXT');
   }
   if (!jobCols.includes('is_readonly')) {
     db.exec('ALTER TABLE jobs ADD COLUMN is_readonly INTEGER NOT NULL DEFAULT 0');

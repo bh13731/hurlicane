@@ -60,9 +60,9 @@ export async function startSlackBot(): Promise<void> {
       }
     }
 
-    // Resolve work_dir — use the first repo's path, or cwd as fallback
+    // Resolve repo — use the first repo as default
     const repos = queries.listRepos?.() ?? [];
-    const defaultWorkDir = repos[0]?.path ?? process.cwd();
+    const defaultRepo = repos[0] ?? null;
 
     // Load template setting
     const templateId = queries.getNote('setting:slack:templateId')?.value || null;
@@ -79,12 +79,11 @@ export async function startSlackBot(): Promise<void> {
         ...(threadContext ? { thread: threadContext } : {}),
       }),
       priority: 0,
-      work_dir: defaultWorkDir,
+      repo_id: defaultRepo?.id ?? null,
       max_turns: 50,
       model: template?.model ?? null,
       template_id: templateId,
       is_readonly: template?.is_readonly ?? 0,
-      use_worktree: 0,
     });
 
     socket.emitJobNew(job);

@@ -19,8 +19,8 @@ export interface Job {
   flagged: number;            // 0=not flagged, 1=flagged for review
   is_interactive: number;     // 0=batch, 1=interactive tmux session
   is_readonly: number;        // 0=normal, 1=read-only (no file edits allowed)
-  work_dir: string | null;    // working directory override
-  use_worktree: number;       // 0=normal, 1=create git worktree
+  repo_id: string | null;     // FK → repos.id
+  branch: string | null;      // git branch name; worktree resolved from repo_id + branch
   project_id: string | null;  // FK → projects.id
   scheduled_at: number | null;
   repeat_interval_ms: number | null;
@@ -217,14 +217,14 @@ export interface CreateJobRequest {
   description: string;
   context?: Record<string, string>;
   priority?: number;
-  workDir?: string;
+  repoId?: string;
+  branch?: string;
   maxTurns?: number;
   model?: string;
   templateId?: string;
   dependsOn?: string[]; // job IDs this job must wait for before running
   interactive?: boolean;
   readonly?: boolean;
-  useWorktree?: boolean;
   projectId?: string;
   repeatIntervalMs?: number;
   scheduledAt?: number;
@@ -321,8 +321,8 @@ export interface RunBatchTemplateRequest {
   templateId?: string;
   model?: string;
   interactive?: boolean;
-  useWorktree?: boolean;
-  workDir?: string;
+  repoId?: string;
+  branch?: string;
   maxTurns?: number;
   projectName?: string;
 }

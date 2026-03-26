@@ -12,9 +12,10 @@ export async function releaseFilesHandler(agentId: string, input: z.infer<typeof
 
   // Resolve relative paths to match how they were stored
   const agent = queries.getAgentById(agentId);
-  const workDir = agent ? queries.getJobById(agent.job_id)?.work_dir : null;
+  const job = agent ? queries.getJobById(agent.job_id) : null;
+  const workDir = job ? queries.resolveJobWorkDir(job) : process.cwd();
   const resolvedFiles = files.map(f =>
-    f.startsWith('/') ? f : path.resolve(workDir || process.cwd(), f)
+    f.startsWith('/') ? f : path.resolve(workDir, f)
   );
 
   const registry = getFileLockRegistry();
