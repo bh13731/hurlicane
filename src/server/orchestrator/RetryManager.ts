@@ -115,6 +115,7 @@ function retryAnalyze(job: Job, agentId: string): boolean {
     template_id: null,
     depends_on: null,
     is_interactive: 0,
+    is_readonly: 1, // analysis jobs only diagnose, never edit code
     project_id: job.project_id ?? null,
     retry_policy: 'none', // analysis jobs never retry themselves
     max_retries: 0,

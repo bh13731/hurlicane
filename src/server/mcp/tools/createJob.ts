@@ -67,6 +67,8 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
         retryCount = origJob.retry_count + 1; // increment since the original already failed once
         originalJobId = origJob.original_job_id ?? origJob.id;
         completionChecks = origJob.completion_checks ?? null;
+        // Inherit is_readonly from the original job, not the analysis job
+        inheritedReadonly = origJob.is_readonly ?? 0;
       }
     }
   }
