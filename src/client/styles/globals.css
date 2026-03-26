@@ -1505,8 +1505,8 @@ body {
 
 .template-content-group textarea {
   flex: 1;
-  resize: none;
-  min-height: 0;
+  resize: vertical;
+  min-height: 300px;
 }
 
 /* ─── Job Form Modal ───────────────────────────────────────────────────────── */
