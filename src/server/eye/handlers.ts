@@ -72,9 +72,23 @@ export function stopDedupCleanup(): void {
 }
 
 /** Reset all in-memory state (events log, dedup map). */
+/** Cancel and clear any pending review debounce buffers matching a prefix (e.g. "owner/repo#123:"). */
+function clearReviewBuffers(prefix: string): void {
+  for (const [key, buf] of reviewBuffers) {
+    if (key.startsWith(prefix)) {
+      clearTimeout(buf.timer);
+      reviewBuffers.delete(key);
+    }
+  }
+}
+
 export function resetState(): void {
   recentEvents = [];
   seen.clear();
+  for (const [key, buf] of reviewBuffers) {
+    clearTimeout(buf.timer);
+    reviewBuffers.delete(key);
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -93,6 +107,142 @@ function buildJob(
     model: 'claude-opus-4-6',
     context,
   };
+}
+
+// ─── Review Debounce ─────────────────────────────────────────────────────────
+// Greptile (and similar tools) post each inline comment as a separate
+// pull_request_review webhook. We buffer reviews per PR+reviewer for a short
+// window, then emit a single combined job.
+
+const REVIEW_DEBOUNCE_MS = 5_000;
+
+interface BufferedReview {
+  reviewId: string;
+  state: string;
+  body: string;
+  inlineComments: string;
+}
+
+interface ReviewBuffer {
+  timer: ReturnType<typeof setTimeout>;
+  reviews: BufferedReview[];
+  repo: string;
+  prNum: number;
+  branch: string;
+  reviewer: string;
+  config: EyeConfig;
+  botPrefix?: string;
+  // Stored so the debounce flush can create the job
+  dispatchContext: {
+    client: OrchestratorClient;
+    eventType: string;
+    payload: any;  // last payload (used for filter field extraction)
+  };
+}
+
+const reviewBuffers = new Map<string, ReviewBuffer>();
+
+function flushReviewBuffer(key: string): void {
+  const buf = reviewBuffers.get(key);
+  if (!buf) return;
+  reviewBuffers.delete(key);
+
+  const { reviews, repo, prNum, branch, reviewer, config, dispatchContext } = buf;
+  if (reviews.length === 0) return;
+
+  // Highest priority wins (changes_requested > others)
+  const hasChangesRequested = reviews.some(r => r.state === 'changes_requested');
+  const priority = hasChangesRequested ? 4 : 1;
+  const title = hasChangesRequested
+    ? `Address review on ${repo}#${prNum}`
+    : `Review commented on ${repo}#${prNum}`;
+
+  const parts = [
+    `${reviewer} left ${reviews.length} review${reviews.length > 1 ? 's' : ''} on ${repo}#${prNum} (branch: ${branch}).`,
+  ];
+
+  for (const r of reviews) {
+    if (r.body) parts.push(`\nReview comment (${r.state}):\n${r.body}`);
+    if (r.inlineComments) parts.push(`\nInline comments:\n${r.inlineComments}`);
+  }
+
+  if (hasChangesRequested) {
+    parts.push(`\nAddress the requested changes and push a fix.`);
+  } else {
+    parts.push(`\nReview and respond or address the comments as needed.`);
+  }
+
+  const reviewIds = reviews.map(r => r.reviewId).join(',');
+  const job = buildJob(config, title, parts.join('\n'), priority, {
+    repo, pr: String(prNum), branch, reviewer, review_id: reviewIds,
+  });
+
+  const { client, eventType, payload } = dispatchContext;
+  processEvent(client, config, eventType, payload, job).then(result => {
+    const action = payload.action ?? '';
+    const author = payload.sender?.login ?? '';
+    if (result) {
+      logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ran', job_title: result.title, detail: `count=${result.count}, reviews=${reviews.length}` });
+    } else {
+      logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: 'no bindings matched filters or job creation failed' });
+    }
+  }).catch(err => {
+    console.error('[eye] failed to flush review buffer:', err);
+  });
+}
+
+function bufferReview(
+  payload: any,
+  config: EyeConfig,
+  botPrefix: string | undefined,
+  client: OrchestratorClient,
+): string {
+  const review = payload.review;
+  const pr = payload.pull_request;
+  const repo = payload.repository?.full_name;
+  if (!review || !pr || !repo) return 'missing review/pr/repo';
+  if (payload.action !== 'submitted') return `action "${payload.action}" (want "submitted")`;
+
+  const reviewer = review.user?.login ?? 'unknown';
+  const prNum = pr.number;
+  const state = review.state ?? 'unknown';
+  const dedupKey = `review:${repo}#${prNum}:${review.id}`;
+  if (isDuplicate(dedupKey)) return 'duplicate';
+
+  const inlineComments = fetchReviewComments(repo, prNum, review.id, botPrefix);
+
+  const bufferKey = `${repo}#${prNum}:${reviewer}`;
+  const existing = reviewBuffers.get(bufferKey);
+
+  const bufferedReview: BufferedReview = {
+    reviewId: String(review.id),
+    state,
+    body: review.body ?? '',
+    inlineComments,
+  };
+
+  if (existing) {
+    // Reset the timer and add this review
+    clearTimeout(existing.timer);
+    existing.reviews.push(bufferedReview);
+    existing.dispatchContext.payload = payload;  // keep latest payload
+    existing.timer = setTimeout(() => flushReviewBuffer(bufferKey), REVIEW_DEBOUNCE_MS);
+  } else {
+    const timer = setTimeout(() => flushReviewBuffer(bufferKey), REVIEW_DEBOUNCE_MS);
+    reviewBuffers.set(bufferKey, {
+      timer,
+      reviews: [bufferedReview],
+      repo,
+      prNum,
+      branch: pr.head?.ref ?? '',
+      reviewer,
+      config,
+      botPrefix,
+      dispatchContext: { client, eventType: 'pull_request_review', payload },
+    });
+  }
+
+  return 'debounced';
 }
 
 // ─── Event Handlers ─────────────────────────────────────────────────────────
@@ -303,6 +453,7 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
 
   if (payload.action === 'synchronize') {
     clearDedupPrefix(prefix);
+    clearReviewBuffers(`${repo}#${prNum}:`);
     console.log(`[eye] reset CI dedup for ${repo}#${prNum}`);
     return null;
   }
@@ -311,6 +462,7 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
     clearDedupPrefix(`review:${repo}#${prNum}:`);
     clearDedupPrefix(`review-comment:${repo}#${prNum}:`);
     clearDedupPrefix(`comment:${repo}#${prNum}:`);
+    clearReviewBuffers(`${repo}#${prNum}:`);
     console.log(`[eye] cleaned dedup for ${repo}#${prNum} (converted to draft)`);
     return null;
   }
@@ -319,6 +471,7 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
     clearDedupPrefix(`review:${repo}#${prNum}:`);
     clearDedupPrefix(`review-comment:${repo}#${prNum}:`);
     clearDedupPrefix(`comment:${repo}#${prNum}:`);
+    clearReviewBuffers(`${repo}#${prNum}:`);
     const branch = pr.head?.ref;
     const merged = pr.merged === true;
     if (branch) {
@@ -372,11 +525,22 @@ export async function dispatch(
   }
 
   const botPrefix = prompts.botName ? `[${prompts.botName.replace(/^\[|\]$/g, '')}]` : undefined;
+
+  // Reviews are debounced — they bypass the normal handler→processEvent flow
+  if (eventType === 'pull_request_review') {
+    const reason = bufferReview(payload, config, botPrefix, client);
+    if (reason === 'debounced') {
+      logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: 'debounced (waiting for more reviews)' });
+    } else {
+      logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: reason });
+    }
+    return null;
+  }
+
   let handlerResult: HandlerResult;
   switch (eventType) {
     case 'check_suite': handlerResult = handleCheckSuite(payload, config); break;
     case 'check_run': handlerResult = handleCheckRun(payload, config); break;
-    case 'pull_request_review': handlerResult = handlePullRequestReview(payload, config, botPrefix); break;
     case 'issue_comment': handlerResult = await handleIssueComment(payload, config); break;
     default:
       logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: `unhandled event type "${eventType}"` });
