@@ -17,6 +17,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [worktreeStats, setWorktreeStats] = useState<{ active: number; cleaned: number } | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/settings')
@@ -30,6 +31,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         setSystemPromptAppendix(data.systemPromptAppendix ?? '');
         setGitAuthorName(data.gitAuthorName ?? '');
         setGitAuthorEmail(data.gitAuthorEmail ?? '');
+        setVersion(data.version ?? null);
       })
       .catch(() => {});
     fetch('/api/worktrees/stats')
@@ -217,6 +219,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               {restarting ? 'Restarting…' : 'Pull & Restart'}
             </button>
           </div>
+          {version && (
+            <div style={{ marginTop: 16, fontSize: 11, color: 'var(--text-secondary)' }}>
+              Version: <code style={{ fontSize: 11 }}>{version}</code>
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <button className="btn btn-primary" onClick={handleSave} disabled={saving}>

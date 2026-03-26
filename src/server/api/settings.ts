@@ -1,8 +1,14 @@
 import { Router } from 'express';
+import { execSync } from 'child_process';
 import * as queries from '../db/queries.js';
 import { getMaxConcurrent, setMaxConcurrent } from '../orchestrator/WorkQueueManager.js';
 
 const router = Router();
+
+let _commitHash: string | null = null;
+try {
+  _commitHash = execSync('git rev-parse HEAD', { timeout: 5000, stdio: 'pipe' }).toString().trim();
+} catch { /* not in a git repo */ }
 
 function maskKey(key: string): string {
   if (!key || key.length < 12) return key ? '••••' : '';
@@ -20,6 +26,7 @@ router.get('/', (_req, res) => {
     anthropicApiKeySet: !!apiKey,
     gitAuthorName: queries.getNote('setting:gitAuthorName')?.value ?? '',
     gitAuthorEmail: queries.getNote('setting:gitAuthorEmail')?.value ?? '',
+    version: _commitHash,
   });
 });
 
