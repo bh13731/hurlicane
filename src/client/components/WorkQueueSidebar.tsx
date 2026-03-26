@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import type { Job, Project, Worktree } from '@shared/types';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import type { Job, Project, Worktree, Repo } from '@shared/types';
 
 function ArchiveIcon() {
   return (
@@ -15,6 +15,7 @@ function ArchiveIcon() {
 interface WorkQueueSidebarProps {
   jobs: Job[];
   projects?: Project[];
+  repos?: Repo[];
   worktreesByJobId?: Map<string, Worktree>;
   onSelectJob?: (job: Job) => void;
   onCancelJob?: (job: Job) => void;
@@ -56,9 +57,53 @@ function loadStorage<T>(key: string, def: T): T {
 }
 
 export function WorkQueueSidebar({
-  jobs, projects = [], worktreesByJobId, onSelectJob, onCancelJob, onRunJobNow, onArchiveJob,
+  jobs, projects = [], repos = [], worktreesByJobId, onSelectJob, onCancelJob, onRunJobNow, onArchiveJob,
 }: WorkQueueSidebarProps) {
   const projectMap = Object.fromEntries(projects.map(p => [p.id, p.name]));
+  const repoMap = Object.fromEntries(repos.map(r => [r.id, r]));
+
+  // ── Repo / branch filter state ─────────────────────────────────────────────
+  const [filterRepoId, setFilterRepoId] = useState<string>(() =>
+    loadStorage('sidebar-filter-repo', '')
+  );
+  const [filterBranch, setFilterBranch] = useState<string>(() =>
+    loadStorage('sidebar-filter-branch', '')
+  );
+
+  useEffect(() => {
+    localStorage.setItem('sidebar-filter-repo', JSON.stringify(filterRepoId));
+  }, [filterRepoId]);
+  useEffect(() => {
+    localStorage.setItem('sidebar-filter-branch', JSON.stringify(filterBranch));
+  }, [filterBranch]);
+
+  // Clear branch when repo changes
+  const handleRepoChange = (repoId: string) => {
+    setFilterRepoId(repoId);
+    setFilterBranch('');
+  };
+
+  // Collect unique branches from visible jobs for the selected repo
+  const branchesForRepo = useMemo(() => {
+    const set = new Set<string>();
+    for (const j of jobs) {
+      if (!j.archived_at && j.branch) {
+        if (!filterRepoId || j.repo_id === filterRepoId) {
+          set.add(j.branch);
+        }
+      }
+    }
+    return [...set].sort();
+  }, [jobs, filterRepoId]);
+
+  // Repos that have at least one non-archived job
+  const reposWithJobs = useMemo(() => {
+    const ids = new Set<string>();
+    for (const j of jobs) {
+      if (!j.archived_at && j.repo_id) ids.add(j.repo_id);
+    }
+    return repos.filter(r => ids.has(r.id));
+  }, [jobs, repos]);
 
   // ── Persisted state ────────────────────────────────────────────────────────
   const [folders, setFolders] = useState<SidebarFolder[]>(() =>
@@ -94,7 +139,12 @@ export function WorkQueueSidebar({
   }, [renamingId]);
 
   // ── Derived job groups ─────────────────────────────────────────────────────
-  const visibleJobs = jobs.filter(j => !j.archived_at);
+  const visibleJobs = jobs.filter(j => {
+    if (j.archived_at) return false;
+    if (filterRepoId && j.repo_id !== filterRepoId) return false;
+    if (filterBranch && j.branch !== filterBranch) return false;
+    return true;
+  });
   const jobMap = new Map(visibleJobs.map(j => [j.id, j]));
 
   const active = visibleJobs.filter(j => j.status === 'assigned' || j.status === 'running');
@@ -509,9 +559,45 @@ export function WorkQueueSidebar({
   const hasActive = active.length > 0 || visibleFolders.some(f => folderSection(f) === 'active');
   const hasQueued = queued.length > 0 || visibleFolders.some(f => folderSection(f) === 'queued');
 
+  const hasFilters = filterRepoId || filterBranch;
+
   return (
     <aside className="sidebar">
       <h2 className="sidebar-title">Activity Feed</h2>
+
+      {reposWithJobs.length > 0 && (
+        <div className="sidebar-filters">
+          <select
+            className="sidebar-filter-select"
+            value={filterRepoId}
+            onChange={e => handleRepoChange(e.target.value)}
+          >
+            <option value="">All repos</option>
+            {reposWithJobs.map(r => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+          {(filterRepoId || branchesForRepo.length > 0) && (
+            <select
+              className="sidebar-filter-select"
+              value={filterBranch}
+              onChange={e => setFilterBranch(e.target.value)}
+            >
+              <option value="">All branches</option>
+              {branchesForRepo.map(b => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          )}
+          {hasFilters && (
+            <button
+              className="sidebar-filter-clear"
+              onClick={() => { setFilterRepoId(''); setFilterBranch(''); }}
+              title="Clear filters"
+            >Clear</button>
+          )}
+        </div>
+      )}
 
       {hasActive && (
         <div className="sidebar-section">

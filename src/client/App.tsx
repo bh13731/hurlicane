@@ -396,7 +396,7 @@ export default function App() {
               onSelectAgent={handleSelectAgent}
             />
           ) : (
-            <WorkQueueSidebar jobs={jobs} projects={projects} worktreesByJobId={worktreesByJobId} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} onArchiveJob={handleArchiveJob} />
+            <WorkQueueSidebar jobs={jobs} projects={projects} repos={repos} worktreesByJobId={worktreesByJobId} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} onArchiveJob={handleArchiveJob} />
           )}
           {leftTab !== 'worktrees' && leftTab !== 'locks' && (
             <RunningJobsPanel
