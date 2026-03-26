@@ -268,6 +268,7 @@ function buildMcpServer(agentId: string): MCP {
       max_turns: createJobSchema.shape.max_turns,
       model: createJobSchema.shape.model,
       depends_on: createJobSchema.shape.depends_on,
+      template_id: createJobSchema.shape.template_id,
     },
     async (input) => {
       const result = await createJobHandler(agentId, input as any);

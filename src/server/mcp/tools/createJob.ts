@@ -13,10 +13,17 @@ export const createJobSchema = z.object({
   depends_on: z.array(z.string()).optional().describe('Job IDs that must complete before this job runs'),
   use_worktree: z.boolean().optional().describe('Create a git worktree so the agent works in an isolated checkout (always true)'),
   repeat_interval_ms: z.number().optional().describe('Re-queue the job automatically after it completes; value is the delay in ms before the next run'),
+  template_id: z.string().optional().describe('Template ID to use. The template content is prepended to the description, and its model/readonly settings are applied as defaults.'),
 });
 
 export async function createJobHandler(agentId: string, input: z.infer<typeof createJobSchema>): Promise<string> {
-  const { description, title, priority, work_dir, max_turns, model, depends_on, use_worktree, repeat_interval_ms } = input;
+  const { description, title, priority, work_dir, max_turns, model, depends_on, use_worktree, repeat_interval_ms, template_id } = input;
+
+  // Resolve template if specified
+  const tpl = template_id ? queries.getTemplateById(template_id) : null;
+  if (template_id && !tpl) {
+    return JSON.stringify({ error: `Template '${template_id}' not found` });
+  }
 
   // Inherit work_dir, project_id, model, and is_readonly from calling agent's job if not specified
   let resolvedWorkDir = work_dir ?? null;
@@ -56,6 +63,9 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     }
   }
 
+  // If template is marked readonly, force readonly regardless of inherited value
+  const isReadonly = (tpl?.is_readonly ? 1 : 0) || inheritedReadonly;
+
   const job = queries.insertJob({
     id: randomUUID(),
     title: title?.trim() || description.split('\n')[0].slice(0, 60),
@@ -64,11 +74,11 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     priority: priority ?? 0,
     work_dir: resolvedWorkDir,
     max_turns: max_turns ?? 50,
-    model: model ?? inheritedModel,
-    template_id: null,
+    model: model ?? tpl?.model ?? inheritedModel,
+    template_id: template_id ?? null,
     depends_on: depends_on?.length ? JSON.stringify(depends_on) : null,
-    is_readonly: inheritedReadonly,
-    use_worktree: inheritedReadonly ? 0 : 1,
+    is_readonly: isReadonly,
+    use_worktree: isReadonly ? 0 : 1,
     project_id: inheritedProjectId,
     repeat_interval_ms: repeat_interval_ms ?? null,
     retry_policy: retryPolicy,
