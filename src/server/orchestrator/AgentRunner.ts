@@ -473,7 +473,9 @@ export async function handleJobCompletion(
       if (fullDiff.trim()) {
         queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
       }
-    } catch { /* not a git repo, no changes, or git not available */ }
+    } catch (err) {
+      console.warn(`[agent ${agentId}] diff capture failed:`, (err as Error).message ?? err);
+    }
   }
 
   // Run completion checks if the agent reported success and checks are configured

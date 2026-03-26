@@ -3,6 +3,36 @@ import * as queries from '../db/queries.js';
 import type { Job, Agent } from '../../shared/types.js';
 
 /**
+ * Check whether the agent produced any git changes by looking at the cached diff
+ * first, then falling back to a live git check against base_sha.
+ */
+function hasDiff(agent: Agent, job: Job): boolean {
+  // Fast path: if the diff was already captured, trust it
+  if (agent.diff && agent.diff.trim()) return true;
+
+  // Fallback: run a live git check in case diff capture failed silently
+  const agentRec = queries.getAgentById(agent.id);
+  if (!agentRec?.base_sha) return false;
+  try {
+    const workDir = queries.resolveJobWorkDir(job);
+    // --stat is lightweight and won't blow up maxBuffer on large diffs
+    const stat = execSync(
+      `git diff --stat ${agentRec.base_sha} HEAD`,
+      { cwd: workDir, timeout: 10000 }
+    ).toString().trim();
+    if (stat) return true;
+    // Also check for uncommitted changes
+    const uncommitted = execSync(
+      'git diff --stat HEAD',
+      { cwd: workDir, timeout: 10000 }
+    ).toString().trim();
+    return !!uncommitted;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Runs completion checks configured on a job after the agent reports success.
  * Returns null if all checks pass, or an error string describing failures.
  */
@@ -21,7 +51,7 @@ export function runCompletionChecks(job: Job, agent: Agent): string | null {
 
   for (const check of checks) {
     if (check === 'diff_not_empty') {
-      if (!agent.diff || !agent.diff.trim()) {
+      if (!hasDiff(agent, job)) {
         failures.push('diff_not_empty: agent produced no git changes');
       }
     } else if (check === 'no_error_in_output') {
