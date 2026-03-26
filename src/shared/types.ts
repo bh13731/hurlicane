@@ -3,8 +3,6 @@
 export type JobStatus = 'queued' | 'assigned' | 'running' | 'done' | 'failed' | 'cancelled';
 export type AgentStatus = 'starting' | 'running' | 'waiting_user' | 'done' | 'failed' | 'cancelled';
 export type QuestionStatus = 'pending' | 'answered' | 'timeout';
-export type DebateStatus = 'running' | 'consensus' | 'disagreement' | 'failed' | 'cancelled';
-export type DebateRole = 'claude' | 'codex' | 'post_action' | 'verification_review' | 'verification_response';
 export type RetryPolicy = 'none' | 'same' | 'analyze';
 export type WarningType = 'stalled' | 'high_turns' | 'long_running';
 export type ReviewStatus = 'pending_review' | 'approved' | 'needs_revision';
@@ -25,10 +23,6 @@ export interface Job {
   work_dir: string | null;    // working directory override
   use_worktree: number;       // 0=normal, 1=create git worktree
   project_id: string | null;  // FK → projects.id
-  debate_id: string | null;   // FK → debates.id
-  debate_loop: number | null;  // which loop iteration this job belongs to (0-based)
-  debate_round: number | null;
-  debate_role: DebateRole | null;
   scheduled_at: number | null;
   repeat_interval_ms: number | null;
   retry_policy: RetryPolicy;
@@ -41,33 +35,6 @@ export interface Job {
   review_parent_job_id: string | null;  // for review jobs, links to parent
   created_by_agent_id: string | null;   // agent that created this job via create_job MCP tool
   archived_at: number | null;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface Debate {
-  id: string;
-  title: string;
-  task: string;
-  claude_model: string;
-  codex_model: string;
-  max_rounds: number;
-  current_round: number;
-  status: DebateStatus;
-  consensus: string | null; // JSON summary when consensus reached
-  project_id: string;
-  work_dir: string | null;
-  max_turns: number;
-  template_id: string | null;
-  post_action_prompt: string | null;  // instruction to run after debate concludes
-  post_action_role: DebateRole | null; // which side's model runs the action
-  post_action_job_id: string | null;  // FK → jobs.id once created
-  post_action_verification: number;   // 0=off, 1=other model reviews post-action then implementer responds
-  verification_review_job_id: string | null;   // FK → jobs.id for the latest review job
-  verification_response_job_id: string | null; // FK → jobs.id for the latest response job
-  verification_round: number;                  // current verification loop iteration (0-based)
-  loop_count: number;    // total loops to run (1 = run once)
-  current_loop: number;  // which debate loop we're on (0-based)
   created_at: number;
   updated_at: number;
 }
@@ -157,7 +124,6 @@ export interface QueueSnapshot {
   templates: Template[];
   projects: Project[];
   batchTemplates: BatchTemplate[];
-  debates: Debate[];
 }
 
 export interface ServerToClientEvents {
@@ -173,8 +139,6 @@ export interface ServerToClientEvents {
   'job:update': (payload: { job: Job }) => void;
   'pty:data': (payload: { agent_id: string; data: string }) => void;
   'pty:closed': (payload: { agent_id: string }) => void;
-  'debate:new': (payload: { debate: Debate }) => void;
-  'debate:update': (payload: { debate: Debate }) => void;
   'warning:new': (payload: { warning: AgentWarning }) => void;
   'repo:clone-progress': (payload: { repo_id: string; phase: string; percent: number | null }) => void;
 }
@@ -366,40 +330,9 @@ export interface RunBatchTemplateRequest {
   workDir?: string;
   maxTurns?: number;
   projectName?: string;
-  debate?: boolean;
-  claudeModel?: string;
-  codexModel?: string;
-  debateMaxRounds?: number;
-  postActionPrompt?: string;
-  postActionRole?: DebateRole;
-  postActionVerification?: boolean;
 }
 
 export interface RunBatchTemplateResponse {
-  project: Project;
-  jobs: Job[];
-  debates?: Debate[];
-}
-
-// ─── Debates ──────────────────────────────────────────────────────────────────
-
-export interface CreateDebateRequest {
-  title?: string;
-  task: string;
-  claudeModel: string;
-  codexModel: string;
-  maxRounds?: number;
-  workDir?: string;
-  maxTurns?: number;
-  templateId?: string;
-  postActionPrompt?: string;
-  postActionRole?: DebateRole;
-  postActionVerification?: boolean;
-  loopCount?: number;
-}
-
-export interface CreateDebateResponse {
-  debate: Debate;
   project: Project;
   jobs: Job[];
 }

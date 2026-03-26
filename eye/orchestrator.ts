@@ -1,4 +1,4 @@
-import type { CreateJobRequest, CreateDebateRequest, CreateDebateResponse, Repo, Worktree } from '../src/shared/types.js';
+import type { CreateJobRequest, Repo, Worktree } from '../src/shared/types.js';
 
 export interface TemplateFilter {
   field: string;
@@ -6,23 +6,9 @@ export interface TemplateFilter {
   value: string;
 }
 
-export interface DebateBindingConfig {
-  claudeModel?: string;
-  codexModel?: string;
-  maxRounds?: number;
-  postActionVerification?: boolean;
-  postActionPrompt?: string;
-  postActionRole?: 'claude' | 'codex';
-  completionChecks?: string[];
-}
-
 export interface TemplateBinding {
   templateId: string;
   filters: TemplateFilter[];
-  /** 'job' = always simple job, 'debate' = always debate, 'auto' = complexity heuristic (default) */
-  mode?: 'job' | 'debate' | 'auto';
-  /** Debate configuration — used when mode is 'debate' or auto evaluates to debate */
-  debateConfig?: DebateBindingConfig;
 }
 
 export interface EyePrompts {
@@ -33,7 +19,6 @@ export interface EyePrompts {
 
 export interface OrchestratorClient {
   createJob(req: CreateJobRequest): Promise<{ id: string; title: string } | null>;
-  createDebate(req: CreateDebateRequest): Promise<CreateDebateResponse | null>;
   getRepoByName(name: string): Promise<Repo | null>;
   getWorktreeByBranch(branch: string): Promise<Worktree | null>;
   createWorktree(branch: string, repoId: string, trackExisting?: boolean): Promise<Worktree | null>;
@@ -85,26 +70,6 @@ export function createOrchestratorClient(baseUrl: string): OrchestratorClient {
         const job = await res.json() as { id: string; title: string };
         console.log(`[eye] created job: ${job.title} (${job.id})`);
         return job;
-      } catch (err) {
-        console.error('[eye] orchestrator unreachable:', err);
-        return null;
-      }
-    },
-
-    async createDebate(req: CreateDebateRequest): Promise<CreateDebateResponse | null> {
-      try {
-        const res = await fetch(`${baseUrl}/api/debates`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(req),
-        });
-        if (!res.ok) {
-          console.error(`[eye] orchestrator POST /api/debates failed: ${res.status} ${await res.text()}`);
-          return null;
-        }
-        const data = await res.json() as CreateDebateResponse;
-        console.log(`[eye] created debate: ${data.debate.title} (${data.debate.id})`);
-        return data;
       } catch (err) {
         console.error('[eye] orchestrator unreachable:', err);
         return null;

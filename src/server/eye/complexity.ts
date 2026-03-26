@@ -72,19 +72,6 @@ export function extractSignals(eventType: string, payload: any): ComplexitySigna
   return signals;
 }
 
-export function evaluateComplexity(signals: ComplexitySignals, config?: ComplexityConfig): 'simple' | 'debate' {
-  const { failedCheckThreshold, reviewBodyThreshold } = config ?? DEFAULT_CONFIG;
-
-  // CI suite failure with N+ failing checks → debate
-  if (signals.failedCheckCount >= failedCheckThreshold) return 'debate';
-
-  // changes_requested review with body > threshold chars → debate
-  if (
-    signals.reviewState === 'changes_requested' &&
-    signals.reviewBodyLength > reviewBodyThreshold
-  ) {
-    return 'debate';
-  }
-
+export function evaluateComplexity(signals: ComplexitySignals, config?: ComplexityConfig): 'simple' {
   return 'simple';
 }

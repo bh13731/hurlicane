@@ -15,7 +15,6 @@ import { JobLineagePanel } from './components/JobLineagePanel';
 import { RunningJobsPanel } from './components/RunningJobsPanel';
 import { ProjectSelector } from './components/ProjectSelector';
 import { SettingsModal } from './components/SettingsModal';
-import { DebateForm } from './components/DebateForm';
 import { KnowledgeBaseModal } from './components/KnowledgeBaseModal';
 import { EyeModal } from './components/EyeModal';
 import { SlackModal } from './components/SlackModal';
@@ -27,18 +26,16 @@ import { useAgents } from './hooks/useAgents';
 import { useJobs } from './hooks/useJobs';
 import { useLocks } from './hooks/useLocks';
 import { useProjects } from './hooks/useProjects';
-import { useDebates } from './hooks/useDebates';
 import { useToasts } from './hooks/useToasts';
 import { ToastFeed } from './components/ToastFeed';
 import socket from './socket';
-import type { AgentWithJob, AgentOutput, CreateJobRequest, CreateDebateRequest, Job, Template, BatchTemplate, Worktree, Repo } from '@shared/types';
+import type { AgentWithJob, AgentOutput, CreateJobRequest, Job, Template, BatchTemplate, Worktree, Repo } from '@shared/types';
 
 export default function App() {
   const { agents, setInitial: setInitialAgents, addAgent, updateAgent } = useAgents();
   const { jobs, setInitial: setInitialJobs, addJob, updateJob } = useJobs();
   const { locks, setInitial: setInitialLocks, addLock, removeLock } = useLocks();
   const { projects, setInitial: setInitialProjects, addProject, updateProject, removeProject } = useProjects();
-  const { debates, setInitial: setInitialDebates, addDebate, updateDebate: updateDebateState } = useDebates();
   const { toasts, dismiss: dismissToast } = useToasts();
   const [templates, setTemplates] = useState<Template[]>([]);
 
@@ -52,7 +49,6 @@ export default function App() {
   const [showProjects, setShowProjects] = useState(false);
   const [showBatchTemplates, setShowBatchTemplates] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showDebateForm, setShowDebateForm] = useState(false);
   const [showKnowledgeBase, setShowKnowledgeBase] = useState(false);
   const [showEye, setShowEye] = useState(false);
   const [showSlack, setShowSlack] = useState(false);
@@ -199,7 +195,6 @@ export default function App() {
       setInitialLocks(snapshot.locks);
       setTemplates(snapshot.templates ?? []);
       setInitialProjects(snapshot.projects ?? []);
-      setInitialDebates(snapshot.debates ?? []);
     },
     onAgentNew: handleAgentNew,
     onAgentUpdate: handleAgentUpdate,
@@ -216,8 +211,6 @@ export default function App() {
     onLockReleased: (lockId) => removeLock(lockId),
     onJobNew: addJob,
     onJobUpdate: updateJob,
-    onDebateNew: addDebate,
-    onDebateUpdate: updateDebateState,
   });
 
   // Fetch on mount, then every 60s (if auto-update enabled)
@@ -321,22 +314,6 @@ export default function App() {
     }
   }, [activeProjectId]);
 
-  const handleSubmitDebate = useCallback(async (req: CreateDebateRequest) => {
-    const res = await fetch('/api/debates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error ?? 'Failed to create debate');
-    }
-    const data = await res.json();
-    // Add the project created for this debate and switch to it
-    addProject(data.project);
-    setActiveProjectId(data.project.id);
-  }, [addProject]);
-
   const handleSelectAgent = useCallback((agent: AgentWithJob) => {
     setSelectedAgent(agent);
     const canonicalJob = jobs.find(j => j.id === agent.job_id);
@@ -376,7 +353,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => setShowDebateForm(true)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(true)} onSlack={() => setShowSlack(true)} onGit={() => setShowGit(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); setShowEye(false); setShowSlack(false); setShowGit(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} onDrawerToggle={() => setDrawerOpen(v => !v)} onHeaderMenuToggle={() => setHeaderMenuOpen(v => !v)} headerMenuOpen={headerMenuOpen} username={username} />
+      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)}onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(true)} onSlack={() => setShowSlack(true)} onGit={() => setShowGit(true)} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowKnowledgeBase(false); setShowEye(false); setShowSlack(false); setShowGit(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} onDrawerToggle={() => setDrawerOpen(v => !v)} onHeaderMenuToggle={() => setHeaderMenuOpen(v => !v)} headerMenuOpen={headerMenuOpen} username={username} />
 
       <div className={`drawer-backdrop${drawerOpen ? ' drawer-backdrop-visible' : ''}`} onClick={() => setDrawerOpen(false)} />
       {headerMenuOpen && <div className="header-menu-backdrop" onClick={() => setHeaderMenuOpen(false)} />}
@@ -531,13 +508,6 @@ export default function App() {
 
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
-      )}
-
-      {showDebateForm && (
-        <DebateForm
-          onSubmit={handleSubmitDebate}
-          onClose={() => setShowDebateForm(false)}
-        />
       )}
 
       {showKnowledgeBase && (

@@ -5,7 +5,6 @@ import * as path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
-import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
 import { runCompletionChecks } from './CompletionChecks.js';
 import { handleRetry } from './RetryManager.js';
 import { triageLearnings } from './MemoryTriager.js';
@@ -448,7 +447,7 @@ function findLastWaitForJobsIds(agentId: string): string[] | null {
  * Shared post-processing run after any agent finishes (tmux or stream-json).
  * Caller is responsible for already having set agent status in the DB.
  * Handles: git diff, completion checks, job status update, lock release,
- * memory triage, socket events, debate notification, repeat scheduling, retry.
+ * memory triage, socket events, repeat scheduling, retry.
  */
 export async function handleJobCompletion(
   agentId: string,
@@ -506,8 +505,6 @@ export async function handleJobCompletion(
   const updatedJob = queries.getJobById(job.id);
   if (updatedJob) {
     try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); }
-    // If this job is part of a debate, check if the round is complete
-    try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] debateOnJobCompleted error:`, err); }
     // If the job succeeded and has a repeat interval, queue the next run
     if (updatedJob.status === 'done' && updatedJob.repeat_interval_ms) {
       try {
@@ -526,7 +523,7 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
   console.log(`[agent ${agentId}] exited (code ${exitCode ?? 'unknown'})`);
 
   // If the agent is already in a terminal state, another exit path already handled it
-  // (e.g. PTY onExit vs PID poll race for debate-stage agents). Don't double-process.
+  // (e.g. PTY onExit vs PID poll race). Don't double-process.
   const current = queries.getAgentById(agentId);
   const TERMINAL = ['done', 'failed', 'cancelled'];
   if (current && TERMINAL.includes(current.status)) {
@@ -677,7 +674,7 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
     }
   }
 
-  // Shared post-processing (git diff, completion checks, learnings, debate, retry, etc.)
+  // Shared post-processing (git diff, completion checks, learnings, retry, etc.)
   handleJobCompletion(agentId, job, status).catch(err =>
     console.error(`[agent ${agentId}] handleJobCompletion error:`, err)
   );

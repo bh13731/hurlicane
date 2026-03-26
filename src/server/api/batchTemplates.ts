@@ -2,8 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import { spawnInitialRoundJobs } from '../orchestrator/DebateManager.js';
-import type { CreateBatchTemplateRequest, UpdateBatchTemplateRequest, RunBatchTemplateRequest, Debate, Job } from '../../shared/types.js';
+import type { CreateBatchTemplateRequest, UpdateBatchTemplateRequest, RunBatchTemplateRequest, Job } from '../../shared/types.js';
 
 const router = Router();
 
@@ -68,7 +67,7 @@ router.delete('/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// Run a batch template — creates project + N jobs (or N debates in debate mode)
+// Run a batch template — creates project + N jobs
 router.post('/:id/run', (req, res) => {
   const bt = queries.getBatchTemplateById(req.params.id);
   if (!bt) { res.status(404).json({ error: 'batch template not found' }); return; }
@@ -80,88 +79,36 @@ router.post('/:id/run', (req, res) => {
   const project = queries.insertProject({
     id: randomUUID(),
     name: body.projectName?.trim() || bt.name,
-    description: body.debate
-      ? `Batch debate of "${bt.name}" (${bt.items.length} items, ${body.claudeModel} vs ${body.codexModel})`
-      : `Batch run of "${bt.name}" (${bt.items.length} items)`,
+    description: `Batch run of "${bt.name}" (${bt.items.length} items)`,
     created_at: now,
     updated_at: now,
   });
 
-  if (body.debate) {
-    // Debate mode: create one debate per item
-    if (!body.claudeModel?.trim() || !body.codexModel?.trim()) {
-      res.status(400).json({ error: 'claudeModel and codexModel are required for debate mode' });
-      return;
-    }
-    const maxRounds = Math.min(Math.max(body.debateMaxRounds ?? 3, 1), 10);
-    const allDebates: Debate[] = [];
-    const allJobs: Job[] = [];
+  // Check if the selected template enforces readonly
+  const tpl = body.templateId ? queries.getTemplateById(body.templateId) : null;
+  const isReadonly = tpl?.is_readonly ? 1 : 0;
 
-    for (const item of bt.items) {
-      const debateId = randomUUID();
-      const debate: Debate = {
-        id: debateId,
-        title: item.length > 40 ? item.slice(0, 39) + '\u2026' : item,
-        task: item,
-        claude_model: body.claudeModel.trim(),
-        codex_model: body.codexModel.trim(),
-        max_rounds: maxRounds,
-        current_round: 0,
-        status: 'running',
-        consensus: null,
-        project_id: project.id,
-        work_dir: body.workDir?.trim() || null,
-        max_turns: body.maxTurns ?? 50,
-        template_id: body.templateId?.trim() || null,
-        post_action_prompt: body.postActionPrompt?.trim() || null,
-        post_action_role: body.postActionRole ?? null,
-        post_action_job_id: null,
-        post_action_verification: (body.postActionVerification && !!body.postActionPrompt?.trim()) ? 1 : 0,
-        verification_review_job_id: null,
-        verification_response_job_id: null,
-        verification_round: 0,
-        loop_count: 1,
-        current_loop: 0,
-        created_at: now,
-        updated_at: now,
-      };
-      queries.insertDebate(debate);
-      socket.emitDebateNew(debate);
-      allDebates.push(debate);
-
-      const [claudeJob, codexJob] = spawnInitialRoundJobs(debate);
-      allJobs.push(claudeJob, codexJob);
-    }
-
-    res.status(201).json({ project, jobs: allJobs, debates: allDebates });
-  } else {
-    // Normal mode: create one job per item
-    // Check if the selected template enforces readonly
-    const tpl = body.templateId ? queries.getTemplateById(body.templateId) : null;
-    const isReadonly = tpl?.is_readonly ? 1 : 0;
-
-    const jobs = bt.items.map(item => {
-      const job = queries.insertJob({
-        id: randomUUID(),
-        title: item.length > 28 ? item.slice(0, 27) + '\u2026' : item,
-        description: item,
-        context: null,
-        priority: 0,
-        model: body.model ?? null,
-        template_id: body.templateId ?? null,
-        is_interactive: body.interactive ? 1 : 0,
-        is_readonly: isReadonly,
-        use_worktree: isReadonly ? 0 : 1,
-        work_dir: body.workDir ?? null,
-        max_turns: body.maxTurns ?? 50,
-        project_id: project.id,
-      });
-      socket.emitJobNew(job);
-      return job;
+  const jobs = bt.items.map(item => {
+    const job = queries.insertJob({
+      id: randomUUID(),
+      title: item.length > 28 ? item.slice(0, 27) + '\u2026' : item,
+      description: item,
+      context: null,
+      priority: 0,
+      model: body.model ?? null,
+      template_id: body.templateId ?? null,
+      is_interactive: body.interactive ? 1 : 0,
+      is_readonly: isReadonly,
+      use_worktree: isReadonly ? 0 : 1,
+      work_dir: body.workDir ?? null,
+      max_turns: body.maxTurns ?? 50,
+      project_id: project.id,
     });
+    socket.emitJobNew(job);
+    return job;
+  });
 
-    res.status(201).json({ project, jobs });
-  }
+  res.status(201).json({ project, jobs });
 });
 
 export default router;

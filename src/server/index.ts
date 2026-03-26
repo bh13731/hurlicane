@@ -117,7 +117,6 @@ async function main() {
       templates: queries.listTemplates(),
       projects: queries.listProjects(),
       batchTemplates: queries.listBatchTemplates(),
-      debates: queries.listDebates(),
     };
     snapshotCache = { data, expires: now + SNAPSHOT_CACHE_TTL };
     return data;

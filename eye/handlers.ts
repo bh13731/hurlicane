@@ -6,7 +6,7 @@ import { processEvent } from './middleware.js';
 
 // ─── Recent Events Log ─────────────────────────────────────────────────────
 
-export type Decision = 'ignored' | 'debated' | 'ran';
+export type Decision = 'ignored' | 'ran';
 
 export interface EyeEvent {
   ts: number;
@@ -523,9 +523,9 @@ export async function dispatch(
       action,
       repo,
       author,
-      decision: result.type === 'debate' ? 'debated' : 'ran',
+      decision: 'ran',
       job_title: result.title,
-      detail: `type=${result.type}, count=${result.count}`,
+      detail: `count=${result.count}`,
     });
   } else {
     logEvent({

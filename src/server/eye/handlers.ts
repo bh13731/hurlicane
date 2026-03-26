@@ -5,7 +5,7 @@ import { processEvent, extractFilterFields, filtersPass } from './middleware.js'
 
 // ─── Recent Events Log ─────────────────────────────────────────────────────
 
-export type Decision = 'ignored' | 'debated' | 'ran';
+export type Decision = 'ignored' | 'ran';
 
 export interface EyeEvent {
   ts: number;
@@ -391,7 +391,7 @@ export async function dispatch(
   const result = await processEvent(client, config, eventType, payload, handlerResult);
 
   if (result) {
-    logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: result.type === 'debate' ? 'debated' : 'ran', job_title: result.title, detail: `type=${result.type}, count=${result.count}` });
+    logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ran', job_title: result.title, detail: `count=${result.count}` });
   } else {
     logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: 'no bindings matched filters or job creation failed' });
   }

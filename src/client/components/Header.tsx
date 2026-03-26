@@ -10,7 +10,6 @@ interface HeaderProps {
   onDag: () => void;
   onProjects: () => void;
   onSettings: () => void;
-  onDebate: () => void;
   onKnowledgeBase: () => void;
   onEye: () => void;
   onSlack: () => void;
@@ -53,7 +52,7 @@ function HurlicaLogo() {
   );
 }
 
-export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onKnowledgeBase, onEye, onSlack, onGit, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate, onDrawerToggle, onHeaderMenuToggle, headerMenuOpen, username }: HeaderProps) {
+export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onKnowledgeBase, onEye, onSlack, onGit, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate, onDrawerToggle, onHeaderMenuToggle, headerMenuOpen, username }: HeaderProps) {
   const hasCost = (todayClaudeCost != null && todayClaudeCost > 0) || (todayCodexCost != null && todayCodexCost > 0);
   const closeMenu = () => { if (headerMenuOpen) onHeaderMenuToggle?.(); };
   return (
@@ -119,7 +118,6 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
           <button className="header-btn" onClick={() => { onProjects(); closeMenu(); }}>Projects</button>
           <button className="header-btn" onClick={() => { onTemplates(); closeMenu(); }}>Templates</button>
           <button className="header-btn" onClick={() => { onBatchTemplates(); closeMenu(); }}>Batches</button>
-          <button className="header-btn" onClick={() => { onDebate(); closeMenu(); }}>Debate</button>
           <button className="header-btn" onClick={() => { onKnowledgeBase(); closeMenu(); }}>Memory</button>
           <button className="header-btn" onClick={() => { onEye(); closeMenu(); }}>Eye</button>
           <button className="header-btn" onClick={() => { onSlack(); closeMenu(); }}>Slack</button>

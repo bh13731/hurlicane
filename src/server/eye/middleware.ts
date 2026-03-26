@@ -1,7 +1,6 @@
 import { execSync } from 'child_process';
-import type { EyeConfig, OrchestratorClient, TemplateBinding, TemplateFilter, DebateBindingConfig } from './types.js';
+import type { EyeConfig, OrchestratorClient, TemplateBinding, TemplateFilter } from './types.js';
 import type { CreateJobRequest } from '../../shared/types.js';
-import { extractSignals, evaluateComplexity } from './complexity.js';
 import { resolveWorktree } from './worktree.js';
 
 export function extractFilterFields(
@@ -64,7 +63,7 @@ export function filtersPass(filters: TemplateFilter[], fields: Record<string, st
 }
 
 export interface ProcessEventResult {
-  type: 'job' | 'debate';
+  type: 'job';
   title: string;
   count: number;
 }
@@ -138,50 +137,23 @@ export async function processEvent(
     console.log(`[eye] no worktree resolved for branch="${branch}"`);
   }
 
-  const signals = extractSignals(eventType, payload);
-  const autoComplexity = evaluateComplexity(signals);
-
   let firstTitle: string | null = null;
   let created = 0;
-  let anyDebate = false;
 
   for (const binding of matchingBindings) {
-    const bindingMode = binding.mode ?? 'job';
-    const useDebate = bindingMode === 'debate' || (bindingMode === 'auto' && autoComplexity === 'debate');
-    console.log(`[eye] binding: templateId=${binding.templateId} mode=${binding.mode} (resolved=${bindingMode}) useDebate=${useDebate}`);
+    console.log(`[eye] binding: templateId=${binding.templateId}`);
 
-    if (useDebate) {
-      const dc: DebateBindingConfig = binding.debateConfig ?? {};
-      const result = await client.createDebate({
-        title: jobReq.title ?? `Debate: ${jobReq.description.slice(0, 40)}`,
-        task: jobReq.description,
-        claudeModel: dc.claudeModel ?? 'sonnet',
-        codexModel: dc.codexModel ?? 'codex',
-        maxRounds: dc.maxRounds ?? 3,
-        workDir: jobReq.workDir,
-        postActionPrompt: dc.postActionPrompt ?? 'Implement the agreed solution from the debate.',
-        postActionRole: dc.postActionRole ?? 'claude',
-        postActionVerification: dc.postActionVerification ?? true,
-        templateId: binding.templateId || undefined,
-      });
-      if (result) {
-        if (!firstTitle) firstTitle = result.debate.title;
-        created++;
-        anyDebate = true;
-      }
-    } else {
-      const req: CreateJobRequest = { ...jobReq };
-      if (binding.templateId) {
-        req.templateId = binding.templateId;
-      }
-      const result = await client.createJob(req);
-      if (result) {
-        if (!firstTitle) firstTitle = result.title;
-        created++;
-      }
+    const req: CreateJobRequest = { ...jobReq };
+    if (binding.templateId) {
+      req.templateId = binding.templateId;
+    }
+    const result = await client.createJob(req);
+    if (result) {
+      if (!firstTitle) firstTitle = result.title;
+      created++;
     }
   }
 
   if (created === 0) return null;
-  return { type: anyDebate ? 'debate' : 'job', title: firstTitle!, count: created };
+  return { type: 'job', title: firstTitle!, count: created };
 }

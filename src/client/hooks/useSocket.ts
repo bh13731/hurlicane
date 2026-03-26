@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import socket from '../socket';
-import type { AgentWithJob, Job, Question, FileLock, AgentOutput, QueueSnapshot, Debate } from '@shared/types';
+import type { AgentWithJob, Job, Question, FileLock, AgentOutput, QueueSnapshot } from '@shared/types';
 
 interface SocketHandlers {
   onSnapshot: (snapshot: QueueSnapshot) => void;
@@ -13,8 +13,6 @@ interface SocketHandlers {
   onLockReleased: (lockId: string, filePath: string) => void;
   onJobNew: (job: Job) => void;
   onJobUpdate: (job: Job) => void;
-  onDebateNew?: (debate: Debate) => void;
-  onDebateUpdate?: (debate: Debate) => void;
 }
 
 export function useSocket(handlers: SocketHandlers): void {
@@ -39,8 +37,6 @@ export function useSocket(handlers: SocketHandlers): void {
       h('lock:released', ({ lock_id, file_path }: { lock_id: string; file_path: string }) => ref.current.onLockReleased(lock_id, file_path)),
       h('job:new', ({ job }: { job: Job }) => ref.current.onJobNew(job)),
       h('job:update', ({ job }: { job: Job }) => ref.current.onJobUpdate(job)),
-      h('debate:new', ({ debate }: { debate: Debate }) => ref.current.onDebateNew?.(debate)),
-      h('debate:update', ({ debate }: { debate: Debate }) => ref.current.onDebateUpdate?.(debate)),
       h('warning:new', (payload: any) => (ref.current as any).onWarningNew?.(payload)),
     ];
 

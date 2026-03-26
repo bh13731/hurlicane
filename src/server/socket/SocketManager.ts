@@ -1,6 +1,6 @@
 import { Server as HttpServer } from 'http';
 import { Server as SocketIoServer } from 'socket.io';
-import type { ServerToClientEvents, ClientToServerEvents, AgentWithJob, Job, Question, FileLock, AgentOutput, QueueSnapshot, Debate, AgentWarning } from '../../shared/types.js';
+import type { ServerToClientEvents, ClientToServerEvents, AgentWithJob, Job, Question, FileLock, AgentOutput, QueueSnapshot, AgentWarning } from '../../shared/types.js';
 import { notifyFailure } from '../services/SlackNotifier.js';
 
 let _io: SocketIoServer<ClientToServerEvents, ServerToClientEvents> | null = null;
@@ -75,14 +75,6 @@ export function emitPtyData(agentId: string, data: string): void {
 
 export function emitPtyClosed(agentId: string): void {
   getIo().emit('pty:closed', { agent_id: agentId });
-}
-
-export function emitDebateNew(debate: Debate): void {
-  getIo().emit('debate:new', { debate });
-}
-
-export function emitDebateUpdate(debate: Debate): void {
-  getIo().emit('debate:update', { debate });
 }
 
 export function emitWarningNew(warning: AgentWarning): void {

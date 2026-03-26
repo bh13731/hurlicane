@@ -3,7 +3,6 @@ import { execFileSync } from 'child_process';
 import * as queries from '../db/queries.js';
 import { reattachAgent, getLogPath } from './AgentRunner.js';
 import { isTmuxSessionAlive, attachPty, disconnectAgent } from './PtyManager.js';
-import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
 import { orphanedWaits } from '../mcp/McpServer.js';
 import type { ClaudeStreamEvent } from '../../shared/types.js';
 import { isCodexModel } from '../../shared/types.js';
@@ -133,9 +132,8 @@ export function runRecovery(): void {
             } catch { /* malformed JSON — skip */ }
           }
         } else {
-          // Interactive or debate-stage → done; other non-interactive → failed (no finish_job called)
-          const isDebateStage = !!(job as any).debate_role;
-          const finalStatus = (job.is_interactive || isDebateStage) ? 'done' : 'failed';
+          // Interactive → done; other non-interactive → failed (no finish_job called)
+          const finalStatus = job.is_interactive ? 'done' : 'failed';
           console.log(`[recovery] tmux agent ${agent.id} — session gone, marking ${finalStatus}`);
 
           queries.updateAgent(agent.id, {
@@ -156,10 +154,6 @@ export function runRecovery(): void {
           }
 
           if (finalStatus === 'done') {
-            const doneJob = queries.getJobById(agent.job_id);
-            if (doneJob) {
-              try { debateOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] debateOnJobCompleted error for agent ${agent.id}:`, err); }
-            }
             tmuxRecovered++;
           } else {
             tmuxFailed++;

@@ -5,8 +5,7 @@
 import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import { spawnInitialRoundJobs } from '../orchestrator/DebateManager.js';
-import type { CreateJobRequest, CreateDebateRequest, CreateDebateResponse, Repo, Worktree } from '../../shared/types.js';
+import type { CreateJobRequest, Repo, Worktree } from '../../shared/types.js';
 import type { OrchestratorClient, EyePrompts, TemplateBinding } from './types.js';
 import { execSync } from 'child_process';
 import path from 'path';
@@ -95,61 +94,6 @@ export function createDirectClient(): OrchestratorClient {
         return { id: job.id, title: job.title };
       } catch (err) {
         console.error('[eye] createJob failed:', err);
-        return null;
-      }
-    },
-
-    async createDebate(req: CreateDebateRequest): Promise<CreateDebateResponse | null> {
-      try {
-        const debateId = randomUUID();
-        const now = Date.now();
-        const maxRounds = Math.min(Math.max(req.maxRounds ?? 3, 1), 10);
-        const loopCount = Math.min(Math.max(req.loopCount ?? 1, 1), 20);
-        const title = req.title?.trim() || `Debate: ${req.task.trim().slice(0, 40)}`;
-
-        const project = queries.insertProject({
-          id: randomUUID(),
-          name: title,
-          description: `Debate between ${req.claudeModel} and ${req.codexModel}`,
-          created_at: now,
-          updated_at: now,
-        });
-
-        const debate = {
-          id: debateId,
-          title,
-          task: req.task.trim(),
-          claude_model: req.claudeModel.trim(),
-          codex_model: req.codexModel.trim(),
-          max_rounds: maxRounds,
-          current_round: 0,
-          status: 'running' as const,
-          consensus: null,
-          project_id: project.id,
-          work_dir: req.workDir?.trim() || null,
-          max_turns: req.maxTurns ?? 50,
-          template_id: req.templateId?.trim() || null,
-          post_action_prompt: req.postActionPrompt?.trim() || null,
-          post_action_role: req.postActionRole ?? null,
-          post_action_job_id: null,
-          post_action_verification: (req.postActionVerification && !!req.postActionPrompt?.trim()) ? 1 : 0,
-          verification_review_job_id: null,
-          verification_response_job_id: null,
-          verification_round: 0,
-          loop_count: loopCount,
-          current_loop: 0,
-          created_at: now,
-          updated_at: now,
-        };
-        queries.insertDebate(debate as any);
-
-        const [claudeJob, codexJob] = spawnInitialRoundJobs(debate as any);
-        socket.emitDebateNew(debate as any);
-
-        console.log(`[eye] created debate: ${debate.title} (${debate.id})`);
-        return { debate: debate as any, project, jobs: [claudeJob, codexJob] };
-      } catch (err) {
-        console.error('[eye] createDebate failed:', err);
         return null;
       }
     },

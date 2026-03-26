@@ -31,7 +31,7 @@ export async function finishJobHandler(
   // Mark agent done before running post-processing
   queries.updateAgent(agentId, { status: 'done', finished_at: Date.now() });
 
-  // Run shared post-processing (git diff, completion checks, learnings, debate, retry, etc.)
+  // Run shared post-processing (git diff, completion checks, learnings, retry, etc.)
   await handleJobCompletion(agentId, job, 'done');
 
   // Kill the tmux session after a brief delay so this tool response can be delivered first

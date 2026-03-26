@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getDb } from './database.js';
-import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, Debate, DebateStatus, DebateRole, RetryPolicy, JobStatus, AgentStatus, SearchResult, AgentWarning, Worktree, Nudge, KBEntry, Review, TemplateModelStat, ReviewStatus, Repo } from '../../shared/types.js';
+import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, RetryPolicy, JobStatus, AgentStatus, SearchResult, AgentWarning, Worktree, Nudge, KBEntry, Review, TemplateModelStat, ReviewStatus, Repo } from '../../shared/types.js';
 
 // node:sqlite returns null-prototype objects; shallow-copy to a regular object.
 // SQLite rows are always flat scalars so a shallow copy is sufficient and far
@@ -27,10 +27,6 @@ export function insertJob(job: {
   is_readonly?: number;
   use_worktree?: number;
   project_id?: string | null;
-  debate_id?: string | null;
-  debate_loop?: number | null;
-  debate_round?: number | null;
-  debate_role?: DebateRole | null;
   scheduled_at?: number | null;
   repeat_interval_ms?: number | null;
   retry_policy?: RetryPolicy;
@@ -46,8 +42,8 @@ export function insertJob(job: {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, is_readonly, use_worktree, project_id, debate_id, debate_loop, debate_round, debate_role, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_by_agent_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, is_readonly, use_worktree, project_id, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_by_agent_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     job.id, job.title, job.description, job.context,
     job.status ?? 'queued', job.priority,
@@ -59,10 +55,6 @@ export function insertJob(job: {
     job.is_readonly ?? 0,
     job.use_worktree ?? 0,
     job.project_id ?? null,
-    job.debate_id ?? null,
-    job.debate_loop ?? null,
-    job.debate_round ?? null,
-    job.debate_role ?? null,
     job.scheduled_at ?? null,
     job.repeat_interval_ms ?? null,
     job.retry_policy ?? 'none',
@@ -440,7 +432,7 @@ export function getAgentsWithJobForSnapshot(): AgentWithJob[] {
   return agents.map(agent => {
     const job = jobMap.get(agent.job_id);
     if (!job) {
-      const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, work_dir: null, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_loop: null, debate_round: null, debate_role: null, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, review_config: null, review_status: null, review_parent_job_id: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
+      const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, work_dir: null, use_worktree: 0, project_id: null, flagged: 0, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, review_config: null, review_status: null, review_parent_job_id: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
       return { ...agent, diff: null, job: stub, template_name: null, pending_question: null, active_locks: [], child_agents: [], warnings: [] } as AgentWithJob;
     }
     return {
@@ -485,7 +477,7 @@ function enrichAgent(agent: Agent): AgentWithJob {
   const jobRow = db.prepare('SELECT * FROM jobs WHERE id = ?').get(agent.job_id);
   if (!jobRow) {
     // Job was deleted while agent still references it — return a stub
-    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, work_dir: null, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_loop: null, debate_round: null, debate_role: null, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, review_config: null, review_status: null, review_parent_job_id: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
+    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, is_readonly: 0, work_dir: null, use_worktree: 0, project_id: null, flagged: 0, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, review_config: null, review_status: null, review_parent_job_id: null, created_by_agent_id: null, archived_at: null, created_at: 0, updated_at: 0 };
     return { ...agent, job: stub, template_name: null, pending_question: null, active_locks: [], child_agents: [], warnings: [] };
   }
   const job = cast<Job>(jobRow);
@@ -1095,9 +1087,6 @@ export function deleteProject(id: string): void {
   const db = getDb();
   // Unlink jobs from this project before deleting
   db.prepare('UPDATE jobs SET project_id = NULL WHERE project_id = ?').run(id);
-  // Unlink debate jobs before deleting debates (debates.project_id is NOT NULL w/ FK constraint)
-  db.prepare('UPDATE jobs SET debate_id = NULL WHERE debate_id IN (SELECT id FROM debates WHERE project_id = ?)').run(id);
-  db.prepare('DELETE FROM debates WHERE project_id = ?').run(id);
   db.prepare('DELETE FROM projects WHERE id = ?').run(id);
 }
 
@@ -1156,58 +1145,6 @@ export function updateBatchTemplate(id: string, fields: Partial<Pick<BatchTempla
 export function deleteBatchTemplate(id: string): void {
   const db = getDb();
   db.prepare('DELETE FROM batch_templates WHERE id = ?').run(id);
-}
-
-// ─── Debates ──────────────────────────────────────────────────────────────────
-
-export function insertDebate(debate: Debate): Debate {
-  const db = getDb();
-  db.prepare(`
-    INSERT INTO debates (id, title, task, claude_model, codex_model, max_rounds, current_round, status, consensus, project_id, work_dir, max_turns, template_id, post_action_prompt, post_action_role, post_action_job_id, post_action_verification, verification_review_job_id, verification_response_job_id, verification_round, loop_count, current_loop, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    debate.id, debate.title, debate.task, debate.claude_model, debate.codex_model,
-    debate.max_rounds, debate.current_round, debate.status, debate.consensus,
-    debate.project_id, debate.work_dir, debate.max_turns, debate.template_id,
-    debate.post_action_prompt ?? null, debate.post_action_role ?? null, debate.post_action_job_id ?? null,
-    debate.post_action_verification ?? 0,
-    debate.verification_review_job_id ?? null, debate.verification_response_job_id ?? null,
-    debate.verification_round ?? 0,
-    debate.loop_count ?? 1, debate.current_loop ?? 0,
-    debate.created_at, debate.updated_at
-  );
-  return getDebateById(debate.id)!;
-}
-
-export function getDebateById(id: string): Debate | null {
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM debates WHERE id = ?').get(id);
-  return row ? cast<Debate>(row) : null;
-}
-
-export function listDebates(): Debate[] {
-  const db = getDb();
-  const rows = db.prepare('SELECT * FROM debates ORDER BY created_at DESC').all();
-  return rows.map(r => cast<Debate>(r));
-}
-
-export function updateDebate(id: string, fields: Partial<Pick<Debate, 'current_round' | 'status' | 'consensus' | 'post_action_job_id' | 'verification_review_job_id' | 'verification_response_job_id' | 'verification_round' | 'current_loop'>>): Debate | null {
-  const db = getDb();
-  const sets: string[] = ['updated_at = ?'];
-  const values: unknown[] = [Date.now()];
-  for (const [k, v] of Object.entries(fields)) {
-    sets.push(`${k} = ?`);
-    values.push(v);
-  }
-  values.push(id);
-  db.prepare(`UPDATE debates SET ${sets.join(', ')} WHERE id = ?`).run(...values);
-  return getDebateById(id);
-}
-
-export function getJobsForDebateRound(debateId: string, loop: number, round: number): Job[] {
-  const db = getDb();
-  const rows = db.prepare('SELECT * FROM jobs WHERE debate_id = ? AND debate_loop = ? AND debate_round = ?').all(debateId, loop, round);
-  return rows.map(r => cast<Job>(r));
 }
 
 // ─── Agent result text ────────────────────────────────────────────────────────
@@ -1728,7 +1665,7 @@ export function getTemplateModelStats(): TemplateModelStat[] {
     FROM jobs j
     LEFT JOIN templates t ON t.id = j.template_id
     LEFT JOIN agents a ON a.job_id = j.id AND a.status IN ('done','failed')
-    WHERE j.status IN ('done','failed') AND j.debate_id IS NULL AND j.original_job_id IS NULL AND j.review_parent_job_id IS NULL
+    WHERE j.status IN ('done','failed') AND j.original_job_id IS NULL AND j.review_parent_job_id IS NULL
     GROUP BY j.template_id, j.model HAVING total >= 1
   `).all();
   return rows.map(r => cast<TemplateModelStat>(r));

@@ -190,12 +190,6 @@ export function AgentCard({ agent, onClick, onSelectParent, onArchiveJob, onInte
         </div>
       )}
 
-      {agent.job.debate_id && (
-        <div className="agent-debate-badge" title={`Debate round ${agent.job.debate_round}, ${agent.job.debate_role} side`}>
-          R{agent.job.debate_round} {agent.job.debate_role === 'claude' ? 'Claude' : 'Codex'}
-        </div>
-      )}
-
       {agent.job.original_job_id && (
         <div className="agent-retry-badge" title={`Retry ${agent.job.retry_count}/${agent.job.max_retries}`}>
           Retry {agent.job.retry_count}/{agent.job.max_retries}
