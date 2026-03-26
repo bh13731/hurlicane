@@ -79,6 +79,9 @@ const FILTER_FIELDS: Record<string, FilterFieldDef[]> = {
   issue_comment: [
     ...COMMON_FILTERS,
   ],
+  pr_update: [
+    ...COMMON_FILTERS,
+  ],
 };
 
 const EVENT_TYPES: { key: string; label: string; description: string }[] = [
@@ -86,6 +89,7 @@ const EVENT_TYPES: { key: string; label: string; description: string }[] = [
   { key: 'check_run', label: 'CI Checks', description: 'Individual check run failures' },
   { key: 'pull_request_review', label: 'PR Reviews', description: 'Review comments and change requests' },
   { key: 'issue_comment', label: 'PR Comments', description: 'Comments on pull requests' },
+  { key: 'pr_update', label: 'PR Update', description: 'Debounced reviews + comments (10s window)' },
 ];
 
 interface EyeApiState {
@@ -124,6 +128,8 @@ function eventIcon(eventType: string): string {
       return 'Rev';
     case 'issue_comment':
       return 'Cmt';
+    case 'pr_update':
+      return 'Upd';
     case 'pull_request':
       return 'PR';
     default:

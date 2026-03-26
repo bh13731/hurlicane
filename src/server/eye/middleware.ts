@@ -27,7 +27,7 @@ export function extractFilterFields(
     fields['pr_draft'] = pr.draft ? 'true' : 'false';
   }
 
-  if (eventType === 'pull_request_review' && payload.review) {
+  if ((eventType === 'pull_request_review' || eventType === 'pr_update') && payload.review) {
     fields['review_state'] = payload.review.state ?? '';
     const hasBody = !!(payload.review.body && payload.review.body.trim());
     fields['review_has_body'] = hasBody ? 'true' : 'false';

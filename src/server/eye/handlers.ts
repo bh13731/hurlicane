@@ -89,6 +89,10 @@ export function resetState(): void {
     clearTimeout(buf.timer);
     reviewBuffers.delete(key);
   }
+  for (const [key, buf] of prUpdateBuffers) {
+    clearTimeout(buf.timer);
+    prUpdateBuffers.delete(key);
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -115,6 +119,13 @@ function buildJob(
 // window, then emit a single combined job.
 
 const REVIEW_DEBOUNCE_MS = 5_000;
+
+// ─── PR Update Debounce ──────────────────────────────────────────────────────
+// Combines pull_request_review and issue_comment events per PR into a single
+// debounced event. Users can subscribe to "pr_update" instead of handling
+// reviews and comments separately.
+
+const PR_UPDATE_DEBOUNCE_MS = 10_000;
 
 interface BufferedReview {
   reviewId: string;
@@ -243,6 +254,170 @@ function bufferReview(
   }
 
   return 'debounced';
+}
+
+// ─── PR Update Debounce Buffers ──────────────────────────────────────────────
+
+interface PrUpdateItem {
+  kind: 'review' | 'comment';
+  author: string;
+  body: string;
+  /** For reviews: inline comments fetched from the API */
+  inlineComments?: string;
+  /** For reviews: the review state (changes_requested, commented, approved) */
+  reviewState?: string;
+}
+
+interface PrUpdateBuffer {
+  timer: ReturnType<typeof setTimeout>;
+  items: PrUpdateItem[];
+  repo: string;
+  prNum: number;
+  branch: string;
+  config: EyeConfig;
+  botPrefix?: string;
+  dispatchContext: {
+    client: OrchestratorClient;
+    lastPayload: any;
+  };
+}
+
+const prUpdateBuffers = new Map<string, PrUpdateBuffer>();
+
+function flushPrUpdateBuffer(key: string): void {
+  const buf = prUpdateBuffers.get(key);
+  if (!buf) return;
+  prUpdateBuffers.delete(key);
+
+  const { items, repo, prNum, branch, config, dispatchContext } = buf;
+  if (items.length === 0) return;
+
+  const hasChangesRequested = items.some(i => i.reviewState === 'changes_requested');
+  const reviews = items.filter(i => i.kind === 'review');
+  const comments = items.filter(i => i.kind === 'comment');
+
+  const priority = hasChangesRequested ? 4 : 2;
+  const title = hasChangesRequested
+    ? `Address feedback on ${repo}#${prNum}`
+    : `PR activity on ${repo}#${prNum}`;
+
+  const parts = [`Activity on ${repo}#${prNum} (branch: ${branch}):`];
+
+  for (const r of reviews) {
+    const stateLabel = r.reviewState ?? 'review';
+    parts.push(`\n${r.author} left a ${stateLabel} review:`);
+    if (r.body) parts.push(r.body);
+    if (r.inlineComments) parts.push(`Inline comments:\n${r.inlineComments}`);
+  }
+
+  for (const c of comments) {
+    parts.push(`\n${c.author} commented:`);
+    parts.push(c.body || '(empty)');
+  }
+
+  if (hasChangesRequested) {
+    parts.push(`\nAddress the requested changes and push a fix.`);
+  } else {
+    parts.push(`\nReview and respond to the feedback as needed.`);
+  }
+
+  const job = buildJob(config, title, parts.join('\n'), priority, {
+    repo, pr: String(prNum), branch,
+  });
+
+  const { client, lastPayload } = dispatchContext;
+  processEvent(client, config, 'pr_update', lastPayload, job).then(result => {
+    const action = lastPayload.action ?? '';
+    const author = lastPayload.sender?.login ?? '';
+    if (result) {
+      logEvent({ ts: Date.now(), event_type: 'pr_update', action: 'debounced', repo, author, decision: 'ran', job_title: result.title, detail: `count=${result.count}, reviews=${reviews.length}, comments=${comments.length}` });
+    } else {
+      logEvent({ ts: Date.now(), event_type: 'pr_update', action: 'debounced', repo, author, decision: 'ignored', job_title: null, detail: 'no bindings matched filters or job creation failed' });
+    }
+  }).catch(err => {
+    console.error('[eye] failed to flush pr_update buffer:', err);
+  });
+}
+
+function bufferPrUpdate(
+  kind: 'review' | 'comment',
+  payload: any,
+  config: EyeConfig,
+  botPrefix: string | undefined,
+  client: OrchestratorClient,
+): string {
+  const repo = payload.repository?.full_name;
+  if (!repo) return 'no repo in payload';
+
+  let prNum: number;
+  let branch = '';
+  let author = '';
+  let body = '';
+  let inlineComments: string | undefined;
+  let reviewState: string | undefined;
+
+  if (kind === 'review') {
+    const review = payload.review;
+    const pr = payload.pull_request;
+    if (!review || !pr) return 'missing review/pr';
+    if (payload.action !== 'submitted') return `action "${payload.action}" (want "submitted")`;
+    prNum = pr.number;
+    branch = pr.head?.ref ?? '';
+    author = review.user?.login ?? 'unknown';
+    body = review.body ?? '';
+    reviewState = review.state ?? 'unknown';
+    inlineComments = fetchReviewComments(repo, prNum, review.id, botPrefix);
+  } else {
+    if (payload.action !== 'created') return `action "${payload.action}" (want "created")`;
+    const comment = payload.comment;
+    const issue = payload.issue;
+    if (!comment || !issue) return 'missing comment/issue';
+    if (!issue.pull_request) return 'not a PR comment';
+    prNum = issue.number;
+    author = comment.user?.login ?? 'unknown';
+    body = comment.body ?? '';
+    try {
+      branch = execSync(
+        `gh pr view ${prNum} --repo ${repo} --json headRefName --jq .headRefName`,
+        { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
+      ).toString().trim() || '';
+    } catch { /* ignore */ }
+  }
+
+  const item: PrUpdateItem = { kind, author, body, inlineComments, reviewState };
+
+  const bufferKey = `pr_update:${repo}#${prNum}`;
+  const existing = prUpdateBuffers.get(bufferKey);
+
+  if (existing) {
+    clearTimeout(existing.timer);
+    existing.items.push(item);
+    existing.dispatchContext.lastPayload = payload;
+    existing.timer = setTimeout(() => flushPrUpdateBuffer(bufferKey), PR_UPDATE_DEBOUNCE_MS);
+  } else {
+    const timer = setTimeout(() => flushPrUpdateBuffer(bufferKey), PR_UPDATE_DEBOUNCE_MS);
+    prUpdateBuffers.set(bufferKey, {
+      timer,
+      items: [item],
+      repo,
+      prNum,
+      branch,
+      config,
+      botPrefix,
+      dispatchContext: { client, lastPayload: payload },
+    });
+  }
+
+  return 'debounced';
+}
+
+function clearPrUpdateBuffers(prefix: string): void {
+  for (const [key, buf] of prUpdateBuffers) {
+    if (key.startsWith(`pr_update:${prefix}`)) {
+      clearTimeout(buf.timer);
+      prUpdateBuffers.delete(key);
+    }
+  }
 }
 
 // ─── Event Handlers ─────────────────────────────────────────────────────────
@@ -454,6 +629,7 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
   if (payload.action === 'synchronize') {
     clearDedupPrefix(prefix);
     clearReviewBuffers(`${repo}#${prNum}:`);
+    clearPrUpdateBuffers(`${repo}#${prNum}`);
     console.log(`[eye] reset CI dedup for ${repo}#${prNum}`);
     return null;
   }
@@ -463,6 +639,7 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
     clearDedupPrefix(`review-comment:${repo}#${prNum}:`);
     clearDedupPrefix(`comment:${repo}#${prNum}:`);
     clearReviewBuffers(`${repo}#${prNum}:`);
+    clearPrUpdateBuffers(`${repo}#${prNum}`);
     console.log(`[eye] cleaned dedup for ${repo}#${prNum} (converted to draft)`);
     return null;
   }
@@ -472,6 +649,7 @@ async function handlePullRequestMeta(payload: any, _config: EyeConfig, client: O
     clearDedupPrefix(`review-comment:${repo}#${prNum}:`);
     clearDedupPrefix(`comment:${repo}#${prNum}:`);
     clearReviewBuffers(`${repo}#${prNum}:`);
+    clearPrUpdateBuffers(`${repo}#${prNum}`);
     const branch = pr.head?.ref;
     const merged = pr.merged === true;
     if (branch) {
@@ -520,12 +698,23 @@ export async function dispatch(
     }
   }
 
+  const botPrefix = prompts.botName ? `[${prompts.botName.replace(/^\[|\]$/g, '')}]` : undefined;
+
+  // PR Update debounce — if pr_update is enabled, buffer reviews and comments into it.
+  // This runs independently of the per-event-type handling below, so users can subscribe
+  // to pr_update alone, or to the individual types, or both.
+  const prUpdateEnabled = !prompts.disabledEvents.includes('pr_update')
+    && (prompts.eventTemplates['pr_update'] ?? []).length > 0;
+  if (prUpdateEnabled && (eventType === 'pull_request_review' || eventType === 'issue_comment')) {
+    const kind = eventType === 'pull_request_review' ? 'review' as const : 'comment' as const;
+    const reason = bufferPrUpdate(kind, payload, config, botPrefix, client);
+    logEvent({ ts: Date.now(), event_type: 'pr_update', action, repo, author, decision: 'ignored', job_title: null, detail: reason === 'debounced' ? 'debounced (waiting for more activity)' : reason });
+  }
+
   if (prompts.disabledEvents.includes(eventType)) {
     logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: 'event type disabled' });
     return null;
   }
-
-  const botPrefix = prompts.botName ? `[${prompts.botName.replace(/^\[|\]$/g, '')}]` : undefined;
 
   // Reviews are debounced — they bypass the normal handler→processEvent flow
   if (eventType === 'pull_request_review') {
