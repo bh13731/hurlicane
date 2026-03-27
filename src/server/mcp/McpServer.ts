@@ -18,6 +18,7 @@ import { finishJobHandler, finishJobSchema } from './tools/finishJob.js';
 import { createWorktreeHandler, createWorktreeSchema } from './tools/createWorktree.js';
 import { listTemplatesHandler } from './tools/listTemplates.js';
 import { slackMessageHandler, slackMessageSchema } from './tools/slackMessage.js';
+import * as queries from '../db/queries.js';
 
 // agentId → { sessionId → transport }
 const agentTransports: Map<string, Map<string, StreamableHTTPServerTransport>> = new Map();
@@ -384,6 +385,16 @@ function buildMcpServer(agentId: string): MCP {
     async (input) => {
       const result = await reportLearningsHandler(agentId, input as any);
       return { content: [{ type: 'text', text: result }] };
+    }
+  );
+
+  server.tool(
+    'list_repos',
+    'List all configured repositories. Returns repo ID, name, and path. Use the repo ID when creating jobs with create_job.',
+    {},
+    async () => {
+      const repos = queries.listRepos?.() ?? [];
+      return { content: [{ type: 'text', text: JSON.stringify(repos) }] };
     }
   );
 
