@@ -79,13 +79,20 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
   // If template is marked readonly, force readonly regardless of inherited value
   const isReadonly = (tpl?.is_readonly ? 1 : 0) || inheritedReadonly;
 
+  // Resolve repo: explicit > inherited > template > fallback to first repo if non-readonly
+  let resolvedRepoId = repo_id ?? inheritedRepoId ?? tpl?.repo_id ?? null;
+  if (!resolvedRepoId && !isReadonly) {
+    const repos = queries.listRepos?.() ?? [];
+    resolvedRepoId = repos[0]?.id ?? null;
+  }
+
   const job = queries.insertJob({
     id: randomUUID(),
     title: title?.trim() || finalDescription.split('\n')[0].slice(0, 60),
     description: finalDescription,
     context: tpl?.context ?? null,
     priority: priority ?? tpl?.priority ?? 0,
-    repo_id: repo_id ?? inheritedRepoId ?? tpl?.repo_id ?? null,
+    repo_id: resolvedRepoId,
     branch: branch ?? null,
     max_turns: max_turns ?? 50,
     model: model ?? tpl?.model ?? inheritedModel,
