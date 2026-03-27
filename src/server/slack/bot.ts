@@ -27,36 +27,40 @@ export async function startSlackBot(): Promise<void> {
   const socketMode = new SocketModeClient({ appToken });
   const web = new WebClient(botToken);
 
-  // @slack/socket-mode v2 emits events_api payloads by their inner event type directly
-  socketMode.on('app_mention', async ({ ack, event, body }) => {
-    await ack();
-    console.log(`[slack-bot] app_mention from ${event.user} in ${event.channel}, thread_ts=${event.thread_ts ?? '(none)'}, ts=${event.ts}`);
+  // Shared handler: validate user, create job, reply
+  async function handleSlackMessage(
+    event: any,
+    source: 'mention' | 'dm',
+  ): Promise<void> {
+    const logPrefix = source === 'dm' ? '[slack-bot] DM' : '[slack-bot] app_mention';
+    console.log(`${logPrefix} from ${event.user} in ${event.channel}, thread_ts=${event.thread_ts ?? '(none)'}, ts=${event.ts}`);
 
-    // Only accept mentions from the configured Slack user
+    // Only accept messages from the configured Slack user
     const { userId: allowedUserId } = loadSlackSettings();
     if (allowedUserId && event.user !== allowedUserId) {
-      console.log(`[slack-bot] Ignoring mention from ${event.user} (allowed: ${allowedUserId})`);
+      console.log(`${logPrefix} Ignoring message from ${event.user} (allowed: ${allowedUserId})`);
       return;
     }
 
+    // Strip bot mentions from text (relevant for @mentions, harmless for DMs)
     const description = (event.text as string).replace(/<@[A-Z0-9]+>/g, '').trim();
     if (!description) {
       await web.chat.postMessage({
         channel: event.channel,
         thread_ts: event.ts,
-        text: 'Please include a task description after the mention.',
+        text: 'Please include a task description.',
       });
       return;
     }
 
-    // Fetch thread context if the mention is inside an existing thread
+    // Fetch thread context if the message is inside an existing thread
     let threadContext = '';
     if (event.thread_ts) {
       try {
         const thread = await fetchSlackThread(event.channel, event.thread_ts);
         if (thread) threadContext = `\n\nSlack thread context:\n${thread}`;
       } catch (err) {
-        console.error('[slack-bot] Failed to fetch thread context:', err);
+        console.error(`${logPrefix} Failed to fetch thread context:`, err);
       }
     }
 
@@ -94,12 +98,28 @@ export async function startSlackBot(): Promise<void> {
       text: `Job created: *${job.title}* (\`${job.id}\`)`,
     });
 
-    console.log(`[slack-bot] Created job ${job.id} from @mention by ${event.user}`);
+    console.log(`${logPrefix} Created job ${job.id} by ${event.user}`);
+  }
+
+  // @slack/socket-mode v2 emits events_api payloads by their inner event type directly
+  socketMode.on('app_mention', async ({ ack, event }) => {
+    await ack();
+    await handleSlackMessage(event, 'mention');
+  });
+
+  // Handle direct messages (im channel type)
+  socketMode.on('message', async ({ ack, event }) => {
+    await ack();
+    // Only handle DMs (im), ignore channel messages (handled by app_mention)
+    if (event.channel_type !== 'im') return;
+    // Ignore bot messages and message subtypes (edits, joins, etc.)
+    if (event.bot_id || event.subtype) return;
+    await handleSlackMessage(event, 'dm');
   });
 
   await socketMode.start();
   client = socketMode;
-  console.log('[slack-bot] Socket Mode connected, listening for @mentions');
+  console.log('[slack-bot] Socket Mode connected, listening for @mentions and DMs');
 }
 
 export async function stopSlackBot(): Promise<void> {

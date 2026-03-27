@@ -692,6 +692,25 @@ export async function dispatch(
   // Global filters — evaluated before handlers run. Events that don't pass are silently dropped.
   if (prompts.globalFilters.length > 0) {
     const fields = extractFilterFields(eventType, payload, config.author, prompts.botName);
+
+    // For check_suite/check_run events the payload often lacks PR data.
+    // Resolve pr_author via gh CLI so global filters like pr_author_is_self work.
+    const prNum = payload.check_suite?.pull_requests?.[0]?.number
+      ?? payload.check_run?.pull_requests?.[0]?.number
+      ?? '';
+    if ((eventType === 'check_suite' || eventType === 'check_run') && !fields['pr_author'] && repo && prNum) {
+      try {
+        const prAuthor = execSync(
+          `gh pr view ${JSON.stringify(String(prNum))} --repo ${JSON.stringify(repo)} --json author --jq .author.login`,
+          { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
+        ).toString().trim();
+        if (prAuthor) {
+          fields['pr_author'] = prAuthor;
+          fields['pr_author_is_self'] = prAuthor === config.author ? 'true' : 'false';
+        }
+      } catch { /* gh CLI failed — leave unset */ }
+    }
+
     if (!filtersPass(prompts.globalFilters, fields)) {
       logEvent({ ts: Date.now(), event_type: eventType, action, repo, author, decision: 'ignored', job_title: null, detail: 'rejected by global filters' });
       return null;
