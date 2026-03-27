@@ -64,13 +64,18 @@ export async function startSlackBot(): Promise<void> {
       }
     }
 
-    // Resolve repo — use the first repo as default
-    const repos = queries.listRepos?.() ?? [];
-    const defaultRepo = repos[0] ?? null;
-
     // Load template setting
     const templateId = queries.getNote('setting:slack:templateId')?.value || null;
     const template = templateId ? queries.getTemplateById(templateId) : null;
+
+    // Only assign a default repo if the template isn't readonly.
+    // Readonly orchestrator jobs (e.g. Slack handler) don't need a repo/branch —
+    // they spawn child jobs that each get their own.
+    let repoId: string | null = template?.repo_id ?? null;
+    if (!repoId && !template?.is_readonly) {
+      const repos = queries.listRepos?.() ?? [];
+      repoId = repos[0]?.id ?? null;
+    }
 
     const job = queries.insertJob({
       id: randomUUID(),
@@ -83,7 +88,7 @@ export async function startSlackBot(): Promise<void> {
         ...(threadContext ? { thread: threadContext } : {}),
       }),
       priority: 0,
-      repo_id: defaultRepo?.id ?? null,
+      repo_id: repoId,
       max_turns: 50,
       model: template?.model ?? null,
       template_id: templateId,
