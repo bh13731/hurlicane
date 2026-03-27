@@ -266,10 +266,12 @@ function buildMcpServer(agentId: string): MCP {
       description: createJobSchema.shape.description,
       title: createJobSchema.shape.title,
       priority: createJobSchema.shape.priority,
+      repo_id: createJobSchema.shape.repo_id,
       branch: createJobSchema.shape.branch,
       max_turns: createJobSchema.shape.max_turns,
       model: createJobSchema.shape.model,
       depends_on: createJobSchema.shape.depends_on,
+      repeat_interval_ms: createJobSchema.shape.repeat_interval_ms,
       template_id: createJobSchema.shape.template_id,
     },
     async (input) => {
