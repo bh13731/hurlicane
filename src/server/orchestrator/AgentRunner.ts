@@ -61,9 +61,12 @@ ORCHESTRATION (spawn and coordinate sub-agents):
       The worktree is always created for the repo you are running in. Returns { worktree_path, branch }.
   - list_templates():
       List available job templates. Returns { templates: [{ id, name, content_preview, ... }] }.
-  - create_job(description?, title?, priority?, max_turns?, model?, depends_on?, template_id?):
+  - list_repos():
+      List all configured repositories. Returns repo ID, name, and path.
+  - create_job(description?, title?, priority?, repo_id?, branch?, max_turns?, model?, depends_on?, template_id?):
       Create a new job that will be run by another agent. Returns { job_id, title, status }.
-      The job inherits your repo and gets its own worktree automatically.
+      If you have a repo, the child inherits it automatically. If you are a repoless orchestrator,
+      you MUST pass repo_id (from list_repos) so the child job gets a worktree.
       Pass template_id to create a job from a template — description becomes optional.
   - wait_for_jobs(job_ids, timeout_ms?):
       Block until all specified jobs finish. Returns an array of { job_id, title, status, result_text }.
