@@ -32,6 +32,19 @@ export async function cleanupTestDb() {
   closeDb();
 }
 
+// ─── Manager Reset ───────────────────────────────────────────────────────────
+
+/**
+ * Reset module-level dedup state in all managers that use a _processedJobs Set.
+ * Call in beforeEach so each test starts with a clean slate.
+ */
+export async function resetManagerState() {
+  const { _resetForTest: resetWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+  const { _resetForTest: resetDebate } = await import('../server/orchestrator/DebateManager.js');
+  resetWorkflow();
+  resetDebate();
+}
+
 // ─── Socket Mock ──────────────────────────────────────────────────────────────
 
 export interface SocketMockCalls {

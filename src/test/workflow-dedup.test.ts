@@ -1,0 +1,250 @@
+/**
+ * WorkflowManager dedup and phase-transition tests.
+ *
+ * Proves:
+ * 1. _resetForTest() clears module-level dedup state between tests
+ * 2. Same job ID processed twice within one test is a no-op (dedup guard)
+ * 3. Same job ID works across separate tests (per-test independence via reset)
+ * 4. onJobCompleted() drives a real assess→review phase transition with DB + socket assertions
+ * 5. A failed phase job marks the workflow as blocked
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  setupTestDb,
+  cleanupTestDb,
+  createSocketMock,
+  resetManagerState,
+  insertTestProject,
+  insertTestWorkflow,
+  insertTestJob,
+} from './helpers.js';
+
+// Mock SocketManager before any module that imports it
+vi.mock('../server/socket/SocketManager.js', () => createSocketMock());
+
+// Mock WorkflowPrompts so we don't need to exercise complex prompt generation
+vi.mock('../server/orchestrator/WorkflowPrompts.js', () => ({
+  buildAssessPrompt: vi.fn(() => 'mock assess prompt'),
+  buildReviewPrompt: vi.fn(() => 'mock review prompt'),
+  buildImplementPrompt: vi.fn(() => 'mock implement prompt'),
+}));
+
+// Shared job ID used to prove cross-test dedup independence
+const SHARED_JOB_ID = 'dedup-test-shared-job-id';
+
+describe('WorkflowManager: dedup guard', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+    await resetManagerState();
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('processes a job the first time and ignores the second call (dedup within one test)', async () => {
+    const socket = await import('../server/socket/SocketManager.js');
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById } = await import('../server/db/queries.js');
+
+    // Set up workflow + plan note + assess job
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+    });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1\n- [ ] M2', null);
+
+    const job = await insertTestJob({
+      id: 'dedup-within-test',
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'done',
+    });
+
+    // First call: should trigger assess→review transition
+    onJobCompleted(job);
+    const callsAfterFirst = vi.mocked(socket.emitWorkflowUpdate).mock.calls.length;
+    expect(callsAfterFirst).toBeGreaterThan(0);
+
+    // Verify a review job was spawned
+    const emitJobNewCalls = vi.mocked(socket.emitJobNew).mock.calls;
+    expect(emitJobNewCalls.length).toBe(1);
+    expect(emitJobNewCalls[0][0].workflow_phase).toBe('review');
+
+    // Second call with same job: should be a complete no-op
+    vi.clearAllMocks();
+    onJobCompleted(job);
+    expect(vi.mocked(socket.emitWorkflowUpdate).mock.calls.length).toBe(0);
+    expect(vi.mocked(socket.emitJobNew).mock.calls.length).toBe(0);
+
+    // DB state unchanged from first call
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.current_phase).toBe('review');
+    expect(updated.current_cycle).toBe(1);
+  });
+
+  it('processes the SHARED_JOB_ID (first test — proves reset clears dedup set)', async () => {
+    const socket = await import('../server/socket/SocketManager.js');
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+    });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1', null);
+
+    const job = await insertTestJob({
+      id: SHARED_JOB_ID,
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'done',
+    });
+
+    onJobCompleted(job);
+
+    // Should have processed the job (not dedup-blocked)
+    expect(vi.mocked(socket.emitWorkflowUpdate).mock.calls.length).toBeGreaterThan(0);
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.current_phase).toBe('review');
+  });
+
+  it('processes the SHARED_JOB_ID again (second test — proves per-test independence)', async () => {
+    const socket = await import('../server/socket/SocketManager.js');
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+    });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1', null);
+
+    const job = await insertTestJob({
+      id: SHARED_JOB_ID,
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'done',
+    });
+
+    // If _resetForTest didn't clear the set, this would be silently deduped
+    onJobCompleted(job);
+
+    expect(vi.mocked(socket.emitWorkflowUpdate).mock.calls.length).toBeGreaterThan(0);
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.current_phase).toBe('review');
+  });
+});
+
+describe('WorkflowManager: onJobCompleted phase transitions', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+    await resetManagerState();
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('assess completion spawns a review job and updates workflow phase', async () => {
+    const socket = await import('../server/socket/SocketManager.js');
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+    });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1\n- [ ] M2\n- [x] M3', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'done',
+    });
+
+    onJobCompleted(job);
+
+    // Workflow state updated
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.current_phase).toBe('review');
+    expect(updated.current_cycle).toBe(1);
+    expect(updated.milestones_total).toBe(3);
+    expect(updated.milestones_done).toBe(1);
+
+    // Review job was spawned
+    const emitJobNewCalls = vi.mocked(socket.emitJobNew).mock.calls;
+    expect(emitJobNewCalls.length).toBe(1);
+    const reviewJob = emitJobNewCalls[0][0];
+    expect(reviewJob.workflow_id).toBe(workflow.id);
+    expect(reviewJob.workflow_phase).toBe('review');
+    expect(reviewJob.workflow_cycle).toBe(1);
+  });
+
+  it('failed phase job marks workflow as blocked', async () => {
+    const socket = await import('../server/socket/SocketManager.js');
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 2,
+    });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 2,
+      workflow_phase: 'implement',
+      status: 'failed',
+    });
+
+    onJobCompleted(job);
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('blocked');
+    expect(updated.current_phase).toBe('implement');
+
+    // Socket should have emitted the blocked state
+    const updateCalls = vi.mocked(socket.emitWorkflowUpdate).mock.calls;
+    expect(updateCalls.length).toBeGreaterThan(0);
+    const lastUpdate = updateCalls[updateCalls.length - 1][0];
+    expect(lastUpdate.status).toBe('blocked');
+  });
+
+  it('non-workflow job is silently ignored', async () => {
+    const socket = await import('../server/socket/SocketManager.js');
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+
+    const job = await insertTestJob({
+      workflow_id: null,
+      status: 'done',
+    });
+
+    onJobCompleted(job);
+
+    expect(vi.mocked(socket.emitWorkflowUpdate).mock.calls.length).toBe(0);
+    expect(vi.mocked(socket.emitJobNew).mock.calls.length).toBe(0);
+  });
+});

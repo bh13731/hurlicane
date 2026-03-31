@@ -25,6 +25,11 @@ export function onJobCompleted(job: Job): void {
 // since all calls happen in the same Node.js process (single-threaded).
 const _processedJobs = new Set<string>();
 
+/** Clear module-level dedup state. Test-only — call in beforeEach to ensure per-test independence. */
+export function _resetForTest(): void {
+  _processedJobs.clear();
+}
+
 function _onJobCompleted(job: Job): void {
   // Guard against double-call from PID poll + PTY onExit race
   if (_processedJobs.has(job.id)) return;

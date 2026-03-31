@@ -413,6 +413,11 @@ function _buildPrBody(workflow: Workflow, planText: string | null): string {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/** Clear module-level dedup state. Test-only — call in beforeEach to ensure per-test independence. */
+export function _resetForTest(): void {
+  _processedJobs.clear();
+}
+
 function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkflow>[1]): void {
   const updated = queries.updateWorkflow(id, fields);
   if (updated) socket.emitWorkflowUpdate(updated);
