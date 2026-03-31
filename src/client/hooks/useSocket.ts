@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import socket from '../socket';
-import type { AgentWithJob, Job, Project, Question, FileLock, AgentOutput, QueueSnapshot, Debate, Discussion, Proposal } from '@shared/types';
+import type { AgentWithJob, Job, Project, Question, FileLock, AgentOutput, QueueSnapshot, Debate, Workflow, Discussion, Proposal } from '@shared/types';
 
 interface SocketHandlers {
   onSnapshot: (snapshot: QueueSnapshot) => void;
@@ -16,6 +16,8 @@ interface SocketHandlers {
   onProjectNew?: (project: Project) => void;
   onDebateNew?: (debate: Debate) => void;
   onDebateUpdate?: (debate: Debate) => void;
+  onWorkflowNew?: (workflow: Workflow) => void;
+  onWorkflowUpdate?: (workflow: Workflow) => void;
   onDiscussionNew?: (discussion: Discussion) => void;
   onDiscussionUpdate?: (discussion: Discussion) => void;
   onProposalNew?: (proposal: Proposal) => void;
@@ -47,6 +49,8 @@ export function useSocket(handlers: SocketHandlers): void {
       h('project:new', ({ project }: { project: Project }) => ref.current.onProjectNew?.(project)),
       h('debate:new', ({ debate }: { debate: Debate }) => ref.current.onDebateNew?.(debate)),
       h('debate:update', ({ debate }: { debate: Debate }) => ref.current.onDebateUpdate?.(debate)),
+      h('workflow:new', ({ workflow }: { workflow: Workflow }) => ref.current.onWorkflowNew?.(workflow)),
+      h('workflow:update', ({ workflow }: { workflow: Workflow }) => ref.current.onWorkflowUpdate?.(workflow)),
       h('warning:new', (payload: any) => (ref.current as any).onWarningNew?.(payload)),
       h('eye:discussion:new', ({ discussion }: { discussion: Discussion }) => ref.current.onDiscussionNew?.(discussion)),
       h('eye:discussion:update', ({ discussion }: { discussion: Discussion }) => ref.current.onDiscussionUpdate?.(discussion)),

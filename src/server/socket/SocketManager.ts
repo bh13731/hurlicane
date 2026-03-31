@@ -1,6 +1,6 @@
 import { Server as HttpServer } from 'http';
 import { Server as SocketIoServer } from 'socket.io';
-import type { ServerToClientEvents, ClientToServerEvents, AgentWithJob, Job, Question, FileLock, AgentOutput, QueueSnapshot, Debate, AgentWarning, Discussion, DiscussionMessage, Proposal, ProposalMessage } from '../../shared/types.js';
+import type { ServerToClientEvents, ClientToServerEvents, AgentWithJob, Job, Question, FileLock, AgentOutput, QueueSnapshot, Debate, AgentWarning, Discussion, DiscussionMessage, Proposal, ProposalMessage, Workflow } from '../../shared/types.js';
 
 let _io: SocketIoServer<ClientToServerEvents, ServerToClientEvents> | null = null;
 
@@ -83,6 +83,14 @@ export function emitDebateNew(debate: Debate): void {
 
 export function emitDebateUpdate(debate: Debate): void {
   getIo().emit('debate:update', { debate });
+}
+
+export function emitWorkflowNew(workflow: Workflow): void {
+  getIo().emit('workflow:new', { workflow });
+}
+
+export function emitWorkflowUpdate(workflow: Workflow): void {
+  getIo().emit('workflow:update', { workflow });
 }
 
 export function emitWarningNew(warning: AgentWarning): void {

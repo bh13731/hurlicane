@@ -8,6 +8,8 @@ export type DebateRole = 'claude' | 'codex' | 'post_action' | 'verification_revi
 export type RetryPolicy = 'none' | 'same' | 'analyze';
 export type WarningType = 'stalled' | 'high_turns' | 'long_running';
 export type ReviewStatus = 'pending_review' | 'approved' | 'needs_revision';
+export type WorkflowStatus = 'running' | 'complete' | 'blocked' | 'failed' | 'cancelled';
+export type WorkflowPhase = 'idle' | 'assess' | 'review' | 'implement';
 
 export interface Job {
   id: string;
@@ -40,6 +42,9 @@ export interface Job {
   created_by_agent_id: string | null;   // agent that created this job via create_job MCP tool
   pre_debate_id: string | null;         // FK → debates.id — job blocked until this debate finishes
   pre_debate_summary: string | null;    // debate outcome stored separately; composed at dispatch
+  workflow_id: string | null;           // FK → workflows.id
+  workflow_cycle: number | null;        // which cycle this job belongs to (0-based)
+  workflow_phase: WorkflowPhase | null; // 'assess' | 'review' | 'implement'
   archived_at: number | null;
   created_at: number;
   updated_at: number;
@@ -68,6 +73,32 @@ export interface Debate {
   verification_round: number;                  // current verification loop iteration (0-based)
   loop_count: number;    // total loops to run (1 = run once)
   current_loop: number;  // which debate loop we're on (0-based)
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Workflow {
+  id: string;
+  title: string;
+  task: string;
+  work_dir: string | null;
+  implementer_model: string;
+  reviewer_model: string;
+  max_cycles: number;
+  current_cycle: number;
+  current_phase: WorkflowPhase;
+  status: WorkflowStatus;
+  milestones_total: number;
+  milestones_done: number;
+  project_id: string | null;
+  max_turns_assess: number;
+  max_turns_review: number;
+  max_turns_implement: number;
+  template_id: string | null;
+  use_worktree: number;
+  worktree_path: string | null;
+  worktree_branch: string | null;
+  pr_url: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -158,6 +189,7 @@ export interface QueueSnapshot {
   projects: Project[];
   batchTemplates: BatchTemplate[];
   debates: Debate[];
+  workflows: Workflow[];
   discussions: Discussion[];
   proposals: Proposal[];
 }
@@ -178,6 +210,8 @@ export interface ServerToClientEvents {
   'pty:snapshot-refresh': (payload: { agent_id: string; snapshot: string }) => void;
   'debate:new': (payload: { debate: Debate }) => void;
   'debate:update': (payload: { debate: Debate }) => void;
+  'workflow:new': (payload: { workflow: Workflow }) => void;
+  'workflow:update': (payload: { workflow: Workflow }) => void;
   'warning:new': (payload: { warning: AgentWarning }) => void;
   'project:new': (payload: { project: Project }) => void;
   'eye:discussion:new': (payload: { discussion: Discussion; message: DiscussionMessage }) => void;
@@ -248,6 +282,11 @@ export interface CodexStreamEvent {
     message: string;
   };
   message?: string;
+}
+
+/** Returns true for jobs that run with --print and exit naturally (no finish_job needed). */
+export function isAutoExitJob(job: Pick<Job, 'debate_role' | 'workflow_phase'>): boolean {
+  return !!(job.debate_role || job.workflow_phase);
 }
 
 export function isCodexModel(model: string | null): boolean {
@@ -413,6 +452,29 @@ export interface CreateDebateRequest {
 
 export interface CreateDebateResponse {
   debate: Debate;
+  project: Project;
+  jobs: Job[];
+}
+
+// ─── Workflows ───────────────────────────────────────────────────────────────
+
+export interface CreateWorkflowRequest {
+  title?: string;
+  task: string;
+  workDir?: string;
+  implementerModel?: string;
+  reviewerModel?: string;
+  maxCycles?: number;
+  maxTurnsAssess?: number;
+  maxTurnsReview?: number;
+  maxTurnsImplement?: number;
+  templateId?: string;
+  useWorktree?: boolean;
+  projectId?: string;
+}
+
+export interface CreateWorkflowResponse {
+  workflow: Workflow;
   project: Project;
   jobs: Job[];
 }

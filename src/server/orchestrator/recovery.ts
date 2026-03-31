@@ -4,9 +4,10 @@ import { reattachAgent, getLogPath } from './AgentRunner.js';
 import { execFileSync } from 'child_process';
 import { isTmuxSessionAlive, attachPty } from './PtyManager.js';
 import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
+import { onJobCompleted as workflowOnJobCompleted } from './WorkflowManager.js';
 import { orphanedWaits } from '../mcp/McpServer.js';
 import type { ClaudeStreamEvent } from '../../shared/types.js';
-import { isCodexModel } from '../../shared/types.js';
+import { isCodexModel, isAutoExitJob } from '../../shared/types.js';
 import { handleRetry } from './RetryManager.js';
 
 function isPidAlive(pid: number): boolean {
@@ -128,7 +129,7 @@ export function runRecovery(): void {
       } else {
         // Tmux-based path (all Claude agents, interactive or not)
         if (isTmuxSessionAlive(agent.id)) {
-          const isDebateStage = !!(job as any).debate_role;
+          const isDebateStage = isAutoExitJob(job as any);
 
           if (!job.is_interactive && !isDebateStage) {
             // Non-interactive automated agent (e.g. Eye, verification agents).
@@ -194,7 +195,7 @@ export function runRecovery(): void {
           }
         } else {
           // Interactive or debate-stage → done; other non-interactive → failed (no finish_job called)
-          const isDebateStage = !!(job as any).debate_role;
+          const isDebateStage = isAutoExitJob(job as any);
           const finalStatus = (job.is_interactive || isDebateStage) ? 'done' : 'failed';
           console.log(`[recovery] tmux agent ${agent.id} — session gone, marking ${finalStatus}`);
 
@@ -219,6 +220,7 @@ export function runRecovery(): void {
             const doneJob = queries.getJobById(agent.job_id);
             if (doneJob) {
               try { debateOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] debateOnJobCompleted error for agent ${agent.id}:`, err); }
+              try { workflowOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] workflowOnJobCompleted error for agent ${agent.id}:`, err); }
             }
             tmuxRecovered++;
           } else {

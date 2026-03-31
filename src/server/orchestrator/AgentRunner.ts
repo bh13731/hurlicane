@@ -6,6 +6,7 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
 import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
+import { onJobCompleted as workflowOnJobCompleted } from './WorkflowManager.js';
 import { runCompletionChecks } from './CompletionChecks.js';
 import { handleRetry } from './RetryManager.js';
 import { triageLearnings } from './MemoryTriager.js';
@@ -523,6 +524,7 @@ export async function handleJobCompletion(
     try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); }
     // If this job is part of a debate, check if the round is complete
     try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] debateOnJobCompleted error:`, err); }
+    try { workflowOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] workflowOnJobCompleted error:`, err); }
     // If the job has a repeat interval, queue the next run regardless of success/failure
     if (updatedJob.repeat_interval_ms) {
       try {

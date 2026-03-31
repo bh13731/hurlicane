@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getDb } from './database.js';
-import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, Debate, DebateStatus, DebateRole, RetryPolicy, JobStatus, AgentStatus, SearchResult, AgentWarning, Worktree, Nudge, KBEntry, Review, TemplateModelStat, ReviewStatus, Discussion, DiscussionMessage, DiscussionStatus, DiscussionCategory, DiscussionPriority, Proposal, ProposalMessage, ProposalStatus, ProposalCategory, ProposalComplexity } from '../../shared/types.js';
+import type { Job, Agent, AgentWithJob, ChildAgentSummary, Question, FileLock, AgentOutput, AgentOutputSegment, Template, Note, Project, BatchTemplate, Debate, DebateStatus, DebateRole, RetryPolicy, JobStatus, AgentStatus, SearchResult, AgentWarning, Worktree, Nudge, KBEntry, Review, TemplateModelStat, ReviewStatus, Discussion, DiscussionMessage, DiscussionStatus, DiscussionCategory, DiscussionPriority, Proposal, ProposalMessage, ProposalStatus, ProposalCategory, ProposalComplexity, Workflow, WorkflowStatus, WorkflowPhase } from '../../shared/types.js';
 
 // node:sqlite returns null-prototype objects; shallow-copy to a regular object.
 // SQLite rows are always flat scalars so a shallow copy is sufficient and far
@@ -43,12 +43,15 @@ export function insertJob(job: {
   created_by_agent_id?: string | null;
   pre_debate_id?: string | null;
   pre_debate_summary?: string | null;
+  workflow_id?: string | null;
+  workflow_cycle?: number | null;
+  workflow_phase?: WorkflowPhase | null;
 }): Job {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_loop, debate_round, debate_role, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_by_agent_id, pre_debate_id, pre_debate_summary, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, title, description, context, status, priority, work_dir, max_turns, model, template_id, depends_on, is_interactive, use_worktree, project_id, debate_id, debate_loop, debate_round, debate_role, scheduled_at, repeat_interval_ms, retry_policy, max_retries, retry_count, original_job_id, completion_checks, review_config, review_status, review_parent_job_id, created_by_agent_id, pre_debate_id, pre_debate_summary, workflow_id, workflow_cycle, workflow_phase, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     job.id, job.title, job.description, job.context,
     job.status ?? 'queued', job.priority,
@@ -76,6 +79,9 @@ export function insertJob(job: {
     job.created_by_agent_id ?? null,
     job.pre_debate_id ?? null,
     job.pre_debate_summary ?? null,
+    job.workflow_id ?? null,
+    job.workflow_cycle ?? null,
+    job.workflow_phase ?? null,
     now, now
   );
   return getJobById(job.id)!;
@@ -647,7 +653,7 @@ function enrichAgent(agent: Agent): AgentWithJob {
   const jobRow = db.prepare('SELECT * FROM jobs WHERE id = ?').get(agent.job_id);
   if (!jobRow) {
     // Job was deleted while agent still references it — return a stub
-    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_loop: null, debate_round: null, debate_role: null, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, review_config: null, review_status: null, review_parent_job_id: null, created_by_agent_id: null, pre_debate_id: null, pre_debate_summary: null, archived_at: null, created_at: 0, updated_at: 0 };
+    const stub: Job = { id: agent.job_id, title: '(deleted job)', description: '', context: null, status: 'failed', priority: 0, model: null, template_id: null, depends_on: null, is_interactive: 0, use_worktree: 0, project_id: null, flagged: 0, debate_id: null, debate_loop: null, debate_round: null, debate_role: null, scheduled_at: null, repeat_interval_ms: null, retry_policy: 'none', max_retries: 0, retry_count: 0, original_job_id: null, completion_checks: null, review_config: null, review_status: null, review_parent_job_id: null, created_by_agent_id: null, pre_debate_id: null, pre_debate_summary: null, workflow_id: null, workflow_cycle: null, workflow_phase: null, archived_at: null, created_at: 0, updated_at: 0 };
     return { ...agent, job: stub, template_name: null, pending_question: null, active_locks: [], child_agents: [], warnings: [] };
   }
   const job = cast<Job>(jobRow);
@@ -2069,4 +2075,56 @@ export function getPrReviewsWithNewUserReplies(): any[] {
         AND m.created_at = (SELECT MAX(created_at) FROM pr_review_messages WHERE review_id = pr.id)
     ) ORDER BY pr.updated_at DESC
   `).all().map((r: any) => cast<any>(r));
+}
+
+// ─── Workflows ────────────────────────────────────────────────────────────────
+
+export function insertWorkflow(workflow: Workflow): Workflow {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO workflows (id, title, task, work_dir, implementer_model, reviewer_model, max_cycles, current_cycle, current_phase, status, milestones_total, milestones_done, project_id, max_turns_assess, max_turns_review, max_turns_implement, template_id, use_worktree, worktree_path, worktree_branch, pr_url, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    workflow.id, workflow.title, workflow.task, workflow.work_dir,
+    workflow.implementer_model, workflow.reviewer_model,
+    workflow.max_cycles, workflow.current_cycle, workflow.current_phase, workflow.status,
+    workflow.milestones_total, workflow.milestones_done,
+    workflow.project_id,
+    workflow.max_turns_assess, workflow.max_turns_review, workflow.max_turns_implement,
+    workflow.template_id, workflow.use_worktree,
+    workflow.worktree_path ?? null, workflow.worktree_branch ?? null, workflow.pr_url ?? null,
+    workflow.created_at, workflow.updated_at
+  );
+  return getWorkflowById(workflow.id)!;
+}
+
+export function getWorkflowById(id: string): Workflow | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM workflows WHERE id = ?').get(id);
+  return row ? cast<Workflow>(row) : null;
+}
+
+export function listWorkflows(): Workflow[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM workflows ORDER BY created_at DESC').all();
+  return rows.map((r: any) => cast<Workflow>(r));
+}
+
+export function updateWorkflow(id: string, fields: Partial<Pick<Workflow, 'current_cycle' | 'current_phase' | 'status' | 'milestones_total' | 'milestones_done' | 'worktree_path' | 'worktree_branch' | 'pr_url'>>): Workflow | null {
+  const db = getDb();
+  const sets: string[] = ['updated_at = ?'];
+  const values: unknown[] = [Date.now()];
+  for (const [k, v] of Object.entries(fields)) {
+    sets.push(`${k} = ?`);
+    values.push(v);
+  }
+  values.push(id);
+  db.prepare(`UPDATE workflows SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+  return getWorkflowById(id);
+}
+
+export function getJobsForWorkflow(workflowId: string): Job[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM jobs WHERE workflow_id = ? ORDER BY workflow_cycle ASC, created_at ASC').all(workflowId);
+  return rows.map((r: any) => cast<Job>(r));
 }

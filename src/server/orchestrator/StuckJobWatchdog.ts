@@ -24,7 +24,7 @@ import { getFileLockRegistry } from './FileLockRegistry.js';
 import { isTmuxSessionAlive, startInteractiveAgent, saveSnapshot } from './PtyManager.js';
 import { handleRetry } from './RetryManager.js';
 import { orphanedWaits, hasActiveTransport } from '../mcp/McpServer.js';
-import { isCodexModel } from '../../shared/types.js';
+import { isCodexModel, isAutoExitJob } from '../../shared/types.js';
 
 const WATCHDOG_INTERVAL_MS = 30_000;
 
@@ -106,7 +106,7 @@ function check(): void {
       const IDLE_THRESHOLD_MS = 90 * 60 * 1000; // 90 minutes
       if (tmuxAlive && agent.pid == null && !agent.pending_wait_ids) {
         const idleJob = queries.getJobById(agent.job_id);
-        const isStuckCandidate = idleJob && !idleJob.is_interactive && !(idleJob as any).debate_role;
+        const isStuckCandidate = idleJob && !idleJob.is_interactive && !isAutoExitJob(idleJob as any);
         const idleMs = Date.now() - agent.updated_at;
         if (isStuckCandidate && idleMs > IDLE_THRESHOLD_MS) {
           console.warn(`[watchdog] non-interactive tmux agent ${agent.id} idle ${Math.round(idleMs / 60000)}min without MCP activity — killing stale session`);
@@ -215,7 +215,7 @@ function check(): void {
     } else {
       // Tmux-based agent: session ended without finish_job being called.
       // Interactive or debate-stage → done; other non-interactive → failed.
-      const isDebateStage = !!(job as any)?.debate_role;
+      const isDebateStage = job ? isAutoExitJob(job as any) : false;
       const finalStatus = (job?.is_interactive || isDebateStage) ? 'done' : 'failed';
       console.log(
         `[watchdog] agent ${agent.id} (tmux-based) — session gone, marking ${finalStatus}`

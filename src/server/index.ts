@@ -86,6 +86,7 @@ async function main() {
       projects: queries.listProjects(),
       batchTemplates: queries.listBatchTemplates(),
       debates: queries.listDebates(),
+      workflows: queries.listWorkflows(),
       discussions: queries.listDiscussions(),
       proposals: queries.listProposals(),
     };

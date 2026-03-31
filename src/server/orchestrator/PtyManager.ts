@@ -7,7 +7,7 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents, startTailing, stopTailing, readClaudeMd, buildMemorySection } from './AgentRunner.js';
 import type { Job } from '../../shared/types.js';
-import { isCodexModel, codexModelName } from '../../shared/types.js';
+import { isCodexModel, codexModelName, isAutoExitJob } from '../../shared/types.js';
 
 const CLAUDE = process.env.CLAUDE_BIN ?? 'claude';
 const CODEX = process.env.CODEX_BIN ?? 'codex';
@@ -187,9 +187,9 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
   const useCodex = isCodexModel(model);
   if (useCodex) ensureCodexTrusted(workDir);
 
-  // Debate-stage jobs (post_action, verification_*) run Claude with --print so the process
-  // exits automatically when the task is done, triggering the next verification stage.
-  const isDebateStage = !!(job as any).debate_role;
+  // Debate-stage and workflow-phase jobs run Claude with --print so the process
+  // exits automatically when the task is done, triggering the next stage.
+  const isDebateStage = isAutoExitJob(job as any);
 
   let execLine: string;
   if (useCodex) {
@@ -365,7 +365,7 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
 
   // For debate-stage agents running --print, start tailing the tee'd .ndjson file so
   // agent_output is populated live and the UI streams output as it arrives.
-  if (!!(job as any).debate_role) {
+  if (isAutoExitJob(job as any)) {
     const ndjsonPath = path.join(PTY_LOG_DIR, `${agentId}.ndjson`);
     startTailing(agentId, job, ndjsonPath, 0, null);
   }
@@ -404,6 +404,13 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
       })(),
     });
   } catch (err: any) {
+    // For auto-exit jobs (workflow/debate phases), tailing is already running above —
+    // the job will complete naturally when Claude finishes and calls finish_job.
+    // PTY attachment is visual-only for these jobs, so log a warning and carry on.
+    if (isAutoExitJob(job as any)) {
+      console.warn(`[pty ${agentId}] PTY attach failed (tailing continues):`, err.message);
+      return;
+    }
     console.error(`[pty ${agentId}] failed to spawn PTY:`, err.message);
     queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
     queries.updateJobStatus(job.id, 'failed');
@@ -455,11 +462,11 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
         // For interactive agents: user ended the session = done
         // For debate-stage jobs: --print mode exits naturally = done
         // For other non-interactive agents: tmux exit without finish_job = failed
-        const isDebateStage = !!(job as any).debate_role;
+        const isDebateStage = isAutoExitJob(job as any);
         const status = (job.is_interactive || isDebateStage) ? 'done' : 'failed';
         const errorMsg = (job.is_interactive || isDebateStage) ? null : 'Agent session ended without calling finish_job.';
 
-        // For debate-stage agents, stop the live tailer then flush any lines it missed
+        // For auto-exit agents, stop the live tailer then flush any lines it missed
         // in the small race window between the last poll and the PTY exit.
         if (isDebateStage) {
           stopTailing(agentId);

@@ -7,7 +7,7 @@ import { runAgent } from './AgentRunner.js';
 import { startInteractiveAgent } from './PtyManager.js';
 import { resolveModel } from './ModelClassifier.js';
 import type { Job } from '../../shared/types.js';
-import { isCodexModel } from '../../shared/types.js';
+import { isCodexModel, isAutoExitJob } from '../../shared/types.js';
 
 let _maxConcurrent = Number(process.env.MAX_CONCURRENT_AGENTS ?? 20);
 const POLL_INTERVAL_MS = 2000;
@@ -83,9 +83,9 @@ async function tick(): Promise<void> {
     // Debate-stage jobs use --print inside tmux (piped through tee to .ndjson for UI display)
     // and exit naturally — no finish_job needed.
     const useCodexBatch = isCodexModel((dispatchJob as any).model ?? null) && !dispatchJob.is_interactive;
-    const isDebateStage = !!(dispatchJob as any).debate_role;
+    const isDebateStage = isAutoExitJob(dispatchJob as any);
     const autoFinish = !dispatchJob.is_interactive && !isDebateStage;
-    console.log(`[queue] dispatching "${job.title}" → agent ${agentId} (model: ${model}, interactive: ${!!readyJob.is_interactive}${readyJob.use_worktree ? ', worktree' : ''}${useCodexBatch ? ', codex-batch' : ''}${isDebateStage ? ', debate-stage' : ''})`);
+    console.log(`[queue] dispatching "${job.title}" → agent ${agentId} (model: ${model}, interactive: ${!!readyJob.is_interactive}${readyJob.use_worktree ? ', worktree' : ''}${useCodexBatch ? ', codex-batch' : ''}${isDebateStage ? ', auto-exit' : ''})`);
     if (useCodexBatch) {
       runAgent({ agentId, job: dispatchJob });
     } else {

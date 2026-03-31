@@ -64,7 +64,6 @@ export function initDb(dbPath: string): DatabaseSync {
     db.exec('ALTER TABLE jobs ADD COLUMN project_id TEXT REFERENCES projects(id)');
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_archived ON jobs(archived_at)');
 
   const agentCols: string[] = (db.prepare('PRAGMA table_info(agents)').all() as any[]).map((r: any) => r.name);
   if (!agentCols.includes('parent_agent_id')) {
@@ -312,6 +311,7 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!jobCols.includes('archived_at')) {
     db.exec('ALTER TABLE jobs ADD COLUMN archived_at INTEGER');
   }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_archived ON jobs(archived_at)');
   if (!jobCols.includes('created_by_agent_id')) {
     db.exec('ALTER TABLE jobs ADD COLUMN created_by_agent_id TEXT');
   }
@@ -386,6 +386,56 @@ export function initDb(dbPath: string): DatabaseSync {
     content TEXT NOT NULL, created_at INTEGER NOT NULL
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_pr_review_msgs_review ON pr_review_messages(review_id)');
+
+  // ── Workflows (structured plan/review/implement cycles) ─────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflows (
+      id                  TEXT PRIMARY KEY,
+      title               TEXT NOT NULL,
+      task                TEXT NOT NULL,
+      work_dir            TEXT,
+      implementer_model   TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
+      reviewer_model      TEXT NOT NULL DEFAULT 'codex',
+      max_cycles          INTEGER NOT NULL DEFAULT 10,
+      current_cycle       INTEGER NOT NULL DEFAULT 0,
+      current_phase       TEXT NOT NULL DEFAULT 'idle',
+      status              TEXT NOT NULL DEFAULT 'running',
+      milestones_total    INTEGER NOT NULL DEFAULT 0,
+      milestones_done     INTEGER NOT NULL DEFAULT 0,
+      project_id          TEXT REFERENCES projects(id),
+      max_turns_assess    INTEGER NOT NULL DEFAULT 50,
+      max_turns_review    INTEGER NOT NULL DEFAULT 30,
+      max_turns_implement INTEGER NOT NULL DEFAULT 100,
+      template_id         TEXT REFERENCES templates(id),
+      use_worktree        INTEGER NOT NULL DEFAULT 1,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_workflows_status ON workflows(status)');
+
+  if (!jobCols.includes('workflow_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN workflow_id TEXT REFERENCES workflows(id)');
+  }
+  if (!jobCols.includes('workflow_cycle')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN workflow_cycle INTEGER');
+  }
+  if (!jobCols.includes('workflow_phase')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN workflow_phase TEXT');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_workflow ON jobs(workflow_id, workflow_cycle)');
+
+  // Workflow-level worktree columns (single worktree shared across all phases)
+  const workflowCols = db.prepare('PRAGMA table_info(workflows)').all().map((c: any) => c.name);
+  if (!workflowCols.includes('worktree_path')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN worktree_path TEXT');
+  }
+  if (!workflowCols.includes('worktree_branch')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN worktree_branch TEXT');
+  }
+  if (!workflowCols.includes('pr_url')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN pr_url TEXT');
+  }
 
   // ── Performance indexes ────────────────────────────────────────────────────
   db.exec('CREATE INDEX IF NOT EXISTS idx_agents_job_id ON agents(job_id)');
