@@ -9,7 +9,9 @@ export const createJobSchema = z.object({
   title: z.string().optional().describe('Short title (auto-generated from first line if omitted)'),
   priority: z.number().optional().describe('Priority 0–10; higher runs sooner (default: 0)'),
   work_dir: z.string().optional().describe("Working directory (defaults to this agent's working directory)"),
-  max_turns: z.number().optional().describe('Max agent turns (default: 50)'),
+  max_turns: z.number().optional().describe('Max agent turns (default: 50). Ignored when stop_mode is not "turns".'),
+  stop_mode: z.enum(['turns', 'budget', 'time', 'completion']).optional().describe('How to stop the agent: "turns" (default), "budget" (dollar limit), "time" (minute limit), or "completion" (run to natural finish)'),
+  stop_value: z.number().optional().describe('Limit value for the stop mode: turn count, dollar amount, or minutes. Not used for "completion".'),
   model: z.string().optional().describe('Model override, e.g. "claude-opus-4-6" (default: auto-classify)'),
   depends_on: z.array(z.string()).optional().describe('Job IDs that must complete before this job runs'),
   use_worktree: z.boolean().optional().describe('Create a git worktree so the agent works in an isolated checkout'),
@@ -17,7 +19,7 @@ export const createJobSchema = z.object({
 });
 
 export async function createJobHandler(agentId: string, input: z.infer<typeof createJobSchema>): Promise<string> {
-  const { description, title, priority, work_dir, max_turns, model, depends_on, use_worktree, repeat_interval_ms } = input;
+  const { description, title, priority, work_dir, max_turns, stop_mode, stop_value, model, depends_on, use_worktree, repeat_interval_ms } = input;
 
   // Inherit work_dir, project_id, and model from calling agent's job if not specified
   let resolvedWorkDir = work_dir ?? null;
@@ -73,6 +75,8 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
     priority: priority ?? 0,
     work_dir: resolvedWorkDir,
     max_turns: max_turns ?? 50,
+    stop_mode: stop_mode ?? 'turns',
+    stop_value: stop_value ?? (max_turns ?? 50),
     model: model ?? inheritedModel,
     template_id: null,
     depends_on: depends_on?.length ? JSON.stringify(depends_on) : null,

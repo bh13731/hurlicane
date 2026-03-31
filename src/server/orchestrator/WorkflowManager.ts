@@ -4,7 +4,8 @@ import { mkdirSync } from 'fs';
 import path from 'path';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import type { Job, Workflow, WorkflowPhase } from '../../shared/types.js';
+import type { Job, Workflow, WorkflowPhase, StopMode } from '../../shared/types.js';
+import { effectiveMaxTurns } from '../../shared/types.js';
 import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt } from './WorkflowPrompts.js';
 
 // Track jobs we've already processed to prevent double-exit race from triggering
@@ -141,25 +142,33 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number):
   const phaseLabels: Record<string, string> = { assess: 'Assess', review: 'Review', implement: 'Implement' };
   const label = phaseLabels[phase] ?? phase;
 
-  // Choose model and max_turns based on phase
+  // Choose model, max_turns, and stop config based on phase
   let model: string;
   let maxTurns: number;
+  let stopMode: StopMode;
+  let stopValue: number | null;
   let prompt: string;
 
   switch (phase) {
     case 'assess':
       model = workflow.implementer_model;
       maxTurns = workflow.max_turns_assess;
+      stopMode = workflow.stop_mode_assess;
+      stopValue = workflow.stop_value_assess;
       prompt = buildAssessPrompt(workflow);
       break;
     case 'review':
       model = workflow.reviewer_model;
       maxTurns = workflow.max_turns_review;
+      stopMode = workflow.stop_mode_review;
+      stopValue = workflow.stop_value_review;
       prompt = buildReviewPrompt(workflow, cycle);
       break;
     case 'implement':
       model = workflow.implementer_model;
       maxTurns = workflow.max_turns_implement;
+      stopMode = workflow.stop_mode_implement;
+      stopValue = workflow.stop_value_implement;
       prompt = buildImplementPrompt(workflow, cycle);
       break;
     default:
@@ -177,7 +186,9 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number):
     // All phases share the single workflow-level worktree (created at startWorkflow).
     // use_worktree=0 tells WorkQueueManager not to create another one.
     work_dir: workflow.worktree_path ?? workflow.work_dir,
-    max_turns: maxTurns,
+    max_turns: effectiveMaxTurns(stopMode, stopValue),
+    stop_mode: stopMode,
+    stop_value: stopValue,
     project_id: workflow.project_id,
     use_worktree: 0,
     workflow_id: workflow.id,
@@ -242,7 +253,9 @@ export function startWorkflow(workflow: Workflow): Job {
     model: activeWorkflow.implementer_model,
     template_id: activeWorkflow.template_id,
     work_dir: activeWorkflow.worktree_path ?? activeWorkflow.work_dir,
-    max_turns: activeWorkflow.max_turns_assess,
+    max_turns: effectiveMaxTurns(activeWorkflow.stop_mode_assess, activeWorkflow.stop_value_assess),
+    stop_mode: activeWorkflow.stop_mode_assess,
+    stop_value: activeWorkflow.stop_value_assess,
     project_id: activeWorkflow.project_id,
     use_worktree: 0,
     workflow_id: activeWorkflow.id,
@@ -273,22 +286,30 @@ export function resumeWorkflow(workflow: Workflow): Job {
 
   let model: string;
   let maxTurns: number;
+  let stopMode: StopMode;
+  let stopValue: number | null;
   let prompt: string;
 
   switch (phase) {
     case 'assess':
       model = updated.implementer_model;
       maxTurns = updated.max_turns_assess;
+      stopMode = updated.stop_mode_assess;
+      stopValue = updated.stop_value_assess;
       prompt = buildAssessPrompt(updated);
       break;
     case 'review':
       model = updated.reviewer_model;
       maxTurns = updated.max_turns_review;
+      stopMode = updated.stop_mode_review;
+      stopValue = updated.stop_value_review;
       prompt = buildReviewPrompt(updated, cycle);
       break;
     case 'implement':
       model = updated.implementer_model;
       maxTurns = updated.max_turns_implement;
+      stopMode = updated.stop_mode_implement;
+      stopValue = updated.stop_value_implement;
       prompt = buildImplementPrompt(updated, cycle);
       break;
     default:
@@ -304,7 +325,9 @@ export function resumeWorkflow(workflow: Workflow): Job {
     model,
     template_id: updated.template_id,
     work_dir: updated.worktree_path ?? updated.work_dir,
-    max_turns: maxTurns,
+    max_turns: effectiveMaxTurns(stopMode, stopValue),
+    stop_mode: stopMode,
+    stop_value: stopValue,
     project_id: updated.project_id,
     use_worktree: 0,
     workflow_id: updated.id,
