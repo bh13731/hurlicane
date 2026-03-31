@@ -226,18 +226,6 @@ export function startWorkflow(workflow: Workflow): Job {
         worktree_path: worktreePath,
         worktree_branch: branchName,
       }) ?? workflow;
-      // Register in worktrees table so WorktreeCleanup doesn't treat it as an orphan.
-      // Use a placeholder job_id (the assess job hasn't been inserted yet); cleanup
-      // checks path membership, not job status, for the tracked-set guard.
-      try {
-        queries.insertWorktree({
-          id: randomUUID(),
-          agent_id: workflow.id, // workflow id as sentinel
-          job_id: workflow.id,   // workflow id as sentinel
-          path: worktreePath,
-          branch: branchName,
-        });
-      } catch { /* ignore — DB constraint may reject non-job IDs; ownership fix is the real guard */ }
       console.log(`[workflow ${workflow.id}] created worktree at ${worktreePath} (branch: ${branchName})`);
     } catch (err: any) {
       console.warn(`[workflow ${workflow.id}] worktree creation failed, using work_dir directly:`, err.message);

@@ -262,11 +262,17 @@ function _recoverStuckWorkflows(): void {
   for (const workflow of runningWorkflows) {
     if (workflow.current_phase === 'idle') continue;
     const jobs = queries.getJobsForWorkflow(workflow.id);
-    // Find the most recent job for the current phase+cycle
+
+    // Assess always runs at cycle 0, but onJobCompleted bumps current_cycle to 1
+    // before calling spawnPhaseJob — so look for cycle 0 when stuck in assess.
+    const jobCycle = workflow.current_phase === 'assess' ? 0 : workflow.current_cycle;
+
+    // Find the most recent completed job for this phase
     const phaseJob = jobs
-      .filter(j => j.workflow_phase === workflow.current_phase && j.workflow_cycle === workflow.current_cycle)
-      .sort((a, b) => b.created_at - a.created_at)[0];
+      .filter(j => j.workflow_phase === workflow.current_phase && j.workflow_cycle === jobCycle)
+      .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0];
     if (!phaseJob || phaseJob.status !== 'done') continue;
+
     // Check if the expected next-phase job already exists.
     // Progression: assess→review(C1), review→implement(Cn), implement→review(Cn+1)
     const cycle = workflow.current_cycle;
@@ -274,9 +280,10 @@ function _recoverStuckWorkflows(): void {
       ? jobs.some(j => j.workflow_phase === 'review' && j.workflow_cycle === cycle + 1)
       : workflow.current_phase === 'review'
         ? jobs.some(j => j.workflow_phase === 'implement' && j.workflow_cycle === cycle)
-        : jobs.some(j => j.workflow_phase === 'review' && j.workflow_cycle === 1);
+        : jobs.some(j => j.workflow_phase === 'review' && j.workflow_cycle === 1); // assess stuck
+
     if (hasNext) continue;
-    console.log(`[recovery] workflow ${workflow.id} stuck — ${workflow.current_phase} C${workflow.current_cycle} done but no next phase; re-firing onJobCompleted`);
+    console.log(`[recovery] workflow ${workflow.id} stuck — ${workflow.current_phase} C${jobCycle} done but no next phase; re-firing onJobCompleted`);
     try { workflowOnJobCompleted(phaseJob); } catch (err) { console.error(`[recovery] stuck workflow re-fire error:`, err); }
   }
 }

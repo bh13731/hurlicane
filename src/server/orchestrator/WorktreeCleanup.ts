@@ -93,7 +93,13 @@ function cleanupOrphanedWorktrees(): void {
     return; // can't determine ownership — skip cleanup entirely
   }
 
-  const tracked = new Set(queries.listActiveWorktrees().map(w => w.path));
+  // Protect both DB-tracked per-job worktrees AND workflow shared worktrees (wf-*)
+  const tracked = new Set([
+    ...queries.listActiveWorktrees().map(w => w.path),
+    ...queries.listWorkflows()
+      .filter(w => w.worktree_path && (w.status === 'running' || w.status === 'blocked'))
+      .map(w => w.worktree_path!),
+  ]);
   let cleaned = 0;
 
   try {
