@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import type { CreateWorkflowRequest, Template } from '@shared/types';
+import type { CreateWorkflowRequest, Template, StopMode } from '@shared/types';
 import { useModels } from '../hooks/useModels';
+import { StopModePicker } from './StopModePicker';
 
 interface WorkflowFormProps {
   onSubmit: (req: CreateWorkflowRequest) => Promise<void>;
@@ -18,9 +19,12 @@ export function WorkflowForm({ onSubmit, onClose }: WorkflowFormProps) {
   const [templateId, setTemplateId] = useState('');
   const [useWorktree, setUseWorktree] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [maxTurnsAssess, setMaxTurnsAssess] = useState(50);
-  const [maxTurnsReview, setMaxTurnsReview] = useState(30);
-  const [maxTurnsImplement, setMaxTurnsImplement] = useState(100);
+  const [stopModeAssess, setStopModeAssess] = useState<StopMode>('turns');
+  const [stopValueAssess, setStopValueAssess] = useState<number | null>(50);
+  const [stopModeReview, setStopModeReview] = useState<StopMode>('turns');
+  const [stopValueReview, setStopValueReview] = useState<number | null>(30);
+  const [stopModeImplement, setStopModeImplement] = useState<StopMode>('turns');
+  const [stopValueImplement, setStopValueImplement] = useState<number | null>(100);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -51,9 +55,12 @@ export function WorkflowForm({ onSubmit, onClose }: WorkflowFormProps) {
         maxCycles,
         templateId: templateId || undefined,
         useWorktree,
-        maxTurnsAssess,
-        maxTurnsReview,
-        maxTurnsImplement,
+        stopModeAssess,
+        stopValueAssess: stopValueAssess ?? undefined,
+        stopModeReview,
+        stopValueReview: stopValueReview ?? undefined,
+        stopModeImplement,
+        stopValueImplement: stopValueImplement ?? undefined,
       });
       onClose();
     } catch (err: any) {
@@ -164,19 +171,28 @@ export function WorkflowForm({ onSubmit, onClose }: WorkflowFormProps) {
           </button>
 
           {showAdvanced && (
-            <div className="form-row">
-              <div className="form-group">
-                <label htmlFor="wf-assess-turns">Assess max turns</label>
-                <input id="wf-assess-turns" type="number" min={10} max={200} value={maxTurnsAssess} onChange={e => setMaxTurnsAssess(Number(e.target.value))} />
-              </div>
-              <div className="form-group">
-                <label htmlFor="wf-review-turns">Review max turns</label>
-                <input id="wf-review-turns" type="number" min={10} max={200} value={maxTurnsReview} onChange={e => setMaxTurnsReview(Number(e.target.value))} />
-              </div>
-              <div className="form-group">
-                <label htmlFor="wf-impl-turns">Implement max turns</label>
-                <input id="wf-impl-turns" type="number" min={10} max={500} value={maxTurnsImplement} onChange={e => setMaxTurnsImplement(Number(e.target.value))} />
-              </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <StopModePicker
+                label="Assess stopping condition"
+                mode={stopModeAssess}
+                value={stopValueAssess}
+                onModeChange={setStopModeAssess}
+                onValueChange={setStopValueAssess}
+              />
+              <StopModePicker
+                label="Review stopping condition"
+                mode={stopModeReview}
+                value={stopValueReview}
+                onModeChange={setStopModeReview}
+                onValueChange={setStopValueReview}
+              />
+              <StopModePicker
+                label="Implement stopping condition"
+                mode={stopModeImplement}
+                value={stopValueImplement}
+                onModeChange={setStopModeImplement}
+                onValueChange={setStopValueImplement}
+              />
             </div>
           )}
 

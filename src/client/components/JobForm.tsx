@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import type { CreateJobRequest, Job, Template, RetryPolicy, ReviewConfig } from '@shared/types';
+import type { CreateJobRequest, Job, Template, RetryPolicy, ReviewConfig, StopMode } from '@shared/types';
 import { TemplateModelStats } from './TemplateModelStats';
+import { StopModePicker } from './StopModePicker';
 import { useModels } from '../hooks/useModels';
 
 interface JobFormProps {
@@ -21,6 +22,8 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   const [interactive, setInteractive] = useState(true);
   const [useWorktree, setUseWorktree] = useState(false);
+  const [stopMode, setStopMode] = useState<StopMode>('completion');
+  const [stopValue, setStopValue] = useState<number | null>(null);
   const [repeatSeconds, setRepeatSeconds] = useState<number | ''>('');
   const [retryPolicy, setRetryPolicy] = useState<RetryPolicy>('none');
   const [maxRetries, setMaxRetries] = useState(3);
@@ -87,6 +90,8 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
         dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
         interactive: interactive || undefined,
         useWorktree: useWorktree || undefined,
+        stopMode,
+        stopValue: stopValue ?? undefined,
         repeatIntervalMs: repeatSeconds ? (repeatSeconds as number) * 1000 : undefined,
         retryPolicy: retryPolicy !== 'none' ? retryPolicy : undefined,
         maxRetries: retryPolicy !== 'none' ? maxRetries : undefined,
@@ -250,6 +255,14 @@ export function JobForm({ onSubmit, onClose, availableJobs = [] }: JobFormProps)
               <span className="tooltip-icon" data-tip="Creates a git worktree so the agent works in an isolated checkout on a new branch">?</span>
             </label>
           </div>
+
+          <StopModePicker
+            label="Stopping condition"
+            mode={stopMode}
+            value={stopValue}
+            onModeChange={setStopMode}
+            onValueChange={setStopValue}
+          />
 
           <div className="form-group">
             <label htmlFor="repeatSeconds">

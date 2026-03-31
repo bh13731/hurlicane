@@ -124,6 +124,8 @@ router.post('/', (req, res) => {
     priority: body.priority ?? 0,
     work_dir: body.workDir ?? null,
     max_turns: body.maxTurns ?? 50,
+    stop_mode: body.stopMode ?? 'turns',
+    stop_value: body.stopValue ?? (body.maxTurns ?? 50),
     model: body.model ?? null,
     template_id: body.templateId ?? null,
     depends_on: body.dependsOn?.length ? JSON.stringify(body.dependsOn) : null,
