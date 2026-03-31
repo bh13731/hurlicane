@@ -80,6 +80,19 @@ function cleanupOrphanedWorktrees(): void {
 
   if (!fs.existsSync(worktreeBase)) return;
 
+  // Only touch directories that are registered as worktrees of THIS repo.
+  // Workflow-level worktrees (wf-*) belong to other repos and must not be deleted here.
+  let ownedPaths: Set<string>;
+  try {
+    const lines = execSync('git worktree list --porcelain', { cwd: repoDir, timeout: 10000, stdio: 'pipe' })
+      .toString().split('\n');
+    ownedPaths = new Set(
+      lines.filter(l => l.startsWith('worktree ')).map(l => l.slice(9).trim())
+    );
+  } catch {
+    return; // can't determine ownership — skip cleanup entirely
+  }
+
   const tracked = new Set(queries.listActiveWorktrees().map(w => w.path));
   let cleaned = 0;
 
@@ -89,8 +102,9 @@ function cleanupOrphanedWorktrees(): void {
       const fullPath = path.join(worktreeBase, entry);
       if (!fs.statSync(fullPath).isDirectory()) continue;
       if (tracked.has(fullPath)) continue;
+      if (!ownedPaths.has(fullPath)) continue; // not our worktree — leave it alone
 
-      // Orphaned directory — remove it
+      // Orphaned directory owned by this repo — remove it
       try {
         execSync(`git worktree remove --force ${JSON.stringify(fullPath)}`, {
           cwd: repoDir,
