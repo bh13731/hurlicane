@@ -5,6 +5,8 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { estimateCostUsd } from './CostEstimator.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
+import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
+import { onJobCompleted as workflowOnJobCompleted } from './WorkflowManager.js';
 import type { StopMode } from '../../shared/types.js';
 
 const PTY_LOG_DIR = path.join(process.cwd(), 'data', 'agent-logs');
@@ -167,6 +169,9 @@ function killAgentGracefully(agentId: string, reason: string): void {
   const updatedJob = queries.getJobById(agent.job_id);
   if (updatedJob) {
     try { socket.emitJobUpdate(updatedJob); } catch { /* ignore */ }
+    // Trigger workflow/debate handlers so phases advance immediately
+    try { debateOnJobCompleted(updatedJob); } catch { /* ignore */ }
+    try { workflowOnJobCompleted(updatedJob); } catch { /* ignore */ }
   }
 
   console.log(`[health] agent ${agentId.slice(0, 6)} stopped: ${reason}`);
