@@ -257,6 +257,21 @@ export function runRecovery(): void {
   _recoverStuckWorkflows();
 }
 
+let _gapDetectorTimer: NodeJS.Timeout | null = null;
+
+/** Start a periodic gap detector that re-fires onJobCompleted for any workflow stuck mid-transition. */
+export function startWorkflowGapDetector(): void {
+  if (_gapDetectorTimer) return;
+  // Run every 60 seconds so stuck workflows recover within a minute of getting stuck.
+  _gapDetectorTimer = setInterval(() => {
+    try { _recoverStuckWorkflows(); } catch (err) { console.error('[workflow-gap] tick error:', err); }
+  }, 60_000);
+}
+
+export function stopWorkflowGapDetector(): void {
+  if (_gapDetectorTimer) { clearInterval(_gapDetectorTimer); _gapDetectorTimer = null; }
+}
+
 function _recoverStuckWorkflows(): void {
   const runningWorkflows = queries.listWorkflows().filter(w => w.status === 'running');
   for (const workflow of runningWorkflows) {

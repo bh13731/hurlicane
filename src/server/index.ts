@@ -14,7 +14,7 @@ import { startHealthMonitor, stopHealthMonitor } from './orchestrator/HealthMoni
 import { startWorktreeCleanup, stopWorktreeCleanup } from './orchestrator/WorktreeCleanup.js';
 import { startKBConsolidator, stopKBConsolidator } from './orchestrator/KBConsolidator.js';
 import { startGitHubPoller, stopGitHubPoller } from './integrations/GitHubPoller.js';
-import { runRecovery } from './orchestrator/recovery.js';
+import { runRecovery, startWorkflowGapDetector, stopWorkflowGapDetector } from './orchestrator/recovery.js';
 import { writeInput, resizePty, resizeAndSnapshot } from './orchestrator/PtyManager.js';
 import * as queries from './db/queries.js';
 
@@ -137,6 +137,7 @@ async function main() {
   startWatchdog();
   startHealthMonitor();
   startWorktreeCleanup();
+  startWorkflowGapDetector();
   startKBConsolidator();
   startGitHubPoller();
 
@@ -169,6 +170,7 @@ async function main() {
     stopWatchdog();
     stopHealthMonitor();
     stopWorktreeCleanup();
+    stopWorkflowGapDetector();
     stopKBConsolidator();
     stopGitHubPoller();
 
