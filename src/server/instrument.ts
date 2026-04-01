@@ -20,6 +20,18 @@ if (dsn) {
     serverName: process.env.HOSTNAME ?? 'local',
     // Don't send PII like IP addresses
     sendDefaultPii: false,
+    integrations: [
+      // Capture console.warn and console.error as Sentry events
+      // (so they appear as issues, not just breadcrumbs)
+      Sentry.captureConsoleIntegration({ levels: ['warn', 'error'] }),
+    ],
+    beforeSend(event) {
+      // Drop noisy "session closed" warnings — these are expected during
+      // hot-reload and don't indicate bugs.
+      const msg = event.message ?? event.exception?.values?.[0]?.value ?? '';
+      if (msg.includes('[mcp] session closed')) return null;
+      return event;
+    },
   });
 
   console.log('[sentry] Initialized');
