@@ -196,8 +196,63 @@ async function callHaiku(apiKey: string, prompt: string): Promise<string> {
   const data = await response.json() as any;
   const text = (data.content?.[0]?.text ?? '').trim();
 
-  // Extract JSON array from response
-  const match = text.match(/\[[\s\S]*\]/);
-  if (!match) return '[]';
-  return match[0];
+  return extractFirstJsonArray(text) ?? '[]';
+}
+
+/**
+ * Extract the first complete top-level JSON array from model output.
+ * This is more robust than a greedy regex when the model adds commentary
+ * before/after the array or includes additional bracketed text later on.
+ */
+export function extractFirstJsonArray(text: string): string | null {
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (start === -1) {
+      if (ch === '[') {
+        start = i;
+        depth = 1;
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '[') {
+      depth++;
+      continue;
+    }
+
+    if (ch === ']') {
+      depth--;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
 }
