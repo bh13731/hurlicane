@@ -160,6 +160,24 @@ function tick(): void {
         emitWarning(agent.id, 'time_warning', `Running ${mins} minutes (${Math.round(ratio * 100)}% of ${stopValue}min limit)`);
       }
     }
+
+    // ── Question timeout enforcement ────────────────────────────────────
+    // If an agent is waiting for a user answer that has exceeded its timeout,
+    // auto-timeout the question so the agent can resume or fail gracefully.
+    if (agent.status === 'waiting_user') {
+      const pendingQ = queries.getPendingQuestion(agent.id);
+      if (pendingQ && pendingQ.asked_at + pendingQ.timeout_ms < now) {
+        console.log(`[health] question ${pendingQ.id} for agent ${agent.id.slice(0, 6)} timed out after ${Math.round(pendingQ.timeout_ms / 60_000)}min`);
+        queries.updateQuestion(pendingQ.id, {
+          status: 'timeout',
+          answer: '[TIMEOUT] No response received within the time limit.',
+          answered_at: now,
+        });
+        if (!queries.hasUndismissedWarning(agent.id, 'question_timeout')) {
+          emitWarning(agent.id, 'question_timeout', `User question timed out after ${Math.round(pendingQ.timeout_ms / 60_000)} minutes`);
+        }
+      }
+    }
   }
 }
 

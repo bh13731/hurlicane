@@ -892,3 +892,65 @@ describe('Recovery ledger', () => {
     expect(summary!.exhausted).toBe(false);
   });
 });
+
+describe('Question timeout enforcement', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('getPendingQuestion returns pending questions for an agent', async () => {
+    const queries = await import('../server/db/queries.js');
+
+    queries.insertJob({ id: 'qt-job', title: 'test', description: 'test', context: null, priority: 0 });
+    queries.insertAgent({ id: 'qt-agent', job_id: 'qt-job', status: 'waiting_user' });
+
+    queries.insertQuestion({
+      id: 'qt-q1',
+      agent_id: 'qt-agent',
+      question: 'What should I do?',
+      answer: null,
+      status: 'pending',
+      asked_at: Date.now() - 60_000, // asked 60s ago
+      answered_at: null,
+      timeout_ms: 300_000, // 5 min timeout
+    });
+
+    const pending = queries.getPendingQuestion('qt-agent');
+    expect(pending).toBeDefined();
+    expect(pending!.id).toBe('qt-q1');
+    expect(pending!.status).toBe('pending');
+  });
+
+  it('timed-out questions can be updated', async () => {
+    const queries = await import('../server/db/queries.js');
+
+    queries.insertJob({ id: 'qt-job2', title: 'test', description: 'test', context: null, priority: 0 });
+    queries.insertAgent({ id: 'qt-agent2', job_id: 'qt-job2', status: 'waiting_user' });
+
+    queries.insertQuestion({
+      id: 'qt-q2',
+      agent_id: 'qt-agent2',
+      question: 'What should I do?',
+      answer: null,
+      status: 'pending',
+      asked_at: Date.now() - 600_000, // asked 10 min ago
+      answered_at: null,
+      timeout_ms: 300_000, // 5 min timeout — should be expired
+    });
+
+    // Simulate timeout
+    queries.updateQuestion('qt-q2', {
+      status: 'timeout',
+      answer: '[TIMEOUT] No response received.',
+      answered_at: Date.now(),
+    });
+
+    const q = queries.getPendingQuestion('qt-agent2');
+    // Should no longer be pending
+    expect(q).toBeNull();
+  });
+});
