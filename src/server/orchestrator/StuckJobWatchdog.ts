@@ -574,6 +574,20 @@ function check(): void {
       getFileLockRegistry().releaseAll(agentId);
     }
   }
+
+  // ── Check 7: TTL-expired locks cleanup ─────────────────────────────────────
+  // Locks whose TTL has expired are no longer enforced (getActiveLocksForFile
+  // filters by expires_at > now), but the unreleased DB rows linger. Clean them
+  // up to prevent DB bloat and stale UI display.
+  const expired = queries.getExpiredUnreleasedLocks();
+  if (expired.length > 0) {
+    const agentIds = [...new Set(expired.map(l => l.agent_id))];
+    console.log(`[watchdog] cleaning ${expired.length} TTL-expired lock(s) from ${agentIds.length} agent(s)`);
+    for (const lock of expired) {
+      queries.releaseLock(lock.id);
+      socket.emitLockReleased(lock.id, lock.file_path);
+    }
+  }
 }
 
 export function startWatchdog(): void {

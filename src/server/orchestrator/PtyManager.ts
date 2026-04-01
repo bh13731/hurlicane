@@ -44,6 +44,41 @@ const _ptyBuffers = new Map<string, string[]>();
 const _pendingResizes = new Map<string, { cols: number; rows: number }>();
 const PTY_BUFFER_MAX = 2000;
 
+// Persistent file descriptors for PTY log writes (avoids open/close per write)
+const _ptyLogFds = new Map<string, number>();
+// Periodic fsync for PTY logs to ensure durability without syncing every write
+let _fsyncTimer: NodeJS.Timeout | null = null;
+const FSYNC_INTERVAL_MS = 5_000; // fsync all open PTY logs every 5s
+
+function ensureFsyncTimer(): void {
+  if (_fsyncTimer) return;
+  _fsyncTimer = setInterval(() => {
+    for (const [agentId, fd] of _ptyLogFds) {
+      try { fs.fsyncSync(fd); } catch { _ptyLogFds.delete(agentId); }
+    }
+  }, FSYNC_INTERVAL_MS);
+  _fsyncTimer.unref();
+}
+
+function getPtyLogFd(agentId: string): number {
+  let fd = _ptyLogFds.get(agentId);
+  if (fd !== undefined) return fd;
+  fs.mkdirSync(PTY_LOG_DIR, { recursive: true });
+  fd = fs.openSync(getPtyLogPath(agentId), 'a');
+  _ptyLogFds.set(agentId, fd);
+  ensureFsyncTimer();
+  return fd;
+}
+
+function closePtyLogFd(agentId: string): void {
+  const fd = _ptyLogFds.get(agentId);
+  if (fd !== undefined) {
+    try { fs.fsyncSync(fd); } catch { /* ignore */ }
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+    _ptyLogFds.delete(agentId);
+  }
+}
+
 function getPtyLogPath(agentId: string): string {
   return path.join(PTY_LOG_DIR, `${agentId}.pty`);
 }
@@ -126,7 +161,11 @@ export function saveSnapshot(agentId: string): void {
   if (!snapshot) return;
   try {
     fs.mkdirSync(PTY_LOG_DIR, { recursive: true });
-    fs.writeFileSync(getSnapshotPath(agentId), snapshot, 'utf8');
+    const snapshotPath = getSnapshotPath(agentId);
+    fs.writeFileSync(snapshotPath, snapshot, 'utf8');
+    // fsync to ensure snapshot survives a crash immediately after write
+    const fd = fs.openSync(snapshotPath, 'r');
+    try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   } catch { /* ignore write errors */ }
 }
 
@@ -261,6 +300,7 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
   fs.writeFileSync(script, scriptLines, { mode: 0o755 });
 
   // Clear any previous PTY log and snapshot so this fresh session starts from a clean slate
+  closePtyLogFd(agentId); // close any lingering FD from a previous session
   fs.mkdirSync(PTY_LOG_DIR, { recursive: true });
   try { fs.unlinkSync(getPtyLogPath(agentId)); } catch { /* no previous log */ }
   try { fs.unlinkSync(getSnapshotPath(agentId)); } catch { /* no previous snapshot */ }
@@ -473,9 +513,13 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
       socket.emitPtyData(agentId, data);
       buf.push(data);
       if (buf.length > PTY_BUFFER_MAX) buf.splice(0, buf.length - PTY_BUFFER_MAX);
-      // Persist to disk so history survives server restarts and buffer eviction
+      // Persist to disk so history survives server restarts and buffer eviction.
+      // Uses a persistent FD with periodic fsync (every 5s) for durability
+      // without the overhead of open/close/fsync per write.
       try {
-        fs.appendFileSync(getPtyLogPath(agentId), JSON.stringify(data) + '\n');
+        const fd = getPtyLogFd(agentId);
+        const line = JSON.stringify(data) + '\n';
+        fs.writeSync(fd, line);
       } catch { /* ignore write errors */ }
     } catch (err) {
       console.error(`[pty ${agentId}] onData error:`, err);
@@ -487,6 +531,7 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
     try {
       // Best-effort snapshot before we lose the tmux session (may already be gone)
       saveSnapshot(agentId);
+      closePtyLogFd(agentId);
       console.log(`[pty ${agentId}] PTY exited`);
       _ptys.delete(agentId);
       socket.emitPtyClosed(agentId);
@@ -579,6 +624,7 @@ export function disconnectAgent(agentId: string): void {
   // Delete buffer first so the onData guard prevents writes during teardown
   _ptyBuffers.delete(agentId);
   _pendingResizes.delete(agentId);
+  closePtyLogFd(agentId);
 
   // Capture a clean snapshot before killing the session
   saveSnapshot(agentId);

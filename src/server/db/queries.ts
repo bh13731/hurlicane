@@ -1142,6 +1142,18 @@ export function getActiveLocksForTerminalAgents(): FileLock[] {
   return rows.map((r: any) => cast<FileLock>(r));
 }
 
+// Returns unreleased locks whose TTL has expired. These are stale rows that
+// no longer block anything (getAllActiveLocks filters by expires_at > now)
+// but should be cleaned up to prevent DB bloat.
+export function getExpiredUnreleasedLocks(): FileLock[] {
+  const db = getDb();
+  const now = Date.now();
+  const rows = db.prepare(`
+    SELECT * FROM file_locks WHERE released_at IS NULL AND expires_at <= ?
+  `).all(now);
+  return rows.map((r: any) => cast<FileLock>(r));
+}
+
 // Returns all unreleased locks for an agent regardless of TTL expiry.
 // Used by releaseAll so that expired-but-unreleased locks still emit lock:released events.
 export function getAllUnreleasedLocksForAgent(agentId: string): FileLock[] {

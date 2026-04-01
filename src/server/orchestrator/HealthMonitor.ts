@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
 import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
@@ -68,9 +69,18 @@ function tick(): void {
       if (lastActivity !== null) {
         const gap = now - lastActivity;
         if (gap > STALL_THRESHOLD_MS) {
-          if (!queries.hasUndismissedWarning(agent.id, 'stalled')) {
+          // Before warning, check if the tmux session shows active work.
+          // Claude Code displays a spinner/progress indicator while thinking.
+          // If the tmux pane has recent activity, the agent is likely thinking, not stuck.
+          const isThinking = isTmuxActive(agent.id);
+          if (!isThinking && !queries.hasUndismissedWarning(agent.id, 'stalled')) {
             const mins = Math.round(gap / 60_000);
-            emitWarning(agent.id, 'stalled', `No output for ${mins} minutes`);
+            emitWarning(agent.id, 'stalled', `No output for ${mins} minutes (no tmux activity detected)`);
+          } else if (isThinking && queries.hasUndismissedWarning(agent.id, 'stalled')) {
+            // Agent resumed activity — dismiss stale stall warning
+            queries.dismissWarningsByType(agent.id, 'stalled');
+            const agentWithJob = queries.getAgentWithJob(agent.id);
+            if (agentWithJob) try { socket.emitAgentUpdate(agentWithJob); } catch { /* ignore */ }
           }
         } else if (queries.hasUndismissedWarning(agent.id, 'stalled')) {
           // Activity is recent — dismiss any stale stall warning
@@ -176,6 +186,38 @@ function killAgentGracefully(agentId: string, reason: string): void {
   }
 
   console.log(`[health] agent ${agentId.slice(0, 6)} stopped: ${reason}`);
+}
+
+/**
+ * Check if a tmux session shows recent activity by comparing the last few lines
+ * of the pane content. Claude Code shows a spinner/progress indicator while
+ * thinking, which changes the pane content even when no MCP calls are made.
+ * Returns true if the pane seems active (non-empty, contains typical Claude
+ * Code indicators like spinners, progress bars, or tool calls).
+ */
+const _lastTmuxHash = new Map<string, string>();
+
+function isTmuxActive(agentId: string): boolean {
+  const sessionName = `orchestrator-${agentId}`;
+  try {
+    // Capture the last 5 lines of the tmux pane
+    const output = execFileSync('tmux', [
+      'capture-pane', '-t', sessionName, '-p', '-S', '-5',
+    ], { encoding: 'utf8', timeout: 3000, stdio: ['pipe', 'pipe', 'pipe'] });
+
+    const trimmed = output.trim();
+    if (!trimmed) return false;
+
+    // Compare with last capture — if content changed, the session is active
+    const prevHash = _lastTmuxHash.get(agentId);
+    _lastTmuxHash.set(agentId, trimmed);
+
+    if (prevHash === undefined) return true; // first check, assume active
+    return prevHash !== trimmed;
+  } catch {
+    // tmux session not found or command failed
+    return false;
+  }
 }
 
 function emitWarning(agentId: string, type: string, message: string): void {

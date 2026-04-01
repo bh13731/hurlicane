@@ -4,6 +4,21 @@ import * as socket from '../socket/SocketManager.js';
 import type { Job } from '../../shared/types.js';
 import { claimRecovery } from './RecoveryLedger.js';
 
+// Exponential backoff parameters
+const BASE_DELAY_MS = 30_000;      // 30s base delay
+const MAX_DELAY_MS = 10 * 60_000;  // 10 minute max delay
+const JITTER_FACTOR = 0.3;         // +-30% jitter to prevent thundering herd
+
+/**
+ * Compute the backoff delay for a given retry attempt using exponential backoff with jitter.
+ * attempt 1 → ~30s, attempt 2 → ~60s, attempt 3 → ~120s, etc.
+ */
+export function computeBackoffDelay(retryCount: number): number {
+  const exponentialDelay = Math.min(BASE_DELAY_MS * Math.pow(2, retryCount), MAX_DELAY_MS);
+  const jitter = exponentialDelay * JITTER_FACTOR * (2 * Math.random() - 1); // [-30%, +30%]
+  return Math.max(1000, Math.round(exponentialDelay + jitter)); // at least 1s
+}
+
 /**
  * Handles retry logic for a failed job.
  * Returns true if a retry was scheduled, false otherwise.
@@ -30,8 +45,10 @@ export function handleRetry(job: Job, agentId: string): boolean {
 function retrySame(job: Job): boolean {
   const originalJobId = job.original_job_id ?? job.id;
   const retryCount = job.retry_count + 1;
+  const backoffMs = computeBackoffDelay(retryCount - 1);
+  const scheduledAt = Date.now() + backoffMs;
 
-  console.log(`[retry] cloning job ${job.id} (same strategy, attempt ${retryCount}/${job.max_retries})`);
+  console.log(`[retry] cloning job ${job.id} (same strategy, attempt ${retryCount}/${job.max_retries}, backoff ${Math.round(backoffMs / 1000)}s)`);
 
   const retryJob = queries.insertJob({
     id: randomUUID(),
@@ -52,18 +69,21 @@ function retrySame(job: Job): boolean {
     retry_count: retryCount,
     original_job_id: originalJobId,
     completion_checks: job.completion_checks ?? null,
+    scheduled_at: scheduledAt,
   });
 
   socket.emitJobNew(retryJob);
-  console.log(`[retry] queued retry job ${retryJob.id} (attempt ${retryCount}/${job.max_retries})`);
+  console.log(`[retry] queued retry job ${retryJob.id} (attempt ${retryCount}/${job.max_retries}, scheduled in ${Math.round(backoffMs / 1000)}s)`);
   return true;
 }
 
 function retryAnalyze(job: Job, agentId: string): boolean {
   const originalJobId = job.original_job_id ?? job.id;
   const retryCount = job.retry_count + 1;
+  const backoffMs = computeBackoffDelay(retryCount - 1);
+  const scheduledAt = Date.now() + backoffMs;
 
-  console.log(`[retry] spawning analysis agent for job ${job.id} (attempt ${retryCount}/${job.max_retries})`);
+  console.log(`[retry] spawning analysis agent for job ${job.id} (attempt ${retryCount}/${job.max_retries}, backoff ${Math.round(backoffMs / 1000)}s)`);
 
   // Gather failure context
   const agent = queries.getAgentById(agentId);
@@ -124,6 +144,7 @@ function retryAnalyze(job: Job, agentId: string): boolean {
     retry_count: job.retry_count,
     original_job_id: originalJobId,
     completion_checks: null,
+    scheduled_at: scheduledAt,
   });
 
   socket.emitJobNew(analysisJob);

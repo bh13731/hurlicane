@@ -17,7 +17,8 @@ import { startWorktreeCleanup, stopWorktreeCleanup } from './orchestrator/Worktr
 import { startKBConsolidator, stopKBConsolidator } from './orchestrator/KBConsolidator.js';
 import { startGitHubPoller, stopGitHubPoller } from './integrations/GitHubPoller.js';
 import { runRecovery, startWorkflowGapDetector, stopWorkflowGapDetector } from './orchestrator/recovery.js';
-import { writeInput, resizePty, resizeAndSnapshot } from './orchestrator/PtyManager.js';
+import { startResourceMonitor, stopResourceMonitor, setQueueControls } from './orchestrator/ResourceMonitor.js';
+import { writeInput, resizePty, resizeAndSnapshot, saveSnapshot, isTmuxSessionAlive } from './orchestrator/PtyManager.js';
 import * as queries from './db/queries.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -147,6 +148,8 @@ async function main() {
   startWorkflowGapDetector();
   startKBConsolidator();
   startGitHubPoller();
+  startResourceMonitor();
+  setQueueControls(stopWorkQueue, startWorkQueue);
 
   // Restore persisted settings
   const savedMax = queries.getNote('setting:maxConcurrentAgents');
@@ -172,7 +175,7 @@ async function main() {
     }, 10_000);
     watchdog.unref(); // don't let this alone keep the process alive
 
-    // Stop dispatching new jobs and the watchdog
+    // Stop dispatching new jobs and all periodic monitors
     stopWorkQueue();
     stopWatchdog();
     stopHealthMonitor();
@@ -180,6 +183,26 @@ async function main() {
     stopWorkflowGapDetector();
     stopKBConsolidator();
     stopGitHubPoller();
+    stopResourceMonitor();
+
+    // Save tmux snapshots for all running agents so recovery on restart has
+    // the latest terminal state. Also persist pending_wait_ids so the recovery
+    // module can re-register orphaned waits without re-scanning output.
+    try {
+      const runningAgents = queries.listAllRunningAgents();
+      let snapshotCount = 0;
+      for (const agent of runningAgents) {
+        if (isTmuxSessionAlive(agent.id)) {
+          saveSnapshot(agent.id);
+          snapshotCount++;
+        }
+      }
+      if (snapshotCount > 0) {
+        console.log(`[server] saved ${snapshotCount} agent snapshot(s) before shutdown`);
+      }
+    } catch (err) {
+      console.error('[server] error saving agent snapshots:', err);
+    }
 
     // Stop accepting new HTTP connections; wait for in-flight requests to drain
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
