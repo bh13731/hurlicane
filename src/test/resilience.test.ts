@@ -835,3 +835,60 @@ describe('FTS optimization', () => {
     closeDb();
   });
 });
+
+describe('Recovery ledger', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+    await resetManagerState();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('isRecoveryExhausted returns false initially', async () => {
+    const { isRecoveryExhausted } = await import('../server/orchestrator/RecoveryLedger.js');
+    const queries = await import('../server/db/queries.js');
+
+    queries.insertJob({ id: 'rl-job-1', title: 'test', description: 'test', context: null, priority: 0 });
+    const job = queries.getJobById('rl-job-1')!;
+
+    expect(isRecoveryExhausted(job)).toBe(false);
+  });
+
+  it('isRecoveryExhausted returns true after max claims', async () => {
+    const { claimRecovery, isRecoveryExhausted } = await import('../server/orchestrator/RecoveryLedger.js');
+    const queries = await import('../server/db/queries.js');
+
+    queries.insertJob({ id: 'rl-job-2', title: 'test', description: 'test', context: null, priority: 0 });
+    const job = queries.getJobById('rl-job-2')!;
+
+    // Claim 3 times (default max)
+    expect(claimRecovery(job, 'test1', { lockMs: 0 })).toBe(true);
+    expect(claimRecovery(job, 'test2', { lockMs: 0 })).toBe(true);
+    expect(claimRecovery(job, 'test3', { lockMs: 0 })).toBe(true);
+
+    // 4th should be denied
+    expect(claimRecovery(job, 'test4', { lockMs: 0 })).toBe(false);
+
+    // Should be exhausted
+    expect(isRecoveryExhausted(job)).toBe(true);
+  });
+
+  it('getRecoverySummary returns correct state', async () => {
+    const { claimRecovery, getRecoverySummary } = await import('../server/orchestrator/RecoveryLedger.js');
+    const queries = await import('../server/db/queries.js');
+
+    queries.insertJob({ id: 'rl-job-3', title: 'test', description: 'test', context: null, priority: 0 });
+    const job = queries.getJobById('rl-job-3')!;
+
+    expect(getRecoverySummary(job)).toBeNull(); // no state yet
+
+    claimRecovery(job, 'first-claim', { lockMs: 0 });
+    const summary = getRecoverySummary(job);
+    expect(summary).toBeDefined();
+    expect(summary!.attempts).toBe(1);
+    expect(summary!.lastReason).toBe('first-claim');
+    expect(summary!.exhausted).toBe(false);
+  });
+});
