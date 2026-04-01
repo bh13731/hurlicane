@@ -42,7 +42,20 @@ export function emitAgentUpdate(agent: AgentWithJob): void {
   pushEvent('agent:update', payload);
 }
 
+// Max payload size for agent output events (512KB). Oversized events (e.g.
+// a single massive tool result) would choke Socket.io and block other events.
+const MAX_OUTPUT_EVENT_BYTES = 512 * 1024;
+
 export function emitAgentOutput(agentId: string, line: AgentOutput): void {
+  // Guard against oversized output events that would block Socket.io
+  if (line.content && line.content.length > MAX_OUTPUT_EVENT_BYTES) {
+    const truncated = {
+      ...line,
+      content: line.content.slice(0, MAX_OUTPUT_EVENT_BYTES) + '\n[TRUNCATED: output exceeded 512KB limit]',
+    };
+    getIo().emit('agent:output', { agent_id: agentId, line: truncated });
+    return;
+  }
   getIo().emit('agent:output', { agent_id: agentId, line });
 }
 

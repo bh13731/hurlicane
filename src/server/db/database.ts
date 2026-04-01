@@ -481,6 +481,17 @@ export function initDb(dbPath: string): DatabaseSync {
   db.exec('CREATE INDEX IF NOT EXISTS idx_agents_job_id ON agents(job_id)');
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_context_eye ON jobs(status) WHERE json_extract(context, '$.eye') = 1");
 
+  // ── FTS optimization ────────────────────────────────────────────────────────
+  // Run FTS5 optimize on startup to merge internal b-trees. This keeps
+  // full-text search fast after many inserts. Safe to run on every init —
+  // it's a no-op if the index is already optimized.
+  try {
+    db.exec("INSERT INTO output_fts(output_fts) VALUES('optimize')");
+  } catch { /* FTS optimize may fail on empty tables */ }
+  try {
+    db.exec("INSERT INTO kb_fts(kb_fts) VALUES('optimize')");
+  } catch { /* FTS optimize may fail on empty tables */ }
+
   // ── Database integrity check ──────────────────────────────────────────────
   // Run a quick integrity check on startup to detect corruption early.
   // PRAGMA quick_check is fast (doesn't scan all data pages like integrity_check).

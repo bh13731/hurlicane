@@ -1324,6 +1324,27 @@ export function deleteNote(key: string): void {
   db.prepare('DELETE FROM notes WHERE key = ?').run(key);
 }
 
+/**
+ * Clean up stale scratchpad notes that haven't been updated in a while.
+ * Excludes system notes (setting:*, recovery:*, workflow/*, eye:*) which
+ * are managed by specific subsystems.
+ * Returns number of notes deleted.
+ */
+export function pruneStaleNotes(maxAgeMs: number = 7 * 24 * 60 * 60 * 1000): number {
+  const db = getDb();
+  const cutoff = Date.now() - maxAgeMs;
+  const result = db.prepare(`
+    DELETE FROM notes
+    WHERE updated_at < ?
+      AND key NOT LIKE 'setting:%'
+      AND key NOT LIKE 'recovery:%'
+      AND key NOT LIKE 'workflow/%'
+      AND key NOT LIKE 'eye:%'
+      AND key NOT LIKE 'job-resume:%'
+  `).run(cutoff);
+  return result.changes;
+}
+
 // ─── Projects ─────────────────────────────────────────────────────────────────
 
 export function insertProject(project: Project): Project {

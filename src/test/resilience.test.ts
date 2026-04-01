@@ -784,3 +784,54 @@ describe('Output pruning', () => {
     expect(remaining).toHaveLength(50);
   });
 });
+
+describe('Stale notes cleanup', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('pruneStaleNotes removes old scratchpad notes', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { getDb } = await import('../server/db/database.js');
+    const db = getDb();
+
+    // Insert an old note (manually set updated_at to 8 days ago)
+    queries.upsertNote('results/step1', 'old data', null);
+    db.prepare("UPDATE notes SET updated_at = ? WHERE key = 'results/step1'").run(
+      Date.now() - 8 * 24 * 60 * 60 * 1000
+    );
+
+    // Insert a recent note
+    queries.upsertNote('results/step2', 'recent data', null);
+
+    // Insert a system note that should be preserved even if old
+    queries.upsertNote('setting:maxAgents', '20', null);
+    db.prepare("UPDATE notes SET updated_at = ? WHERE key = 'setting:maxAgents'").run(
+      Date.now() - 30 * 24 * 60 * 60 * 1000
+    );
+
+    const deleted = queries.pruneStaleNotes(7 * 24 * 60 * 60 * 1000); // 7 day max age
+    expect(deleted).toBe(1); // only the old scratchpad note
+
+    // Recent note should survive
+    expect(queries.getNote('results/step2')).toBeDefined();
+    // System note should survive (excluded by prefix)
+    expect(queries.getNote('setting:maxAgents')).toBeDefined();
+    // Old note should be gone
+    expect(queries.getNote('results/step1')).toBeNull();
+  });
+});
+
+describe('FTS optimization', () => {
+  it('runs without error on fresh DB', async () => {
+    const { initDb, closeDb } = await import('../server/db/database.js');
+    // initDb now includes FTS optimize — verify it doesn't crash
+    const db = initDb(':memory:');
+    expect(db).toBeDefined();
+    closeDb();
+  });
+});
