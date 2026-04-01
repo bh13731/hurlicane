@@ -146,18 +146,41 @@ function tick(): void {
 
 /**
  * Gracefully stop an agent that has hit a budget or time limit.
+ * Sends SIGTERM first to allow the agent to commit work-in-progress,
+ * then SIGKILL after a grace period if it hasn't exited.
  * Marks as done (not failed) — the limit was expected, not an error.
  */
+const GRACEFUL_KILL_TIMEOUT_MS = 15_000; // 15s grace after SIGTERM before SIGKILL
+
 function killAgentGracefully(agentId: string, reason: string): void {
   const agent = queries.getAgentById(agentId);
   if (!agent) return;
 
-  // Kill the process
+  // Send SIGTERM first to let the agent clean up (commit, release locks, etc.)
   if (agent.pid != null) {
     try {
       process.kill(-agent.pid, 'SIGTERM');
     } catch { /* already gone */ }
+
+    // Schedule a SIGKILL if the process doesn't exit within the grace period
+    setTimeout(() => {
+      try {
+        // Check if still alive
+        process.kill(agent.pid!, 0);
+        // Still running — force kill
+        console.warn(`[health] agent ${agentId.slice(0, 6)} didn't exit after SIGTERM — sending SIGKILL`);
+        try { process.kill(-agent.pid!, 'SIGKILL'); } catch { /* process group gone */ }
+        try { process.kill(agent.pid!, 'SIGKILL'); } catch { /* already gone */ }
+      } catch {
+        // Process already exited — nothing to do
+      }
+    }, GRACEFUL_KILL_TIMEOUT_MS).unref();
   }
+
+  // Also kill tmux session if present
+  try {
+    execFileSync('tmux', ['kill-session', '-t', `orchestrator-${agentId}`], { stdio: 'pipe' });
+  } catch { /* session doesn't exist or already gone */ }
 
   // Mark agent as done with a status message explaining the stop
   queries.updateAgent(agentId, {

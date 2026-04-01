@@ -17,9 +17,11 @@ import knowledgeBaseRouter from './knowledgeBase.js';
 import eyeRouter from './eye.js';
 import localConfigRouter from './localConfig.js';
 import modelsRouter from './models.js';
+import healthRouter from './health.js';
 
 const router = Router();
 
+router.use('/health', healthRouter);
 router.use('/jobs', jobsRouter);
 router.use('/agents', agentsRouter);
 router.use('/replies', repliesRouter);
