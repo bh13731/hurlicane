@@ -67,7 +67,8 @@ Also write the operating contract using \`write_note\` with key \`${contractKey}
 ## Important
 - Use \`write_note("${planKey}", <plan content>)\` to store the plan.
 - Use \`write_note("${contractKey}", <contract content>)\` to store the contract.
-- Do NOT implement anything yet — this is assessment and planning only.
+- Do NOT implement anything yet — this is assessment and planning only.${workflow.worktree_branch ? `
+- **You are on branch \`${workflow.worktree_branch}\`. Do NOT switch branches or checkout main.**` : ''}
 - Call \`report_status\` to update your progress.`;
 }
 
@@ -142,7 +143,8 @@ Write the updated plan back: \`write_note("${planKey}", <updated plan>)\`
 ## Rules
 - Do NOT implement anything — review and planning only.
 - If the implementation was poor quality, add multiple specific fix milestones rather than vague notes.
-- The implementer reads your plan directly — be precise and actionable.
+- The implementer reads your plan directly — be precise and actionable.${workflow.worktree_branch ? `
+- **You are on branch \`${workflow.worktree_branch}\`. Do NOT switch branches or checkout main.**` : ''}
 - Call \`report_status\` to update your progress.`;
 }
 
@@ -207,7 +209,8 @@ ${workflow.work_dir ?? '(not specified)'}
 ## Rules
 - Implement only ONE milestone per cycle.
 - Always lock files before editing (\`lock_files\`) and release when done (\`release_files\`).
-- Use \`git add <specific files>\` — never \`git add -A\` or \`git add .\`
+- Use \`git add <specific files>\` — never \`git add -A\` or \`git add .\`${workflow.worktree_branch ? `
+- **CRITICAL: You are on branch \`${workflow.worktree_branch}\`. Do NOT switch branches. Do NOT checkout main. All commits must go on this branch. Run \`git branch --show-current\` to verify before committing.**` : ''}
 - If blocked, explain clearly in the worklog and set the "Next step" to describe what needs to happen.
 - Call \`report_status\` regularly to update your progress.
 - Call \`search_kb\` at the start for relevant prior knowledge.

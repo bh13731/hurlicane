@@ -2147,3 +2147,12 @@ export function getJobsForWorkflow(workflowId: string): Job[] {
   const rows = db.prepare('SELECT * FROM jobs WHERE workflow_id = ? ORDER BY workflow_cycle ASC, created_at ASC').all(workflowId);
   return rows.map((r: any) => cast<Job>(r));
 }
+
+/** Check if any non-terminal job has work_dir set to the given path. */
+export function isWorkDirInUse(dirPath: string): boolean {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT 1 FROM jobs WHERE work_dir = ? AND status NOT IN ('done', 'failed', 'cancelled') LIMIT 1"
+  ).get(dirPath);
+  return !!row;
+}

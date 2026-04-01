@@ -52,7 +52,7 @@ export function StopModePicker({ mode, value, onModeChange, onValueChange, label
             <input
               type="number"
               min={0.5}
-              max={100}
+              max={500}
               step={0.5}
               value={value ?? ''}
               onChange={e => onValueChange(Number(e.target.value))}

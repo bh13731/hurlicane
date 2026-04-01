@@ -13,11 +13,14 @@ const COMPLEXITY_TO_MODEL: Record<string, string> = {
 
 // ─── Rate Limit Fallback Chain ──────────────────────────────────────────────
 // When a model is rate-limited, fall through to the next available model.
+// Codex (GPT-5.4 via OpenAI) is the final fallback — different API provider,
+// so Anthropic rate limits don't affect it.
 const MODEL_FALLBACK_CHAIN: string[] = [
   'claude-opus-4-6[1m]',
   'claude-sonnet-4-6[1m]',
   'claude-sonnet-4-6',
   'claude-haiku-4-5-20251001',
+  'codex',
 ];
 
 const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes

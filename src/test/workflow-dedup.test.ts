@@ -29,6 +29,18 @@ vi.mock('../server/orchestrator/WorkflowPrompts.js', () => ({
   buildImplementPrompt: vi.fn(() => 'mock implement prompt'),
 }));
 
+// Mock ModelClassifier for rate limit fallback tests
+vi.mock('../server/orchestrator/ModelClassifier.js', () => ({
+  getFallbackModel: vi.fn((model: string) => {
+    // Simulate fallback: sonnet → haiku
+    if (model === 'claude-sonnet-4-6') return 'claude-haiku-4-5-20251001';
+    if (model === 'claude-sonnet-4-6[1m]') return 'claude-haiku-4-5-20251001';
+    return model; // no fallback
+  }),
+  markModelRateLimited: vi.fn(),
+  resolveModel: vi.fn(async (job: any) => job.model ?? 'claude-sonnet-4-6'),
+}));
+
 // Shared job ID used to prove cross-test dedup independence
 const SHARED_JOB_ID = 'dedup-test-shared-job-id';
 
@@ -199,10 +211,10 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     expect(reviewJob.workflow_cycle).toBe(1);
   });
 
-  it('failed phase job marks workflow as blocked', async () => {
+  it('failed phase job auto-retries with fallback model before blocking', async () => {
     const socket = await import('../server/socket/SocketManager.js');
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
-    const { upsertNote, getWorkflowById } = await import('../server/db/queries.js');
+    const { upsertNote, getWorkflowById, getJobsForWorkflow } = await import('../server/db/queries.js');
 
     const project = await insertTestProject();
     const workflow = await insertTestWorkflow({
@@ -223,14 +235,21 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     onJobCompleted(job);
 
     const updated = getWorkflowById(workflow.id)!;
-    expect(updated.status).toBe('blocked');
-    expect(updated.current_phase).toBe('implement');
+    // Should auto-retry with fallback model, not immediately block
+    expect(updated.status).toBe('running');
 
-    // Socket should have emitted the blocked state
+    // A new job should have been spawned with a fallback model
+    const jobs = getJobsForWorkflow(workflow.id);
+    const retryJob = jobs.find(j => j.id !== job.id);
+    expect(retryJob).toBeDefined();
+    expect(retryJob!.title).toContain('(fallback)');
+
+    // Socket should have emitted updates (phase job spawned, not blocked)
     const updateCalls = vi.mocked(socket.emitWorkflowUpdate).mock.calls;
     expect(updateCalls.length).toBeGreaterThan(0);
-    const lastUpdate = updateCalls[updateCalls.length - 1][0];
-    expect(lastUpdate.status).toBe('blocked');
+    // Should NOT have emitted blocked status
+    const statuses = updateCalls.map(c => c[0].status);
+    expect(statuses).not.toContain('blocked');
   });
 
   it('non-workflow job is silently ignored', async () => {
