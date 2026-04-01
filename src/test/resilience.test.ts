@@ -473,3 +473,64 @@ describe('Token tracking for PTY agents', () => {
     expect(opusCost).toBeCloseTo(7.5 + 3.75, 1);
   });
 });
+
+describe('Event replay API', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('getEventsSince returns events in chronological order', async () => {
+    const { pushEvent, getEventsSince } = await import('../server/orchestrator/EventQueue.js');
+
+    const before = Date.now() - 1;
+    pushEvent('job:new', { job: { id: 'j1', title: 'first' } });
+    pushEvent('agent:update', { agent: { id: 'a1', status: 'running' } });
+    pushEvent('job:update', { job: { id: 'j1', status: 'done' } });
+
+    const events = getEventsSince(before);
+    expect(events.length).toBe(3);
+    // Verify chronological order
+    for (let i = 1; i < events.length; i++) {
+      expect(events[i].created_at).toBeGreaterThanOrEqual(events[i - 1].created_at);
+    }
+    expect(events[0].event_name).toBe('job:new');
+    expect(events[2].event_name).toBe('job:update');
+  });
+});
+
+describe('Double-dispatch prevention', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('getNextQueuedJob only returns queued jobs', async () => {
+    const queries = await import('../server/db/queries.js');
+
+    queries.insertJob({
+      id: 'dd-job-1', title: 'queued job', description: 'test',
+      context: null, priority: 0, status: 'queued',
+    });
+    queries.insertJob({
+      id: 'dd-job-2', title: 'assigned job', description: 'test',
+      context: null, priority: 0, status: 'assigned',
+    });
+
+    const next = queries.getNextQueuedJob();
+    expect(next).toBeDefined();
+    expect(next!.id).toBe('dd-job-1');
+    expect(next!.status).toBe('queued');
+
+    // After marking assigned, getNextQueuedJob should not return it
+    queries.updateJobStatus('dd-job-1', 'assigned');
+    const next2 = queries.getNextQueuedJob();
+    expect(next2).toBeNull();
+  });
+});

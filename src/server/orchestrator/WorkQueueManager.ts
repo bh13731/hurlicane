@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { execSync } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
 import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
@@ -60,6 +61,12 @@ async function tick(): Promise<void> {
   const job = queries.getNextQueuedJob();
   if (!job || _classifying.has(job.id)) return;
 
+  // Double-dispatch guard: verify the job is still queued before claiming it.
+  // A rapid succession of ticks could both see the same job as "queued" before
+  // either has a chance to mark it as "assigned".
+  const fresh = queries.getJobById(job.id);
+  if (!fresh || fresh.status !== 'queued') return;
+
   // Mark assigned immediately to prevent double-dispatch across ticks
   queries.updateJobStatus(job.id, 'assigned');
   socket.emitJobUpdate(queries.getJobById(job.id)!);
@@ -87,6 +94,21 @@ async function tick(): Promise<void> {
     const dispatchJob = readyJob.use_worktree
       ? createWorktree(readyJob, agentId)
       : readyJob;
+
+    // Create a git checkpoint tag before the agent starts, so mid-edit crashes
+    // can be recovered by resetting to this tag. Lightweight and cheap.
+    const dispatchWorkDir = (dispatchJob as any).work_dir ?? process.cwd();
+    try {
+      const isGitRepo = fs.existsSync(path.join(dispatchWorkDir, '.git')) ||
+        (() => { try { execSync('git rev-parse --git-dir', { cwd: dispatchWorkDir, stdio: 'pipe', timeout: 3000 }); return true; } catch { return false; } })();
+      if (isGitRepo) {
+        const tagName = `orchestrator/checkpoint/${agentId.slice(0, 8)}`;
+        execSync(`git tag -f ${tagName}`, { cwd: dispatchWorkDir, stdio: 'pipe', timeout: 5000 });
+      }
+    } catch (err) {
+      // Non-fatal — checkpoint is best-effort
+      console.warn(`[queue] git checkpoint failed for agent ${agentId}:`, err);
+    }
 
     // Codex batch agents still use runAgent (stream-json path); all others use tmux.
     // Debate-stage jobs use --print inside tmux (piped through tee to .ndjson for UI display)
