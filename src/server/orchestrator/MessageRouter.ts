@@ -1,5 +1,6 @@
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
+import { Sentry } from '../instrument.js';
 
 interface PendingReply {
   resolve: (answer: string) => void;
@@ -27,6 +28,7 @@ class MessageRouter {
           if (q) socket.emitQuestionAnswered(q);
         } catch (err) {
           console.error(`[MessageRouter] error handling timeout for question ${questionId}:`, err);
+          Sentry.captureException(err);
         }
         resolve('[TIMEOUT] No response received');
       }, timeoutMs);

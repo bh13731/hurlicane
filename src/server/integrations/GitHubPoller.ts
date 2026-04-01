@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import * as queries from '../db/queries.js';
 import { getEyeTargets } from '../orchestrator/EyeConfig.js';
 import { wakeEye } from '../api/eye.js';
+import { Sentry } from '../instrument.js';
 
 const DEFAULT_POLL_INTERVAL_MS = 300_000; // 5 minutes
 const GH_AUTHOR_FILTER = 'kphurley7'; // Don't wake Eye for the user's own PRs
@@ -229,6 +230,7 @@ function runPoll(): void {
     } catch (err: any) {
       const msg = `Error polling ${target.path}: ${err?.message ?? err}`;
       console.error(`[github-poller] ${msg}`);
+      Sentry.captureException(err);
       pollerStatus.errors.push(msg);
     }
   }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { execSync } from 'child_process';
 import * as path from 'path';
+import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { runAgent } from './AgentRunner.js';
@@ -24,8 +25,8 @@ export function startWorkQueue(): void {
   if (_running) return;
   _running = true;
   console.log('[queue] WorkQueueManager started');
-  _timer = setInterval(() => { try { tick().catch(console.error); } catch (err) { console.error('[queue] tick error:', err); } }, POLL_INTERVAL_MS);
-  try { tick().catch(console.error); } catch (err) { console.error('[queue] initial tick error:', err); }
+  _timer = setInterval(() => { try { tick().catch(console.error); } catch (err) { console.error('[queue] tick error:', err); Sentry.captureException(err); } }, POLL_INTERVAL_MS);
+  try { tick().catch(console.error); } catch (err) { console.error('[queue] initial tick error:', err); Sentry.captureException(err); }
 }
 
 export function stopWorkQueue(): void {
@@ -93,6 +94,7 @@ async function tick(): Promise<void> {
     }
   } catch (err: any) {
     console.error(`[queue] dispatch failed for job ${job.id}:`, err);
+    Sentry.captureException(err);
     queries.updateJobStatus(job.id, 'failed');
     socket.emitJobUpdate(queries.getJobById(job.id)!);
   } finally {
@@ -105,8 +107,18 @@ async function tick(): Promise<void> {
  * with work_dir pointing to the new worktree.
  */
 function createWorktree(job: Job, agentId: string): Job {
-  const repoDir = (job as any).work_dir ?? process.cwd();
+  const workDir = (job as any).work_dir ?? process.cwd();
   const shortId = agentId.slice(0, 8);
+
+  // Resolve to the actual git repo root — prevents nested .orchestrator-worktrees
+  // when work_dir is already a worktree (child job inheriting parent's worktree)
+  let repoDir: string;
+  try {
+    repoDir = execSync('git rev-parse --show-toplevel', { cwd: workDir, stdio: 'pipe', timeout: 5000 })
+      .toString().trim();
+  } catch {
+    repoDir = workDir;
+  }
 
   // Slugify job title for the branch name
   const slug = job.title

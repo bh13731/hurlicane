@@ -1,3 +1,4 @@
+import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import type { KBEntry } from '../../shared/types.js';
 
@@ -11,10 +12,10 @@ export function startKBConsolidator(): void {
   if (_interval) return;
   // Run first consolidation after a short delay (don't block startup)
   setTimeout(() => {
-    runConsolidation().catch(err => console.error('[kb-consolidator] error:', err));
+    runConsolidation().catch(err => { console.error('[kb-consolidator] error:', err); Sentry.captureException(err); });
   }, 60_000);
   _interval = setInterval(() => {
-    runConsolidation().catch(err => console.error('[kb-consolidator] error:', err));
+    runConsolidation().catch(err => { console.error('[kb-consolidator] error:', err); Sentry.captureException(err); });
   }, CONSOLIDATION_INTERVAL_MS);
   console.log('[kb-consolidator] started (every 6h)');
 }

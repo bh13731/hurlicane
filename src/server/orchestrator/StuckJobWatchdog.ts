@@ -19,6 +19,7 @@
 import * as fs from 'fs';
 import { execFileSync } from 'child_process';
 import { randomUUID } from 'crypto';
+import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { runAgent, getLogPath } from './AgentRunner.js';
@@ -147,10 +148,10 @@ function check(): void {
                 const nextJob = queries.scheduleRepeatJob(idleJobFresh);
                 socket.emitJobNew(nextJob);
                 console.log(`[watchdog] scheduled next repeat for idle job "${idleJobFresh.title}"`);
-              } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); }
+              } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); Sentry.captureException(err); }
             }
             if (idleJobFresh.status === 'failed') {
-              try { handleRetry(idleJobFresh, agent.id); } catch (err) { console.error(`[watchdog] handleRetry error:`, err); }
+              try { handleRetry(idleJobFresh, agent.id); } catch (err) { console.error(`[watchdog] handleRetry error:`, err); Sentry.captureException(err); }
             }
           }
         }
@@ -254,22 +255,22 @@ function check(): void {
     // Trigger debate/workflow state machines for the completed job
     const updatedJob = queries.getJobById(agent.job_id);
     if (updatedJob) {
-      try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[watchdog] emitJobUpdate error:`, err); }
-      try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] debateOnJobCompleted error:`, err); }
-      try { workflowOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] workflowOnJobCompleted error:`, err); }
+      try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[watchdog] emitJobUpdate error:`, err); Sentry.captureException(err); }
+      try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] debateOnJobCompleted error:`, err); Sentry.captureException(err); }
+      try { workflowOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] workflowOnJobCompleted error:`, err); Sentry.captureException(err); }
       // For repeat jobs (e.g. Eye cycles), schedule the next run so the cycle continues
       if (updatedJob.repeat_interval_ms) {
         try {
           const nextJob = queries.scheduleRepeatJob(updatedJob);
           socket.emitJobNew(nextJob);
           console.log(`[watchdog] scheduled next repeat for job "${updatedJob.title}" (${updatedJob.id})`);
-        } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); }
+        } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); Sentry.captureException(err); }
       }
       // Invoke retry policy for failed jobs
       if (updatedJob.status === 'failed') {
         try {
           handleRetry(updatedJob, agent.id);
-        } catch (err) { console.error(`[watchdog] handleRetry error for job ${agent.job_id}:`, err); }
+        } catch (err) { console.error(`[watchdog] handleRetry error for job ${agent.job_id}:`, err); Sentry.captureException(err); }
       }
     }
   }
@@ -479,7 +480,7 @@ function check(): void {
 
     const lastJob = currentLoopJobs[currentLoopJobs.length - 1];
     console.warn(`[watchdog] debate ${debate.id} stuck in 'running' with no active jobs — re-triggering state machine via job ${lastJob.id.slice(0, 8)}`);
-    try { debateOnJobCompleted(lastJob); } catch (err) { console.error(`[watchdog] stuck-debate recovery error for debate ${debate.id}:`, err); }
+    try { debateOnJobCompleted(lastJob); } catch (err) { console.error(`[watchdog] stuck-debate recovery error for debate ${debate.id}:`, err); Sentry.captureException(err); }
   }
 
   // ── Check 5: Rate-limited agents in tmux ──────────────────────────────────
@@ -573,9 +574,9 @@ function check(): void {
 export function startWatchdog(): void {
   console.log('[watchdog] started (interval: 30s)');
   // Run once immediately to catch anything from startup
-  try { check(); } catch (err) { console.error('[watchdog] initial check error:', err); }
+  try { check(); } catch (err) { console.error('[watchdog] initial check error:', err); Sentry.captureException(err); }
   _timer = setInterval(() => {
-    try { check(); } catch (err) { console.error('[watchdog] check error:', err); }
+    try { check(); } catch (err) { console.error('[watchdog] check error:', err); Sentry.captureException(err); }
   }, WATCHDOG_INTERVAL_MS);
 }
 

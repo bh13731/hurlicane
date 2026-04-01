@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import * as queries from '../db/queries.js';
 import { runConsolidation } from '../orchestrator/KBConsolidator.js';
+import { Sentry } from '../instrument.js';
 
 const router = Router();
 
@@ -50,6 +51,7 @@ router.post('/consolidate', async (_req, res) => {
     const result = await runConsolidation();
     res.json(result);
   } catch (err: any) {
+    Sentry.captureException(err);
     res.status(500).json({ error: err.message ?? 'consolidation failed' });
   }
 });

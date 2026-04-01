@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as queries from '../../db/queries.js';
+import { Sentry } from '../../instrument.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -43,6 +44,7 @@ export async function queryLinearHandler(_agentId: string, input: z.infer<typeof
     const data = await response.json();
     return JSON.stringify(data, null, 2);
   } catch (err: any) {
+    Sentry.captureException(err);
     return JSON.stringify({ error: `Linear API error: ${err.message}` });
   }
 }
@@ -117,6 +119,7 @@ export async function queryLogsHandler(_agentId: string, input: z.infer<typeof q
       return stdout.slice(0, 10000);
     }
   } catch (err: any) {
+    Sentry.captureException(err);
     const msg = err.stderr?.slice(0, 500) || err.message;
     if (msg.includes('Authentication') || msg.includes('credentials') || msg.includes('NoCredentials')) {
       return JSON.stringify({ error: 'AWS authentication required. Run "aws sso login" first.' });
@@ -172,6 +175,7 @@ export async function queryDbHandler(_agentId: string, input: z.infer<typeof que
     }
     return result || '(no rows returned)';
   } catch (err: any) {
+    Sentry.captureException(err);
     const msg = err.stderr?.slice(0, 500) || err.message;
     if (msg.includes('kubeconfig') || msg.includes('kubectl')) {
       return JSON.stringify({ error: `Kubernetes access required. Run "aws eks update-kubeconfig --name ${env} --alias ${env}" first.` });
@@ -281,10 +285,12 @@ export async function queryCiLogsHandler(_agentId: string, input: z.infer<typeof
                 entry.logs = logOutput;
               }
             } catch (logErr: any) {
+              Sentry.captureException(logErr);
               entry.logs_error = `Could not fetch logs: ${logErr.message?.slice(0, 200)}`;
             }
           }
         } catch (jobErr: any) {
+          Sentry.captureException(jobErr);
           entry.jobs_error = `Could not fetch job details: ${jobErr.message?.slice(0, 200)}`;
         }
       }
@@ -294,6 +300,7 @@ export async function queryCiLogsHandler(_agentId: string, input: z.infer<typeof
 
     return JSON.stringify({ count: results.length, runs: results }, null, 2);
   } catch (err: any) {
+    Sentry.captureException(err);
     const msg = err.stderr?.slice(0, 500) || err.message;
     return JSON.stringify({ error: `CI logs query failed: ${msg}` });
   }

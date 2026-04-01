@@ -2,11 +2,13 @@ import { randomUUID } from 'crypto';
 import { execSync } from 'child_process';
 import { mkdirSync } from 'fs';
 import path from 'path';
+import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import type { Job, Workflow, WorkflowPhase, StopMode } from '../../shared/types.js';
 import { effectiveMaxTurns } from '../../shared/types.js';
 import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt } from './WorkflowPrompts.js';
+import { getFallbackModel, markModelRateLimited } from './ModelClassifier.js';
 
 // Track jobs we've already processed to prevent double-exit race from triggering
 // duplicate spawns. Same pattern as DebateManager.
@@ -35,6 +37,7 @@ export function onJobCompleted(job: Job, { force = false }: { force?: boolean } 
     _onJobCompleted(job);
   } catch (err) {
     console.error(`[workflow] error handling job completion for job ${job.id}:`, err);
+    Sentry.captureException(err);
   }
 }
 
@@ -42,13 +45,29 @@ function _onJobCompleted(job: Job): void {
   const workflow = queries.getWorkflowById(job.workflow_id!);
   if (!workflow || workflow.status !== 'running') return;
 
-  // If the phase job failed or was cancelled, mark workflow as blocked
-  if (job.status === 'failed' || job.status === 'cancelled') {
-    console.log(`[workflow ${workflow.id}] phase '${job.workflow_phase}' job ${job.id} ${job.status} — marking workflow blocked`);
-    updateAndEmit(workflow.id, {
-      status: 'blocked',
-      current_phase: job.workflow_phase ?? 'idle',
-    });
+  // If the phase job was cancelled, mark workflow as blocked (user action — don't auto-retry)
+  if (job.status === 'cancelled') {
+    console.log(`[workflow ${workflow.id}] phase '${job.workflow_phase}' job ${job.id} cancelled — marking workflow blocked`);
+    updateAndEmit(workflow.id, { status: 'blocked', current_phase: job.workflow_phase ?? 'idle' });
+    return;
+  }
+
+  // If the phase job failed, try to auto-retry with a fallback model before blocking.
+  // Rate limits are transient — Codex can take over when Claude is down.
+  if (job.status === 'failed') {
+    const currentModel = job.model ?? workflow.implementer_model;
+    // Mark the model as rate-limited so getFallbackModel skips it
+    markModelRateLimited(currentModel, 5 * 60 * 1000);
+    const fallbackModel = getFallbackModel(currentModel);
+    if (fallbackModel !== currentModel) {
+      console.log(`[workflow ${workflow.id}] phase '${job.workflow_phase}' failed on ${currentModel} → retrying with ${fallbackModel}`);
+      const phase = job.workflow_phase as WorkflowPhase;
+      const cycle = job.workflow_cycle ?? workflow.current_cycle;
+      spawnPhaseJob(workflow, phase, cycle, fallbackModel);
+      return;
+    }
+    console.log(`[workflow ${workflow.id}] phase '${job.workflow_phase}' job ${job.id} failed, no fallback available — marking workflow blocked`);
+    updateAndEmit(workflow.id, { status: 'blocked', current_phase: job.workflow_phase ?? 'idle' });
     return;
   }
 
@@ -138,7 +157,7 @@ export function parseMilestones(planText: string): { total: number; done: number
 
 // ─── Phase Job Spawning ─────────────────────────────────────────────────────
 
-function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number): void {
+function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, modelOverride?: string): void {
   const phaseLabels: Record<string, string> = { assess: 'Assess', review: 'Review', implement: 'Implement' };
   const label = phaseLabels[phase] ?? phase;
 
@@ -175,9 +194,12 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number):
       throw new Error(`Invalid phase: ${phase}`);
   }
 
+  // Apply model override (used for auto-retry with fallback model on rate limits)
+  if (modelOverride) model = modelOverride;
+
   const job = queries.insertJob({
     id: randomUUID(),
-    title: `[Workflow C${cycle}] ${label}`,
+    title: `[Workflow C${cycle}] ${label}${modelOverride ? ' (fallback)' : ''}`,
     description: prompt,
     context: null,
     priority: 0,
@@ -349,6 +371,24 @@ export function resumeWorkflow(workflow: Workflow): Job {
 export function finalizeWorkflow(workflow: Workflow): void {
   const { worktree_path, worktree_branch, work_dir } = workflow;
   if (!worktree_path || !work_dir) return;
+
+  // Ensure the worktree is on the correct branch before pushing.
+  // Agents may have drifted to main — switch back and cherry-pick if needed.
+  if (worktree_branch) {
+    try {
+      const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', {
+        cwd: worktree_path, stdio: 'pipe', timeout: 5000,
+      }).toString().trim();
+      if (currentBranch !== worktree_branch) {
+        console.warn(`[workflow ${workflow.id}] worktree on '${currentBranch}' instead of '${worktree_branch}' — switching`);
+        execSync(`git checkout ${JSON.stringify(worktree_branch)}`, {
+          cwd: worktree_path, stdio: 'pipe', timeout: 10000,
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[workflow ${workflow.id}] branch check failed:`, err.message);
+    }
+  }
 
   try {
     // Count commits on the branch that aren't on the remote default branch

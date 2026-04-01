@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { estimateCostUsd } from './CostEstimator.js';
@@ -22,7 +23,7 @@ let _timer: NodeJS.Timeout | null = null;
 export function startHealthMonitor(): void {
   if (_timer) return;
   console.log('[health] HealthMonitor started');
-  _timer = setInterval(() => { try { tick(); } catch (err) { console.error('[health] tick error:', err); } }, TICK_INTERVAL_MS);
+  _timer = setInterval(() => { try { tick(); } catch (err) { console.error('[health] tick error:', err); Sentry.captureException(err); } }, TICK_INTERVAL_MS);
 }
 
 export function stopHealthMonitor(): void {

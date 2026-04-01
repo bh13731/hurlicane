@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import type { Job, Debate, DebateRole } from '../../shared/types.js';
@@ -17,6 +18,7 @@ export function onJobCompleted(job: Job): void {
     _onJobCompleted(job);
   } catch (err) {
     console.error(`[debate] error handling job completion for job ${job.id}:`, err);
+    Sentry.captureException(err);
   }
 }
 

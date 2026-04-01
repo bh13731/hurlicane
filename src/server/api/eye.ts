@@ -9,6 +9,7 @@ import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import { buildEyePrompt, getEyeTargets, EYE_PROMPT, type EyeTarget } from '../orchestrator/EyeConfig.js';
 import { getGitHubPollerStatus } from '../integrations/GitHubPoller.js';
 import { updateJobRepeatInterval } from '../db/queries.js';
+import { Sentry } from '../instrument.js';
 
 const router = Router();
 
@@ -71,6 +72,7 @@ function getEyeState(): { running: boolean; active: boolean; scheduledAt: number
         console.log(`[eye] auto-recovered failed Eye cycle, scheduled new job ${nextJob.id}`);
       } catch (err) {
         console.error('[eye] auto-recovery scheduleRepeatJob error:', err);
+        Sentry.captureException(err);
       }
     }
   }

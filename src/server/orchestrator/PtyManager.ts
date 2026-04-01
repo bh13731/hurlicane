@@ -3,6 +3,7 @@ import type { IPty } from 'node-pty';
 import { execFileSync, execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents, startTailing, stopTailing, readClaudeMd, buildMemorySection } from './AgentRunner.js';
@@ -220,11 +221,35 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
     ? `exec nice -n 10 ${execLine.slice(5)}`
     : `nice -n 10 ${execLine}`;
 
+  // Determine the expected branch for this job (if any) to enforce branch discipline.
+  // Agents must commit to their task branch, never main.
+  let expectedBranch: string | null = null;
+  if ((job as any).workflow_id) {
+    expectedBranch = queries.getWorkflowById((job as any).workflow_id)?.worktree_branch ?? null;
+  }
+  if (!expectedBranch) {
+    // Check standalone job worktree branch from the worktrees DB table
+    try {
+      const wt = queries.listActiveWorktrees().find(w => w.path === workDir);
+      if (wt) expectedBranch = wt.branch;
+    } catch { /* ignore */ }
+  }
+
   const scriptLines = [
     '#!/bin/sh',
     `export ORCHESTRATOR_AGENT_ID=${JSON.stringify(agentId)}`,
     `export ORCHESTRATOR_API_URL=${JSON.stringify(`http://localhost:${process.env.PORT ?? 3000}`)}`,
     `unset CLAUDECODE`,
+    // Ensure the correct branch is checked out before the agent runs.
+    // Prevents agents from committing to main when working in a worktree.
+    ...(expectedBranch ? [
+      `cd ${JSON.stringify(workDir)}`,
+      `_current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)`,
+      `if [ "$_current_branch" != ${JSON.stringify(expectedBranch)} ]; then`,
+      `  git checkout ${JSON.stringify(expectedBranch)} 2>/dev/null || true`,
+      `fi`,
+      `unset _current_branch`,
+    ] : []),
     // Auto-activate Python virtual environment if present in the working directory,
     // so tools like pytest are on PATH when the agent runs shell commands.
     `for _venv in venv .venv env .env; do`,
@@ -267,6 +292,7 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
 
   } catch (err: any) {
     console.error(`[pty ${agentId}] failed to create tmux session:`, err.message);
+    Sentry.captureException(err);
     queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
     queries.updateJobStatus(job.id, 'failed');
     const updated = queries.getAgentWithJob(agentId);
@@ -316,6 +342,7 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
       attachPty(agentId, job, cols, rows);
     } catch (err: any) {
       console.error(`[pty ${agentId}] error in post-start setup:`, err.message);
+      Sentry.captureException(err);
       queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
       queries.updateJobStatus(job.id, 'failed');
       const updated = queries.getAgentWithJob(agentId);
@@ -420,9 +447,10 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
         const TERMINAL = ['done', 'failed', 'cancelled'];
         if (agentRec && TERMINAL.includes(agentRec.status)) return;
         console.log(`[pty ${agentId}] tmux session ended (detected via fallback poll)`);
-        handleJobCompletion(agentId, job, 'done').catch(err2 =>
-          console.error(`[pty ${agentId}] handleJobCompletion error:`, err2)
-        );
+        handleJobCompletion(agentId, job, 'done').catch(err2 => {
+          console.error(`[pty ${agentId}] handleJobCompletion error:`, err2);
+          Sentry.captureException(err2);
+        });
       }, 5000);
     } else if (!isAutoExitJob(job as any)) {
       // Tmux session didn't start — genuinely failed
@@ -451,6 +479,7 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
       } catch { /* ignore write errors */ }
     } catch (err) {
       console.error(`[pty ${agentId}] onData error:`, err);
+      Sentry.captureException(err);
     }
   });
 
@@ -491,12 +520,14 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
         const updateFields: Parameters<typeof queries.updateAgent>[1] = { status, finished_at: Date.now() };
         if (errorMsg) updateFields.error_message = errorMsg;
         queries.updateAgent(agentId, updateFields);
-        handleJobCompletion(agentId, job, status).catch(err =>
-          console.error(`[pty ${agentId}] handleJobCompletion error:`, err)
-        );
+        handleJobCompletion(agentId, job, status).catch(err => {
+          console.error(`[pty ${agentId}] handleJobCompletion error:`, err);
+          Sentry.captureException(err);
+        });
       }
     } catch (err) {
       console.error(`[pty ${agentId}] onExit error:`, err);
+      Sentry.captureException(err);
     }
   });
 }

@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import { reattachAgent, getLogPath } from './AgentRunner.js';
 import { execFileSync } from 'child_process';
@@ -112,7 +113,7 @@ export function runRecovery(): void {
             try {
               queries.scheduleRepeatJob(job);
               console.log(`[recovery] scheduled next repeat for job "${job.title}" (${job.id})`);
-            } catch (err) { console.error(`[recovery] failed to schedule repeat for job ${job.id}:`, err); }
+            } catch (err) { console.error(`[recovery] failed to schedule repeat for job ${job.id}:`, err); Sentry.captureException(err); }
           }
 
           // If failed, invoke retry policy (independent of repeat scheduling)
@@ -120,7 +121,7 @@ export function runRecovery(): void {
             try {
               const freshJob = queries.getJobById(agent.job_id);
               if (freshJob) handleRetry(freshJob, agent.id);
-            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); }
+            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); Sentry.captureException(err); }
           }
 
           if (finalStatus === 'done') codexRecovered++;
@@ -159,6 +160,7 @@ export function runRecovery(): void {
                 console.log(`[recovery] scheduled next repeat for job "${job.title}" (${job.id})`);
               } catch (err) {
                 console.error(`[recovery] failed to schedule repeat for job ${job.id}:`, err);
+                Sentry.captureException(err);
               }
             }
 
@@ -166,7 +168,7 @@ export function runRecovery(): void {
             try {
               const freshJob = queries.getJobById(agent.job_id);
               if (freshJob) handleRetry(freshJob, agent.id);
-            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); }
+            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); Sentry.captureException(err); }
 
             tmuxFailed++;
           } else {
@@ -219,8 +221,8 @@ export function runRecovery(): void {
           if (finalStatus === 'done') {
             const doneJob = queries.getJobById(agent.job_id);
             if (doneJob) {
-              try { debateOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] debateOnJobCompleted error for agent ${agent.id}:`, err); }
-              try { workflowOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] workflowOnJobCompleted error for agent ${agent.id}:`, err); }
+              try { debateOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] debateOnJobCompleted error for agent ${agent.id}:`, err); Sentry.captureException(err); }
+              try { workflowOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] workflowOnJobCompleted error for agent ${agent.id}:`, err); Sentry.captureException(err); }
             }
             tmuxRecovered++;
           } else {
@@ -229,14 +231,14 @@ export function runRecovery(): void {
               try {
                 queries.scheduleRepeatJob(job);
                 console.log(`[recovery] scheduled next repeat for job "${job.title}" (${job.id})`);
-              } catch (err) { console.error(`[recovery] failed to schedule repeat for job ${job.id}:`, err); }
+              } catch (err) { console.error(`[recovery] failed to schedule repeat for job ${job.id}:`, err); Sentry.captureException(err); }
             }
 
             // Invoke retry policy for the failed job
             try {
               const freshJob = queries.getJobById(agent.job_id);
               if (freshJob) handleRetry(freshJob, agent.id);
-            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); }
+            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); Sentry.captureException(err); }
 
             tmuxFailed++;
           }
@@ -264,7 +266,7 @@ export function startWorkflowGapDetector(): void {
   if (_gapDetectorTimer) return;
   // Run every 60 seconds so stuck workflows recover within a minute of getting stuck.
   _gapDetectorTimer = setInterval(() => {
-    try { _recoverStuckWorkflows(); } catch (err) { console.error('[workflow-gap] tick error:', err); }
+    try { _recoverStuckWorkflows(); } catch (err) { console.error('[workflow-gap] tick error:', err); Sentry.captureException(err); }
   }, 60_000);
 }
 
@@ -299,6 +301,6 @@ function _recoverStuckWorkflows(): void {
 
     if (hasNext) continue;
     console.log(`[recovery] workflow ${workflow.id} stuck — ${workflow.current_phase} C${jobCycle} done but no next phase; re-firing onJobCompleted`);
-    try { workflowOnJobCompleted(phaseJob, { force: true }); } catch (err) { console.error(`[recovery] stuck workflow re-fire error:`, err); }
+    try { workflowOnJobCompleted(phaseJob, { force: true }); } catch (err) { console.error(`[recovery] stuck workflow re-fire error:`, err); Sentry.captureException(err); }
   }
 }
