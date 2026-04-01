@@ -1,3 +1,4 @@
+import { Sentry } from '../instrument.js';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { McpServer as MCP, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -198,6 +199,7 @@ export function createMcpApp(): express.Application {
       await transport!.handleRequest(req, res, req.body);
     } catch (err) {
       console.error(`[mcp] POST error (agent ${req.params.agentId}):`, err);
+      Sentry.captureException(err, { tags: { component: 'mcp', agentId: req.params.agentId } });
       if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
     }
   });
@@ -215,6 +217,7 @@ export function createMcpApp(): express.Application {
       await transport.handleRequest(req, res);
     } catch (err) {
       console.error(`[mcp] GET error (agent ${req.params.agentId}):`, err);
+      Sentry.captureException(err, { tags: { component: 'mcp', agentId: req.params.agentId } });
       if (!res.headersSent) res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -232,6 +235,7 @@ export function createMcpApp(): express.Application {
       await transport.handleRequest(req, res);
     } catch (err) {
       console.error(`[mcp] DELETE error (agent ${req.params.agentId}):`, err);
+      Sentry.captureException(err, { tags: { component: 'mcp', agentId: req.params.agentId } });
       if (!res.headersSent) res.status(500).json({ error: 'Internal error' });
     }
   });

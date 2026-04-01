@@ -1,3 +1,5 @@
+// Sentry must be imported first to instrument all subsequent modules
+import { Sentry } from './instrument.js';
 import { createServer } from 'http';
 import express from 'express';
 import compression from 'compression';
@@ -30,6 +32,7 @@ const DB_PATH = process.env.DB_PATH ?? path.join(process.cwd(), 'data', 'orchest
 // dispatching agents whose socket events go nowhere.
 process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
   console.error('[server] Uncaught exception:', err);
+  Sentry.captureException(err);
   if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
     console.error('[server] Fatal: port already in use — exiting to avoid zombie process');
     process.exit(1);
@@ -37,6 +40,7 @@ process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[server] Unhandled rejection:', reason);
+  Sentry.captureException(reason);
 });
 
 async function main() {
@@ -58,6 +62,9 @@ async function main() {
 
   // REST API
   app.use('/api', apiRouter);
+
+  // Sentry request handler — adds request context to all events
+  Sentry.setupExpressErrorHandler(app);
 
   // Serve built client in production
   const clientDist = path.join(__dirname, '../../dist/client');
@@ -188,6 +195,9 @@ async function main() {
 
     // Close the database
     closeDb();
+
+    // Flush Sentry events before exit
+    await Sentry.flush(2000).catch(() => {});
 
     clearTimeout(watchdog);
     console.log('[server] Shutdown complete');
