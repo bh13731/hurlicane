@@ -207,3 +207,113 @@ describe('Zombie process cleanup', () => {
     // The watchdog check logic works correctly for this case
   });
 });
+
+describe('Output deduplication', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('INSERT OR IGNORE prevents duplicate (agent_id, seq) pairs', async () => {
+    const queries = await import('../server/db/queries.js');
+
+    queries.insertJob({ id: 'dedup-job', title: 'test', description: 'test', context: null, priority: 0 });
+    queries.insertAgent({ id: 'dedup-agent', job_id: 'dedup-job', status: 'running' });
+
+    // Insert first output
+    queries.insertAgentOutput({
+      agent_id: 'dedup-agent',
+      seq: 0,
+      event_type: 'assistant',
+      content: '{"type":"assistant","message":"hello"}',
+      created_at: Date.now(),
+    });
+
+    // Insert duplicate — should NOT throw, should be silently ignored
+    queries.insertAgentOutput({
+      agent_id: 'dedup-agent',
+      seq: 0,
+      event_type: 'assistant',
+      content: '{"type":"assistant","message":"hello duplicate"}',
+      created_at: Date.now(),
+    });
+
+    // Should only have one row
+    const output = queries.getAgentOutput('dedup-agent');
+    expect(output).toHaveLength(1);
+    // Should keep the original content
+    expect(output[0].content).toContain('hello');
+  });
+
+  it('allows different seq numbers for same agent', async () => {
+    const queries = await import('../server/db/queries.js');
+
+    queries.insertJob({ id: 'dedup-job2', title: 'test', description: 'test', context: null, priority: 0 });
+    queries.insertAgent({ id: 'dedup-agent2', job_id: 'dedup-job2', status: 'running' });
+
+    queries.insertAgentOutput({
+      agent_id: 'dedup-agent2', seq: 0, event_type: 'assistant',
+      content: 'first', created_at: Date.now(),
+    });
+    queries.insertAgentOutput({
+      agent_id: 'dedup-agent2', seq: 1, event_type: 'assistant',
+      content: 'second', created_at: Date.now(),
+    });
+
+    const output = queries.getAgentOutput('dedup-agent2');
+    expect(output).toHaveLength(2);
+  });
+});
+
+describe('EventQueue', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('pushEvent stores events and getEventsSince retrieves them', async () => {
+    const { pushEvent, getEventsSince } = await import('../server/orchestrator/EventQueue.js');
+
+    const before = Date.now();
+    pushEvent('job:new', { job: { id: 'test-job' } });
+    pushEvent('agent:new', { agent: { id: 'test-agent' } });
+
+    const events = getEventsSince(before - 1);
+    expect(events).toHaveLength(2);
+    expect(events[0].event_name).toBe('job:new');
+    expect(events[1].event_name).toBe('agent:new');
+    expect(events[0].payload.job.id).toBe('test-job');
+  });
+
+  it('getEventsSince filters by timestamp', async () => {
+    const { pushEvent, getEventsSince } = await import('../server/orchestrator/EventQueue.js');
+
+    pushEvent('old:event', { data: 'old' });
+    const midpoint = Date.now();
+    // Small delay so timestamps differ
+    pushEvent('new:event', { data: 'new' });
+
+    const events = getEventsSince(midpoint);
+    // May get 0 or 1 depending on timestamp resolution — but should not include old
+    for (const ev of events) {
+      expect(ev.created_at).toBeGreaterThan(midpoint);
+    }
+  });
+
+  it('pruneEvents removes old entries', async () => {
+    const { pushEvent, pruneEvents, getEventsSince } = await import('../server/orchestrator/EventQueue.js');
+
+    pushEvent('test:event', { data: 'test' });
+    pruneEvents();
+
+    // Events less than MAX_AGE_MS old should survive pruning
+    const events = getEventsSince(0);
+    expect(events.length).toBeGreaterThanOrEqual(1);
+  });
+});

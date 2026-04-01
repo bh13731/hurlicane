@@ -722,15 +722,20 @@ function extractSearchText(content: string): string {
 
 export function insertAgentOutput(output: Omit<AgentOutput, 'id'>): void {
   const db = getDb();
+  // INSERT OR IGNORE for idempotency — if recovery replays a log file we may
+  // encounter duplicate (agent_id, seq) pairs. The unique index on
+  // (agent_id, seq) prevents double-inserts without erroring.
   const result = db.prepare(`
-    INSERT INTO agent_output (agent_id, seq, event_type, content, created_at)
+    INSERT OR IGNORE INTO agent_output (agent_id, seq, event_type, content, created_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(output.agent_id, output.seq, output.event_type, output.content, output.created_at);
 
-  // Index in FTS table (skip empty text)
-  const text = extractSearchText(output.content);
-  if (text.trim()) {
-    db.prepare('INSERT INTO output_fts(rowid, text_content, agent_id) VALUES (?, ?, ?)').run(result.lastInsertRowid, text, output.agent_id);
+  // Only index in FTS if a row was actually inserted (changes > 0 means not a duplicate)
+  if (result.changes > 0) {
+    const text = extractSearchText(output.content);
+    if (text.trim()) {
+      db.prepare('INSERT INTO output_fts(rowid, text_content, agent_id) VALUES (?, ?, ?)').run(result.lastInsertRowid, text, output.agent_id);
+    }
   }
 }
 

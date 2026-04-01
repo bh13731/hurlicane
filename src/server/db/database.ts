@@ -463,6 +463,20 @@ export function initDb(dbPath: string): DatabaseSync {
     db.exec('ALTER TABLE workflows ADD COLUMN pr_url TEXT');
   }
 
+  // ── Output deduplication: unique index on (agent_id, seq) ──────────────────
+  // Allows INSERT OR IGNORE to safely de-duplicate replay of log files during
+  // recovery. The old non-unique idx_output_agent index is superseded.
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_output_agent_seq ON agent_output(agent_id, seq)');
+
+  // ── Periodic WAL checkpoint ────────────────────────────────────────────────
+  // In WAL mode, the WAL file can grow unbounded if no checkpoints run.
+  // Run a passive checkpoint on init to truncate any WAL growth from the
+  // previous session, and set auto_checkpoint to a reasonable page count.
+  try {
+    db.exec('PRAGMA wal_checkpoint(PASSIVE)');
+    db.exec('PRAGMA wal_autocheckpoint = 1000'); // checkpoint every 1000 pages (~4MB)
+  } catch { /* WAL checkpoint may fail if DB is freshly created */ }
+
   // ── Performance indexes ────────────────────────────────────────────────────
   db.exec('CREATE INDEX IF NOT EXISTS idx_agents_job_id ON agents(job_id)');
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_context_eye ON jobs(status) WHERE json_extract(context, '$.eye') = 1");

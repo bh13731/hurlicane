@@ -1,6 +1,7 @@
 import { Server as HttpServer } from 'http';
 import { Server as SocketIoServer } from 'socket.io';
 import type { ServerToClientEvents, ClientToServerEvents, AgentWithJob, Job, Question, FileLock, AgentOutput, QueueSnapshot, Debate, AgentWarning, Discussion, DiscussionMessage, Proposal, ProposalMessage, Workflow, Pr, PrReview, PrReviewMessage } from '../../shared/types.js';
+import { pushEvent } from '../orchestrator/EventQueue.js';
 
 let _io: SocketIoServer<ClientToServerEvents, ServerToClientEvents> | null = null;
 
@@ -30,11 +31,15 @@ export function emitSnapshot(snapshot: QueueSnapshot): void {
 }
 
 export function emitAgentNew(agent: AgentWithJob): void {
-  getIo().emit('agent:new', { agent });
+  const payload = { agent };
+  getIo().emit('agent:new', payload);
+  pushEvent('agent:new', payload);
 }
 
 export function emitAgentUpdate(agent: AgentWithJob): void {
-  getIo().emit('agent:update', { agent });
+  const payload = { agent };
+  getIo().emit('agent:update', payload);
+  pushEvent('agent:update', payload);
 }
 
 export function emitAgentOutput(agentId: string, line: AgentOutput): void {
@@ -50,11 +55,15 @@ export function emitQuestionAnswered(question: Question): void {
 }
 
 export function emitLockAcquired(lock: FileLock): void {
-  getIo().emit('lock:acquired', { lock });
+  const payload = { lock };
+  getIo().emit('lock:acquired', payload);
+  pushEvent('lock:acquired', payload);
 }
 
 export function emitLockReleased(lockId: string, filePath: string): void {
-  getIo().emit('lock:released', { lock_id: lockId, file_path: filePath });
+  const payload = { lock_id: lockId, file_path: filePath };
+  getIo().emit('lock:released', payload);
+  pushEvent('lock:released', payload);
 }
 
 export function emitProjectNew(project: import('../../shared/types.js').Project): void {
@@ -62,11 +71,15 @@ export function emitProjectNew(project: import('../../shared/types.js').Project)
 }
 
 export function emitJobNew(job: Job): void {
-  getIo().emit('job:new', { job });
+  const payload = { job };
+  getIo().emit('job:new', payload);
+  pushEvent('job:new', payload);
 }
 
 export function emitJobUpdate(job: Job): void {
-  getIo().emit('job:update', { job });
+  const payload = { job };
+  getIo().emit('job:update', payload);
+  pushEvent('job:update', payload);
 }
 
 export function emitPtyData(agentId: string, data: string): void {
@@ -86,11 +99,15 @@ export function emitDebateUpdate(debate: Debate): void {
 }
 
 export function emitWorkflowNew(workflow: Workflow): void {
-  getIo().emit('workflow:new', { workflow });
+  const payload = { workflow };
+  getIo().emit('workflow:new', payload);
+  pushEvent('workflow:new', payload);
 }
 
 export function emitWorkflowUpdate(workflow: Workflow): void {
-  getIo().emit('workflow:update', { workflow });
+  const payload = { workflow };
+  getIo().emit('workflow:update', payload);
+  pushEvent('workflow:update', payload);
 }
 
 export function emitWarningNew(warning: AgentWarning): void {
