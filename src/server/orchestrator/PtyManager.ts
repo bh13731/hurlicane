@@ -12,7 +12,7 @@ import { isCodexModel, codexModelName, isAutoExitJob } from '../../shared/types.
 
 const CLAUDE = process.env.CLAUDE_BIN ?? 'claude';
 const CODEX = process.env.CODEX_BIN ?? 'codex';
-const MCP_PORT = process.env.MCP_PORT ?? '3001';
+const MCP_PORT = process.env.MCP_PORT ?? '3947';
 const SCRIPTS_DIR = path.join(process.cwd(), 'data', 'agent-scripts');
 const PTY_LOG_DIR = path.join(process.cwd(), 'data', 'agent-logs');
 

@@ -86,7 +86,7 @@ Then open http://localhost:3000.
 
 ## Architecture
 
-- Server: Express + Socket.io on :3000; MCP SSE server on :3001
+- Server: Express + Socket.io on :3000; MCP SSE server on :3947
 - Client: React 18 + Vite
 - Database: SQLite via `node:sqlite` experimental (auto-created at `data/orchestrator.db`)
 - Agents: spawned as `claude --print --output-format stream-json --verbose` subprocesses

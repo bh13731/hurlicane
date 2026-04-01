@@ -560,7 +560,7 @@ Click the settings icon in the header to open the Settings modal. Currently conf
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3000` | HTTP + UI server port |
-| `MCP_PORT` | `3001` | MCP tool server port (agents connect here) |
+| `MCP_PORT` | `3947` | MCP tool server port (agents connect here) |
 | `DB_PATH` | `data/orchestrator.db` | SQLite database location |
 | `CLAUDE_BIN` | `$(which claude)` | Path to the Claude Code CLI |
 | `ORCHESTRATOR_AGENT_ID` | *(set automatically)* | Agent identity; used by the lock hook |

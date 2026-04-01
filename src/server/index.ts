@@ -23,7 +23,7 @@ import * as queries from './db/queries.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT ?? 3000);
-const MCP_PORT = Number(process.env.MCP_PORT ?? 3001);
+const MCP_PORT = Number(process.env.MCP_PORT ?? 3947);
 const DB_PATH = process.env.DB_PATH ?? path.join(process.cwd(), 'data', 'orchestrator.db');
 
 // ── Global error handlers ────────────────────────────────────────────────────

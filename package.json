@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
-    "server:dev": "NODE_OPTIONS='--experimental-sqlite' tsx watch --ignore './data/**' src/server/index.ts",
+    "server:dev": "NODE_OPTIONS='--experimental-sqlite' tsx watch --env-file=.env --ignore './data/**' src/server/index.ts",
     "client:dev": "vite",
     "build": "tsc -p tsconfig.server.json && vite build",
     "server:start": "node dist/server/index.js",

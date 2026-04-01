@@ -54,7 +54,7 @@ function computeAdaptiveEyeInterval(currentInterval: number): number {
 
 const CLAUDE = process.env.CLAUDE_BIN ?? 'claude';
 const CODEX = process.env.CODEX_BIN ?? 'codex';
-const MCP_PORT = process.env.MCP_PORT ?? '3001';
+const MCP_PORT = process.env.MCP_PORT ?? '3947';
 const LOGS_DIR = path.join(process.cwd(), 'data', 'agent-logs');
 
 const HOOK_SCRIPT = path.resolve(process.cwd(), 'scripts/check-lock-hook.mjs');
