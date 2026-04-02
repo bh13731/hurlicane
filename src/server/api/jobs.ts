@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { spawnInitialRoundJobs } from '../orchestrator/DebateManager.js';
+import { nudgeQueue } from '../orchestrator/WorkQueueManager.js';
 import type { CreateJobRequest, Debate } from '../../shared/types.js';
 
 const router = Router();
@@ -143,6 +144,7 @@ router.post('/', (req, res) => {
   });
 
   socket.emitJobNew(job);
+  nudgeQueue();
   res.status(201).json(job);
 
   // Generate smart title async — don't block the response
@@ -220,6 +222,7 @@ router.post('/:id/run-now', (req, res) => {
   queries.updateJobScheduledAt(job.id, null);
   const updated = queries.getJobById(job.id)!;
   socket.emitJobUpdate(updated);
+  nudgeQueue();
   res.json(updated);
 });
 

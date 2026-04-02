@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import * as queries from '../../db/queries.js';
 import * as socket from '../../socket/SocketManager.js';
 import { isEyeJob } from '../../orchestrator/EyeConfig.js';
+import { nudgeQueue } from '../../orchestrator/WorkQueueManager.js';
 
 export const createJobSchema = z.object({
   description: z.string().describe('Full task description for the new job'),
@@ -92,6 +93,7 @@ export async function createJobHandler(agentId: string, input: z.infer<typeof cr
   });
 
   socket.emitJobNew(job);
+  nudgeQueue();
 
   return JSON.stringify({
     job_id: job.id,

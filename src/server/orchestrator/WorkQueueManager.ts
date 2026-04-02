@@ -22,6 +22,8 @@ let _running = false;
 let _timer: NodeJS.Timeout | null = null;
 // Tracks jobs currently being classified so the next tick doesn't re-pick them
 const _classifying = new Set<string>();
+// Debounce flag for nudgeQueue — prevents queueing multiple microtask ticks
+let _nudgePending = false;
 
 // Queue metrics for health endpoint
 let _totalDispatched = 0;
@@ -38,6 +40,37 @@ export function getQueueMetrics() {
     lastDispatchAt: _lastDispatchAt || null,
   };
 }
+
+/**
+ * Wake the work queue immediately instead of waiting for the next 2s poll tick.
+ * Safe to call from any context — debounced so multiple calls coalesce into a
+ * single tick. The regular poll interval continues as a safety fallback.
+ */
+export function nudgeQueue(): void {
+  if (!_running || _nudgePending) return;
+  _nudgePending = true;
+  Promise.resolve().then(() => {
+    _nudgePending = false;
+    if (_running) tick().catch(console.error);
+  });
+}
+
+/** Exposed for testing — reset module-level state. */
+export function _resetForTest(): void {
+  _classifying.clear();
+  _nudgePending = false;
+}
+
+/** Exposed for testing — runs one full dispatch cycle (temporarily enables _running). */
+export const _tickForTest = async (): Promise<void> => {
+  const wasRunning = _running;
+  _running = true;
+  try {
+    await tick();
+  } finally {
+    _running = wasRunning;
+  }
+};
 
 export function startWorkQueue(): void {
   if (_running) return;
@@ -67,89 +100,95 @@ async function tick(): Promise<void> {
     socket.emitJobUpdate(queries.getJobById(job.id)!);
   }
 
-  const activeAgents = queries.listAgents().filter(a =>
-    a.status === 'starting' || a.status === 'running' || a.status === 'waiting_user'
-  );
+  // Capacity-aware dispatch: keep claiming jobs until concurrency is full or queue is empty.
+  // This replaces the old single-job-per-tick approach, removing up to 2s idle time between
+  // dispatches when multiple jobs are ready (e.g. workflow phase transitions, batch creates).
+  let guardLoops = 0;
+  while (_running && guardLoops++ < 100) {
+    const activeAgents = queries.listAgents().filter(a =>
+      a.status === 'starting' || a.status === 'running' || a.status === 'waiting_user'
+    );
 
-  // Count classifying jobs against the concurrency limit so we don't over-dispatch
-  if (activeAgents.length + _classifying.size >= _maxConcurrent) return;
+    // Count classifying jobs against the concurrency limit so we don't over-dispatch
+    if (activeAgents.length + _classifying.size >= _maxConcurrent) break;
 
-  const job = queries.getNextQueuedJob();
-  if (!job || _classifying.has(job.id)) return;
+    const job = queries.getNextQueuedJob();
+    if (!job || _classifying.has(job.id)) break;
 
-  // Double-dispatch guard: verify the job is still queued before claiming it.
-  // A rapid succession of ticks could both see the same job as "queued" before
-  // either has a chance to mark it as "assigned".
-  const fresh = queries.getJobById(job.id);
-  if (!fresh || fresh.status !== 'queued') return;
+    // Double-dispatch guard: verify the job is still queued before claiming it.
+    // A rapid succession of ticks could both see the same job as "queued" before
+    // either has a chance to mark it as "assigned".
+    const fresh = queries.getJobById(job.id);
+    if (!fresh || fresh.status !== 'queued') continue;
 
-  // Mark assigned immediately to prevent double-dispatch across ticks
-  queries.updateJobStatus(job.id, 'assigned');
-  socket.emitJobUpdate(queries.getJobById(job.id)!);
-  _classifying.add(job.id);
-
-  try {
-    // Classify & resolve model (no-op if user already picked one)
-    const model = await resolveModel(job);
-    if (model == null) {
-      console.warn(`[queue] no dispatchable model available for "${job.title}" — cooling job for ${Math.round(PROVIDER_PAUSE_RETRY_MS / 1000)}s`);
-      queries.updateJobStatus(job.id, 'queued');
-      queries.updateJobScheduledAt(job.id, Date.now() + PROVIDER_PAUSE_RETRY_MS);
-      socket.emitJobUpdate(queries.getJobById(job.id)!);
-      return;
-    }
-
-    // Re-fetch so the agent sees the now-resolved model field
-    const readyJob = queries.getJobById(job.id)!;
-
-    const agentId = randomUUID();
-    queries.insertAgent({ id: agentId, job_id: job.id, status: 'starting', parent_agent_id: (readyJob as any).created_by_agent_id ?? undefined });
-    socket.emitAgentNew(queries.getAgentWithJob(agentId)!);
-
-    // If worktree requested, create one and override the working directory
-    const dispatchJob = readyJob.use_worktree
-      ? createWorktree(readyJob, agentId)
-      : readyJob;
-
-    // Create a git checkpoint tag before the agent starts, so mid-edit crashes
-    // can be recovered by resetting to this tag. Lightweight and cheap.
-    const dispatchWorkDir = (dispatchJob as any).work_dir ?? process.cwd();
-    try {
-      const isGitRepo = fs.existsSync(path.join(dispatchWorkDir, '.git')) ||
-        (() => { try { execSync('git rev-parse --git-dir', { cwd: dispatchWorkDir, stdio: 'pipe', timeout: 3000 }); return true; } catch { return false; } })();
-      if (isGitRepo) {
-        const tagName = `orchestrator/checkpoint/${agentId.slice(0, 8)}`;
-        execSync(`git tag -f ${tagName}`, { cwd: dispatchWorkDir, stdio: 'pipe', timeout: 5000 });
-      }
-    } catch (err) {
-      // Non-fatal — checkpoint is best-effort
-      console.warn(`[queue] git checkpoint failed for agent ${agentId}:`, err);
-    }
-
-    // Codex batch agents still use runAgent (stream-json path); all others use tmux.
-    // Debate-stage jobs use --print inside tmux (piped through tee to .ndjson for UI display)
-    // and exit naturally — no finish_job needed.
-    const useCodexBatch = isCodexModel((dispatchJob as any).model ?? null) && !dispatchJob.is_interactive;
-    const isDebateStage = isAutoExitJob(dispatchJob as any);
-    const autoFinish = !dispatchJob.is_interactive && !isDebateStage;
-    const resumeSessionId = queries.getNote(`job-resume:${job.id}`)?.value ?? undefined;
-    _totalDispatched++;
-    _lastDispatchAt = Date.now();
-    console.log(`[queue] dispatching "${job.title}" → agent ${agentId} (model: ${model}, interactive: ${!!readyJob.is_interactive}${readyJob.use_worktree ? ', worktree' : ''}${useCodexBatch ? ', codex-batch' : ''}${isDebateStage ? ', auto-exit' : ''})`);
-    if (useCodexBatch) {
-      runAgent({ agentId, job: dispatchJob, resumeSessionId });
-    } else {
-      startInteractiveAgent({ agentId, job: dispatchJob, autoFinish, ...(resumeSessionId ? { resumeSessionId } : {}) });
-    }
-    if (resumeSessionId) queries.upsertNote(`job-resume:${job.id}`, '', null);
-  } catch (err: any) {
-    _totalFailed++;
-    console.error(`[queue] dispatch failed for job ${job.id}:`, err);
-    Sentry.captureException(err);
-    queries.updateJobStatus(job.id, 'failed');
+    // Mark assigned immediately to prevent double-dispatch across ticks
+    queries.updateJobStatus(job.id, 'assigned');
     socket.emitJobUpdate(queries.getJobById(job.id)!);
-  } finally {
-    _classifying.delete(job.id);
+    _classifying.add(job.id);
+
+    try {
+      // Classify & resolve model (no-op if user already picked one)
+      const model = await resolveModel(job);
+      if (model == null) {
+        console.warn(`[queue] no dispatchable model available for "${job.title}" — cooling job for ${Math.round(PROVIDER_PAUSE_RETRY_MS / 1000)}s`);
+        queries.updateJobStatus(job.id, 'queued');
+        queries.updateJobScheduledAt(job.id, Date.now() + PROVIDER_PAUSE_RETRY_MS);
+        socket.emitJobUpdate(queries.getJobById(job.id)!);
+        continue;
+      }
+
+      // Re-fetch so the agent sees the now-resolved model field
+      const readyJob = queries.getJobById(job.id)!;
+
+      const agentId = randomUUID();
+      queries.insertAgent({ id: agentId, job_id: job.id, status: 'starting', parent_agent_id: (readyJob as any).created_by_agent_id ?? undefined });
+      socket.emitAgentNew(queries.getAgentWithJob(agentId)!);
+
+      // If worktree requested, create one and override the working directory
+      const dispatchJob = readyJob.use_worktree
+        ? createWorktree(readyJob, agentId)
+        : readyJob;
+
+      // Create a git checkpoint tag before the agent starts, so mid-edit crashes
+      // can be recovered by resetting to this tag. Lightweight and cheap.
+      const dispatchWorkDir = (dispatchJob as any).work_dir ?? process.cwd();
+      try {
+        const isGitRepo = fs.existsSync(path.join(dispatchWorkDir, '.git')) ||
+          (() => { try { execSync('git rev-parse --git-dir', { cwd: dispatchWorkDir, stdio: 'pipe', timeout: 3000 }); return true; } catch { return false; } })();
+        if (isGitRepo) {
+          const tagName = `orchestrator/checkpoint/${agentId.slice(0, 8)}`;
+          execSync(`git tag -f ${tagName}`, { cwd: dispatchWorkDir, stdio: 'pipe', timeout: 5000 });
+        }
+      } catch (err) {
+        // Non-fatal — checkpoint is best-effort
+        console.warn(`[queue] git checkpoint failed for agent ${agentId}:`, err);
+      }
+
+      // Codex batch agents still use runAgent (stream-json path); all others use tmux.
+      // Debate-stage jobs use --print inside tmux (piped through tee to .ndjson for UI display)
+      // and exit naturally — no finish_job needed.
+      const useCodexBatch = isCodexModel((dispatchJob as any).model ?? null) && !dispatchJob.is_interactive;
+      const isDebateStage = isAutoExitJob(dispatchJob as any);
+      const autoFinish = !dispatchJob.is_interactive && !isDebateStage;
+      const resumeSessionId = queries.getNote(`job-resume:${job.id}`)?.value ?? undefined;
+      _totalDispatched++;
+      _lastDispatchAt = Date.now();
+      console.log(`[queue] dispatching "${job.title}" → agent ${agentId} (model: ${model}, interactive: ${!!readyJob.is_interactive}${readyJob.use_worktree ? ', worktree' : ''}${useCodexBatch ? ', codex-batch' : ''}${isDebateStage ? ', auto-exit' : ''})`);
+      if (useCodexBatch) {
+        runAgent({ agentId, job: dispatchJob, resumeSessionId });
+      } else {
+        startInteractiveAgent({ agentId, job: dispatchJob, autoFinish, ...(resumeSessionId ? { resumeSessionId } : {}) });
+      }
+      if (resumeSessionId) queries.upsertNote(`job-resume:${job.id}`, '', null);
+    } catch (err: any) {
+      _totalFailed++;
+      console.error(`[queue] dispatch failed for job ${job.id}:`, err);
+      Sentry.captureException(err);
+      queries.updateJobStatus(job.id, 'failed');
+      socket.emitJobUpdate(queries.getJobById(job.id)!);
+    } finally {
+      _classifying.delete(job.id);
+    }
   }
 }
 
