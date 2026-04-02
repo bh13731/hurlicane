@@ -82,14 +82,21 @@ router.post('/:id/cancel', (req, res) => {
   res.json(updated);
 });
 
-// POST /api/workflows/:id/resume — resume a blocked workflow
-// Accepts optional body: { phase?: 'assess' | 'review' | 'implement', cycle?: number }
-// to restart from a specific phase instead of the one that failed.
+// POST /api/workflows/:id/resume — resume a blocked or stuck workflow
+// Accepts optional body: { phase?: 'assess' | 'review' | 'implement', cycle?: number, force?: boolean }
+// force=true allows resuming a 'running' workflow that has no active jobs (orphaned state).
 router.post('/:id/resume', (req, res) => {
   const workflow = queries.getWorkflowById(req.params.id);
   if (!workflow) { res.status(404).json({ error: 'not found' }); return; }
-  if (workflow.status !== 'blocked') {
-    res.status(400).json({ error: `Workflow is ${workflow.status}, can only resume blocked workflows` });
+
+  const force = req.body?.force === true;
+
+  if (workflow.status === 'running' && force) {
+    // Force-resume: mark as blocked first so resumeWorkflow accepts it, then emit update
+    const blocked = queries.updateWorkflow(workflow.id, { status: 'blocked' });
+    if (blocked) socket.emitWorkflowUpdate(blocked);
+  } else if (workflow.status !== 'blocked') {
+    res.status(400).json({ error: `Workflow is ${workflow.status}, can only resume blocked workflows (use force=true for stuck running workflows)` });
     return;
   }
 
