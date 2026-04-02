@@ -482,6 +482,45 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     expect(fallbackJob!.title).toContain('(fallback)');
   });
 
+  it('alternate-provider fallback returning null blocks workflow with descriptive reason', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { getAlternateProviderModel } = await import('../server/orchestrator/ModelClassifier.js');
+    const { upsertNote, getWorkflowById } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'review',
+      current_cycle: 2,
+      reviewer_model: 'codex',
+    });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+    // Simulate 3 prior retries exhausted
+    upsertNote(`workflow/${workflow.id}/cli-retry/review/cycle-2`, '3', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 2,
+      workflow_phase: 'review',
+      status: 'failed',
+      model: 'codex',
+    });
+
+    vi.mocked(classifyJobFailure).mockReturnValue('codex_cli_crash');
+    // Override alternate provider to return null — no cross-provider fallback available
+    vi.mocked(getAlternateProviderModel).mockReturnValueOnce(null);
+
+    onJobCompleted(job);
+
+    const updated = getWorkflowById(workflow.id)!;
+    // Should block — no alternate provider available after exhausting same-model retries
+    expect(updated.status).toBe('blocked');
+    expect(updated.blocked_reason).toBeTruthy();
+    expect(updated.blocked_reason).toContain('codex_cli_crash');
+  });
+
   it('max_cycles reached with remaining milestones blocks instead of completing', async () => {
     const socket = await import('../server/socket/SocketManager.js');
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
