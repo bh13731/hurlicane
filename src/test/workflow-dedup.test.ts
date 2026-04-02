@@ -1357,4 +1357,79 @@ describe('WorkflowManager: worktree branch verification (M5)', () => {
     expect(updated.blocked_reason).toContain('review');
     expect(updated.blocked_reason).toContain('cannot checkout');
   });
+
+  it('resumeWorkflow corrects drifted worktree branch before spawning job', async () => {
+    const socket = await import('../server/socket/SocketManager.js');
+    const { resumeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById, updateWorkflow } = await import('../server/db/queries.js');
+    const { execSync } = await import('child_process');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'blocked',
+      current_phase: 'implement',
+      current_cycle: 2,
+    });
+    updateWorkflow(workflow.id, {
+      worktree_path: '/tmp/test-wt',
+      worktree_branch: 'workflow/test-branch',
+    } as any);
+    upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1\n- [x] M2', null);
+    upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    // Mock: rev-parse returns wrong branch, checkout succeeds
+    vi.mocked(execSync)
+      .mockReturnValueOnce(Buffer.from('main\n'))   // rev-parse → drifted
+      .mockReturnValueOnce(Buffer.from(''));         // checkout → ok
+
+    const job = resumeWorkflow(workflow);
+
+    // Branch was corrected, job should have been created
+    expect(job).toBeDefined();
+    expect(job.workflow_phase).toBe('implement');
+    const emitJobNewCalls = vi.mocked(socket.emitJobNew).mock.calls;
+    expect(emitJobNewCalls.length).toBeGreaterThanOrEqual(1);
+
+    // execSync should have been called for rev-parse then checkout
+    expect(execSync).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(execSync).mock.calls[0][0]).toContain('rev-parse --abbrev-ref HEAD');
+    expect(vi.mocked(execSync).mock.calls[1][0]).toContain('git checkout');
+  });
+
+  it('resumeWorkflow throws when worktree checkout fails', async () => {
+    const { resumeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, updateWorkflow } = await import('../server/db/queries.js');
+    const { execSync } = await import('child_process');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'blocked',
+      current_phase: 'review',
+      current_cycle: 1,
+    });
+    updateWorkflow(workflow.id, {
+      worktree_path: '/tmp/test-wt',
+      worktree_branch: 'workflow/test-branch',
+    } as any);
+    upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1\n- [x] M2', null);
+    upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    // Mock: rev-parse returns wrong branch, checkout throws
+    vi.mocked(execSync)
+      .mockReturnValueOnce(Buffer.from('main\n'))
+      .mockImplementationOnce(() => { throw new Error('checkout conflict'); });
+
+    let thrown: Error | undefined;
+    try {
+      resumeWorkflow(workflow);
+    } catch (e: any) {
+      thrown = e;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown!.message).toContain('Worktree branch verification failed');
+    expect(thrown!.message).toContain('checkout conflict');
+    expect(thrown!.message).toContain('review');
+  });
 });

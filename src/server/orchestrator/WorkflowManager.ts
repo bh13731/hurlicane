@@ -634,6 +634,14 @@ export function resumeWorkflow(
 
   model = getWorkflowFallbackModel(updated, phase as WorkflowPhase, model) ?? model;
 
+  // Verify worktree branch hasn't drifted while workflow was blocked
+  if (updated.worktree_path && updated.worktree_branch) {
+    const branchCheck = ensureWorktreeBranch(updated.worktree_path, updated.worktree_branch);
+    if (!branchCheck.ok) {
+      throw new Error(`Worktree branch verification failed before resuming ${phase}: ${branchCheck.error}`);
+    }
+  }
+
   const job = queries.insertJob({
     id: randomUUID(),
     title: `[Workflow C${cycle}] ${phase.charAt(0).toUpperCase() + phase.slice(1)} (resumed)`,
