@@ -10,6 +10,7 @@ import { releaseFilesHandler, releaseFilesSchema } from './tools/releaseFiles.js
 import { checkFileLocksHandler, checkFileLocksSchema } from './tools/checkFileLocks.js';
 import { reportStatusHandler, reportStatusSchema } from './tools/reportStatus.js';
 import { createJobHandler, createJobSchema } from './tools/createJob.js';
+import { createAutonomousAgentRunHandler, createAutonomousAgentRunSchema } from './tools/createAutonomousAgentRun.js';
 import { waitForJobsHandler, waitForJobsSchema, activeWaits, abortAgentWait } from './tools/waitForJobs.js';
 import { writeNoteHandler, writeNoteSchema, readNoteHandler, readNoteSchema, listNotesHandler, listNotesSchema } from './tools/notes.js';
 import { watchNotesHandler, watchNotesSchema } from './tools/watchNotes.js';
@@ -336,6 +337,34 @@ function buildMcpServer(agentId: string): MCP {
     },
     safeTool('create_job', agentId, async (input) => {
       const result = await createJobHandler(agentId, input as any);
+      return { content: [{ type: 'text', text: result }] };
+    })
+  );
+
+  server.tool(
+    'create_autonomous_agent_run',
+    'Create a structured autonomous agent run with assess, review, and implement phases. Use this instead of create_job when the work needs iterative planning, milestone tracking, shared worktree continuity, or automatic PR creation.',
+    {
+      task: createAutonomousAgentRunSchema.shape.task,
+      title: createAutonomousAgentRunSchema.shape.title,
+      workDir: createAutonomousAgentRunSchema.shape.workDir,
+      implementerModel: createAutonomousAgentRunSchema.shape.implementerModel,
+      reviewerModel: createAutonomousAgentRunSchema.shape.reviewerModel,
+      maxCycles: createAutonomousAgentRunSchema.shape.maxCycles,
+      maxTurnsAssess: createAutonomousAgentRunSchema.shape.maxTurnsAssess,
+      maxTurnsReview: createAutonomousAgentRunSchema.shape.maxTurnsReview,
+      maxTurnsImplement: createAutonomousAgentRunSchema.shape.maxTurnsImplement,
+      stopModeAssess: createAutonomousAgentRunSchema.shape.stopModeAssess,
+      stopValueAssess: createAutonomousAgentRunSchema.shape.stopValueAssess,
+      stopModeReview: createAutonomousAgentRunSchema.shape.stopModeReview,
+      stopValueReview: createAutonomousAgentRunSchema.shape.stopValueReview,
+      stopModeImplement: createAutonomousAgentRunSchema.shape.stopModeImplement,
+      stopValueImplement: createAutonomousAgentRunSchema.shape.stopValueImplement,
+      templateId: createAutonomousAgentRunSchema.shape.templateId,
+      useWorktree: createAutonomousAgentRunSchema.shape.useWorktree,
+    },
+    safeTool('create_autonomous_agent_run', agentId, async (input) => {
+      const result = await createAutonomousAgentRunHandler(agentId, input as any);
       return { content: [{ type: 'text', text: result }] };
     })
   );
