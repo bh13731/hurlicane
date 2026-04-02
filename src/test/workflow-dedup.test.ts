@@ -706,6 +706,32 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     expect(newJobs[0][0].workflow_phase).toBe('review');
   });
 
+  it('resumeWorkflow resets zero-progress counter', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { resumeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'blocked',
+      current_phase: 'implement',
+      current_cycle: 3,
+    });
+
+    // Set up a plan and contract so resumeWorkflow can build prompts
+    queries.upsertNote(`workflow/${workflow.id}/plan`, '- [ ] milestone 1\n- [x] milestone 2', null);
+    queries.upsertNote(`workflow/${workflow.id}/contract`, 'test contract', null);
+
+    // Simulate zero-progress counter at 1 (one away from re-blocking)
+    queries.upsertNote(`workflow/${workflow.id}/zero-progress-count`, '1', null);
+
+    resumeWorkflow(workflow);
+
+    // Zero-progress counter should be reset to 0
+    const zpNote = queries.getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('0');
+  });
+
   it('review phase missing plan blocks with blocked_reason', async () => {
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
     const { getWorkflowById, getJobsForWorkflow } = await import('../server/db/queries.js');

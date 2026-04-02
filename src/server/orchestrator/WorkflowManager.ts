@@ -542,6 +542,8 @@ export function resumeWorkflow(
   }
 
   updateAndEmit(workflow.id, { status: 'running', blocked_reason: null });
+  // Reset zero-progress counter so resumed workflows get a fresh budget
+  queries.upsertNote(`workflow/${workflow.id}/zero-progress-count`, '0', null);
   const updated = queries.getWorkflowById(workflow.id)!;
 
   // Use target phase/cycle if provided, otherwise resume the blocked phase
