@@ -197,6 +197,34 @@ function _onJobCompleted(job: Job): void {
         console.log(`[workflow ${workflow.id}] reached max cycles (${updated.max_cycles}) with ${milestones.done}/${milestones.total} milestones — marking blocked (not complete)`);
         updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'idle' as WorkflowPhase, blocked_reason: `Reached max cycles (${updated.max_cycles}) with ${milestones.done}/${milestones.total} milestones complete` });
       } else {
+        // Zero-progress detection: if milestones_done didn't increase during this implement
+        // cycle, track consecutive zero-progress cycles and block after 2 to avoid burning
+        // max_cycles on an agent that can't make progress.
+        const preImplKey = `workflow/${workflow.id}/pre-implement-milestones/${updated.current_cycle}`;
+        const preImplNote = queries.getNote(preImplKey);
+        const zeroProgressKey = `workflow/${workflow.id}/zero-progress-count`;
+
+        if (preImplNote) {
+          const preImplDone = parseInt(preImplNote.value, 10);
+          if (milestones.done <= preImplDone) {
+            // No progress this cycle
+            const prevCount = parseInt(queries.getNote(zeroProgressKey)?.value ?? '0', 10);
+            const newCount = prevCount + 1;
+            const MAX_ZERO_PROGRESS = 2;
+            if (newCount >= MAX_ZERO_PROGRESS) {
+              const zpReason = `${newCount} consecutive implement cycles with no milestone progress (${milestones.done}/${milestones.total} complete)`;
+              console.log(`[workflow ${workflow.id}] ${zpReason} — marking blocked`);
+              updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'implement' as WorkflowPhase, blocked_reason: zpReason });
+              break;
+            }
+            queries.upsertNote(zeroProgressKey, String(newCount), null);
+            console.log(`[workflow ${workflow.id}] zero-progress implement cycle ${newCount}/${MAX_ZERO_PROGRESS} (${milestones.done}/${milestones.total})`);
+          } else {
+            // Progress was made — reset counter
+            queries.upsertNote(zeroProgressKey, '0', null);
+          }
+        }
+
         // Advance to next cycle's review phase
         const nextCycle = updated.current_cycle + 1;
         updateAndEmit(workflow.id, { current_cycle: nextCycle });
@@ -315,6 +343,14 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
   // Apply model override (used for auto-retry with fallback model on rate limits)
   if (modelOverride) model = modelOverride;
   model = getWorkflowFallbackModel(workflow, phase, model) ?? model;
+
+  // Before spawning an implement job, snapshot current milestones_done so we can
+  // detect zero-progress cycles when the implement job completes.
+  if (phase === 'implement') {
+    const planNote = queries.getNote(`workflow/${workflow.id}/plan`);
+    const milestones = parseMilestones(planNote?.value ?? '');
+    queries.upsertNote(`workflow/${workflow.id}/pre-implement-milestones/${cycle}`, String(milestones.done), null);
+  }
 
   const job = queries.insertJob({
     id: randomUUID(),

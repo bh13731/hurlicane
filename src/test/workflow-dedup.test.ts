@@ -621,6 +621,91 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     expect(blocked.blocked_reason).toContain('no milestones');
   });
 
+  it('2 consecutive zero-progress implement cycles triggers block', async () => {
+    const socket = await import('../server/socket/SocketManager.js');
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 2,
+      max_cycles: 10,
+    });
+    // Plan: 1/3 done — same before and after implement (no progress)
+    upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2\n- [ ] M3', null);
+    // Pre-implement snapshot: 1 done (same as current)
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/2`, '1', null);
+    // Already had 1 zero-progress cycle
+    upsertNote(`workflow/${workflow.id}/zero-progress-count`, '1', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 2,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    onJobCompleted(job);
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('blocked');
+    expect(updated.blocked_reason).toBeTruthy();
+    expect(updated.blocked_reason).toContain('no milestone progress');
+    expect(updated.blocked_reason).toContain('1/3');
+
+    // Should NOT have spawned a review job
+    const statuses = vi.mocked(socket.emitWorkflowUpdate).mock.calls.map(c => c[0].status).filter(Boolean);
+    expect(statuses).toContain('blocked');
+  });
+
+  it('progress after 1 zero-progress cycle resets the counter and advances', async () => {
+    const socket = await import('../server/socket/SocketManager.js');
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getNote, getWorkflowById } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 3,
+      max_cycles: 10,
+    });
+    // Plan: 2/3 done — more than pre-implement's 1, so progress was made
+    upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [x] M2\n- [ ] M3', null);
+    // Pre-implement snapshot: only 1 done
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/3`, '1', null);
+    // Had 1 zero-progress cycle — should reset to 0 on progress
+    upsertNote(`workflow/${workflow.id}/zero-progress-count`, '1', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 3,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    onJobCompleted(job);
+
+    const updated = getWorkflowById(workflow.id)!;
+    // Should have advanced, not blocked
+    expect(updated.status).toBe('running');
+    expect(updated.current_cycle).toBe(4);
+    expect(updated.current_phase).toBe('review');
+
+    // Zero-progress counter should be reset
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('0');
+
+    // A review job should have been spawned
+    const newJobs = vi.mocked(socket.emitJobNew).mock.calls;
+    expect(newJobs.length).toBe(1);
+    expect(newJobs[0][0].workflow_phase).toBe('review');
+  });
+
   it('review phase missing plan blocks with blocked_reason', async () => {
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
     const { getWorkflowById, getJobsForWorkflow } = await import('../server/db/queries.js');
