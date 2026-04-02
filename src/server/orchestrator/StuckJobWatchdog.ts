@@ -33,6 +33,7 @@ import { isCodexModel, isAutoExitJob } from '../../shared/types.js';
 import { markModelRateLimited, getFallbackModel, getModelProvider, markProviderRateLimited } from './ModelClassifier.js';
 import { claimRecovery } from './RecoveryLedger.js';
 import { classifyFailureText, isFallbackEligibleFailure, shouldMarkProviderUnavailable } from './FailureClassifier.js';
+import { nudgeQueue } from './WorkQueueManager.js';
 
 const WATCHDOG_INTERVAL_MS = 30_000;
 
@@ -149,6 +150,7 @@ function check(): void {
               try {
                 const nextJob = queries.scheduleRepeatJob(idleJobFresh);
                 socket.emitJobNew(nextJob);
+                nudgeQueue();
                 console.log(`[watchdog] scheduled next repeat for idle job "${idleJobFresh.title}"`);
               } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); Sentry.captureException(err); }
             }
@@ -266,6 +268,7 @@ function check(): void {
         try {
           const nextJob = queries.scheduleRepeatJob(updatedJob);
           socket.emitJobNew(nextJob);
+          nudgeQueue();
           console.log(`[watchdog] scheduled next repeat for job "${updatedJob.title}" (${updatedJob.id})`);
         } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); Sentry.captureException(err); }
       }
@@ -559,6 +562,7 @@ function check(): void {
       if (updatedJob) socket.emitJobUpdate(updatedJob);
       const updatedAgent = queries.getAgentWithJob(agentId);
       if (updatedAgent) socket.emitAgentUpdate(updatedAgent);
+      nudgeQueue();
 
       console.log(`[watchdog] re-queued job "${job.title}" with model ${fallbackModel}`);
     }
