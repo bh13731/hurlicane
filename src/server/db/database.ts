@@ -463,6 +463,11 @@ export function initDb(dbPath: string): DatabaseSync {
     db.exec('ALTER TABLE workflows ADD COLUMN pr_url TEXT');
   }
 
+  // ── jobs.pr_url migration ──────────────────────────────────────────────────
+  if (!jobCols.includes('pr_url')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN pr_url TEXT');
+  }
+
   // ── Output deduplication: unique index on (agent_id, seq) ──────────────────
   // Allows INSERT OR IGNORE to safely de-duplicate replay of log files during
   // recovery. The old non-unique idx_output_agent index is superseded.
