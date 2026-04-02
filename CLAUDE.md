@@ -105,6 +105,21 @@ Structured multi-cycle assess/review/implement loops. Created via `POST /api/wor
 - All phases share a git worktree and branch; PR auto-created on completion
 - Resume blocked workflows from a specific phase/cycle via `POST /api/workflows/:id/resume`
 
+#### Recovery & self-healing
+
+Workflows self-heal from common transient failures. Key mechanisms:
+
+- **blocked_reason** — every blocking path sets a structured reason visible in the dashboard and API
+- **Plan validation** — 0-milestone plans trigger repair or block at the assess→review transition
+- **Repair jobs** — budget of 2 attempts per phase/cycle for missing plan/contract notes (`spawnRepairJob` in WorkflowManager.ts)
+- **Zero-progress detection** — 2 consecutive implement cycles with no milestone progress blocks the workflow; counter resets on progress and on resume
+- **Model fallback** — rate-limited models rotate through candidates including `[1m]` variants; candidate set is phase-aware (reviewer_model for review, implementer_model for implement)
+- **Alternate provider fallback** — after 3 same-model CLI retries, falls back to alternate provider
+- **Worktree branch verification** — checked before every phase spawn and on resume (`ensureWorktreeBranch`)
+- **Resume safety** — `force=true` re-reads workflow from DB to avoid stale objects; branch check runs before status change; API returns 500 JSON on error
+- **Inline context** — plan/contract/worklogs pre-loaded into prompts (capped at 50k chars via `capText`)
+- **reconcileRunningWorkflows** — on startup, detects idle phases and respawns them
+
 ### Eye (Autonomous Monitoring)
 
 Background agent that monitors the codebase on a configurable cycle. Communicates through discussions, proposals (with Codex verification), and PR reviews. Configured from the Eye panel in the dashboard.
