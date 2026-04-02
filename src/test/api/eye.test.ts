@@ -35,8 +35,13 @@ vi.mock('../../server/integrations/GitHubPoller.js', () => ({
   stopGitHubPoller: vi.fn(),
 }));
 vi.mock('child_process', () => ({
+  exec: vi.fn((_cmd: string, _opts: any, cb: any) => {
+    if (typeof cb === 'function') cb(null, { stdout: '', stderr: '' });
+    return { on: vi.fn() };
+  }),
   execSync: vi.fn(() => '[]'),
   execFile: vi.fn(),
+  spawn: vi.fn(),
 }));
 
 let app: express.Express;

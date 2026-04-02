@@ -1,7 +1,10 @@
-import { spawn, execSync, type ChildProcess } from 'child_process';
+import { spawn, exec, execSync, type ChildProcess } from 'child_process';
+import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+
+const execAsync = promisify(exec);
 import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
@@ -214,6 +217,9 @@ export function runAgent(options: RunOptions): void {
       '--skip-git-repo-check',
       '-c', `mcp_servers.orchestrator.url="${mcpUrl}"`,
       ...(codexSubModel ? ['-m', codexSubModel] : []),
+      // Pass prompt as positional arg so Codex exits after processing it.
+      // Piping via stdin causes Codex to loop and hang on "Reading prompt from stdin..."
+      buildPrompt(job),
     ];
     binary = CODEX;
     args = codexArgs;
@@ -253,6 +259,12 @@ export function runAgent(options: RunOptions): void {
     env: (() => {
       const env = { ...process.env };
       delete env['CLAUDECODE'];
+      // Strip Sentry vars so agent subprocesses don't report test-suite
+      // exceptions to the orchestrator's Sentry project. Repos with their
+      // own Sentry load their DSN from their own .env files.
+      delete env['SENTRY_DSN'];
+      delete env['SENTRY_RELEASE'];
+      delete env['SENTRY_ENVIRONMENT'];
       env['ORCHESTRATOR_AGENT_ID'] = agentId;
       env['ORCHESTRATOR_API_URL'] = `http://localhost:${process.env.PORT ?? 3456}`;
       // Auto-activate Python virtual environment if present in the working directory,
@@ -273,8 +285,12 @@ export function runAgent(options: RunOptions): void {
   fs.closeSync(logFd);
   fs.closeSync(errFd);
 
-  // Write prompt to stdin then close (child reads it all before doing anything else)
-  child.stdin!.write(buildPrompt(job));
+  // Write prompt to stdin then close (child reads it all before doing anything else).
+  // Codex gets the prompt as a positional arg instead — piping via stdin causes it to
+  // hang on "Reading prompt from stdin..." after finishing the first prompt.
+  if (!useCodex) {
+    child.stdin!.write(buildPrompt(job));
+  }
   child.stdin!.end();
 
   // Capture the current git HEAD SHA so we can diff after the agent finishes
@@ -480,6 +496,54 @@ function findLastWaitForJobsIds(agentId: string): string[] | null {
  * Handles: git diff, completion checks, job status update, lock release,
  * memory triage, socket events, debate notification, repeat scheduling, retry.
  */
+/**
+ * Capture git diff synchronously. Used only when completion checks require the
+ * diff (e.g. diff_not_empty) before status finalization.
+ */
+function captureAgentDiffSync(agentId: string, baseSha: string, workDir: string): void {
+  try {
+    const committed = execSync(
+      `git log --patch --no-color ${baseSha}..HEAD`,
+      { cwd: workDir, timeout: 10000 }
+    ).toString();
+    const uncommitted = execSync(
+      'git diff HEAD --no-color',
+      { cwd: workDir, timeout: 10000 }
+    ).toString();
+    const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
+    if (fullDiff.trim()) {
+      queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
+    }
+  } catch { /* not a git repo, no changes, or git not available */ }
+}
+
+/**
+ * Capture git diff asynchronously so it does not block phase-transition
+ * callbacks. Re-emits the agent update once the diff is stored.
+ */
+async function captureAgentDiffDeferred(agentId: string, baseSha: string, workDir: string): Promise<void> {
+  try {
+    const { stdout: committed } = await execAsync(
+      `git log --patch --no-color ${baseSha}..HEAD`,
+      { cwd: workDir, timeout: 10000, maxBuffer: 1024 * 1024 }
+    );
+    const { stdout: uncommitted } = await execAsync(
+      'git diff HEAD --no-color',
+      { cwd: workDir, timeout: 10000, maxBuffer: 1024 * 1024 }
+    );
+    const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
+    if (fullDiff.trim()) {
+      queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
+      // Re-emit so the dashboard picks up the diff
+      const refreshed = queries.getAgentWithJob(agentId);
+      if (refreshed) socket.emitAgentUpdate(refreshed);
+    }
+  } catch { /* not a git repo, no changes, or git not available */ }
+}
+
+// Exposed for testing: tracks the most recent deferred diff promise
+export let _lastDeferredDiffPromise: Promise<void> | null = null;
+
 export async function handleJobCompletion(
   agentId: string,
   job: Job,
@@ -492,23 +556,16 @@ export async function handleJobCompletion(
     execSync(`git tag -d ${tagName} 2>/dev/null || true`, { cwd: workDir, stdio: 'pipe', timeout: 5000 });
   } catch { /* non-fatal */ }
 
-  // Capture git diff between base_sha and current HEAD (committed + staged changes)
   const agentRec = queries.getAgentById(agentId);
-  if (agentRec?.base_sha) {
-    try {
-      const committed = execSync(
-        `git log --patch --no-color ${agentRec.base_sha}..HEAD`,
-        { cwd: workDir, timeout: 10000 }
-      ).toString();
-      const uncommitted = execSync(
-        'git diff HEAD --no-color',
-        { cwd: workDir, timeout: 10000 }
-      ).toString();
-      const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
-      if (fullDiff.trim()) {
-        queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
-      }
-    } catch { /* not a git repo, no changes, or git not available */ }
+
+  // Determine if diff is needed synchronously for completion checks
+  const needsDiffForChecks = status === 'done'
+    && !!job.completion_checks
+    && job.completion_checks.includes('diff_not_empty');
+
+  // Only capture diff synchronously when a completion check requires it
+  if (needsDiffForChecks && agentRec?.base_sha) {
+    captureAgentDiffSync(agentId, agentRec.base_sha, workDir);
   }
 
   // Run completion checks if the agent reported success and checks are configured
@@ -527,6 +584,7 @@ export async function handleJobCompletion(
     } catch (err) { console.error(`[agent ${agentId}] completion check error:`, err); Sentry.captureException(err); }
   }
 
+  // ── Critical path: finalize status, release locks, trigger state-machine callbacks ──
   queries.updateJobStatus(job.id, finalStatus);
   if (finalStatus === 'done') clearRecoveryState(job);
   getFileLockRegistry().releaseAll(agentId);
@@ -596,6 +654,13 @@ export async function handleJobCompletion(
         }
       } catch (err) { console.error(`[agent ${agentId}] proposal fail-update error:`, err); Sentry.captureException(err); }
     }
+  }
+
+  // ── Deferred: capture diff asynchronously when not already captured ──
+  if (!needsDiffForChecks && agentRec?.base_sha) {
+    _lastDeferredDiffPromise = captureAgentDiffDeferred(agentId, agentRec.base_sha, workDir).catch(err => {
+      console.error(`[agent ${agentId}] deferred diff capture error:`, err);
+    });
   }
 }
 

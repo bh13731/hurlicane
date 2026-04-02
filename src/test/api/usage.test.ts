@@ -7,6 +7,10 @@ import type express from 'express';
 vi.mock('../../server/socket/SocketManager.js', () => createSocketMock());
 // Mock child_process to avoid real ccusage calls
 vi.mock('child_process', () => ({
+  exec: vi.fn((_cmd: string, _opts: any, cb: any) => {
+    if (typeof cb === 'function') cb(null, { stdout: '', stderr: '' });
+    return { on: vi.fn() };
+  }),
   execFile: vi.fn((_cmd: string, _args: string[], _opts: any, cb: any) => {
     if (typeof cb === 'function') {
       cb(null, JSON.stringify({ daily: [], totals: null }), '');
@@ -14,6 +18,7 @@ vi.mock('child_process', () => ({
     return { kill: vi.fn() };
   }),
   execSync: vi.fn(() => '[]'),
+  spawn: vi.fn(),
 }));
 vi.mock('util', async (importOriginal) => {
   const original = await importOriginal() as any;
