@@ -7,9 +7,10 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import type { Job, Workflow, WorkflowPhase, StopMode } from '../../shared/types.js';
 import { effectiveMaxTurns } from '../../shared/types.js';
-import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildWorkflowRepairPrompt, type InlineContext } from './WorkflowPrompts.js';
+import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildWorkflowRepairPrompt, type InlineWorkflowContext } from './WorkflowPrompts.js';
 import { getAvailableModel, getFallbackModel, getAlternateProviderModel, getModelProvider, markModelRateLimited, markProviderRateLimited } from './ModelClassifier.js';
 import { classifyJobFailure, isFallbackEligibleFailure, isSameModelRetryEligible, shouldMarkProviderUnavailable } from './FailureClassifier.js';
+import { nudgeQueue } from './WorkQueueManager.js';
 
 // Track jobs we've already processed to prevent double-exit race from triggering
 // duplicate spawns. Same pattern as DebateManager.
@@ -325,6 +326,24 @@ function spawnRepairJob(
   return true;
 }
 
+/**
+ * Pre-read plan, contract, and worklog notes for a workflow so they can be
+ * inlined in review/implement prompts. This eliminates 2-4 MCP tool
+ * round-trips at phase start.
+ */
+export function preReadWorkflowContext(workflowId: string): InlineWorkflowContext {
+  const plan = queries.getNote(`workflow/${workflowId}/plan`);
+  const contract = queries.getNote(`workflow/${workflowId}/contract`);
+  const worklogNotes = queries.listNotes(`workflow/${workflowId}/worklog/`);
+  const recentDiff = queries.getLastImplementDiff(workflowId);
+  return {
+    plan: plan?.value ?? undefined,
+    contract: contract?.value ?? undefined,
+    worklogs: worklogNotes.map(n => ({ key: n.key, value: n.value })),
+    recentDiff: recentDiff ?? undefined,
+  };
+}
+
 function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, modelOverride?: string): void {
   const phaseLabels: Record<string, string> = { assess: 'Assess', review: 'Review', implement: 'Implement' };
   const label = phaseLabels[phase] ?? phase;
@@ -335,6 +354,11 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
   let stopMode: StopMode;
   let stopValue: number | null;
   let prompt: string;
+
+  // Pre-read scratchpad notes for review/implement phases to inline in prompts
+  const inlineContext = (phase === 'review' || phase === 'implement')
+    ? preReadWorkflowContext(workflow.id)
+    : undefined;
 
   switch (phase) {
     case 'assess':
@@ -349,8 +373,7 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
       maxTurns = workflow.max_turns_review;
       stopMode = workflow.stop_mode_review;
       stopValue = workflow.stop_value_review;
-      const reviewCtx = fetchInlineContext(workflow.id);
-      prompt = buildReviewPrompt(workflow, cycle, reviewCtx);
+      prompt = buildReviewPrompt(workflow, cycle, inlineContext);
       break;
     }
     case 'implement': {
@@ -358,8 +381,7 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
       maxTurns = workflow.max_turns_implement;
       stopMode = workflow.stop_mode_implement;
       stopValue = workflow.stop_value_implement;
-      const implCtx = fetchInlineContext(workflow.id);
-      prompt = buildImplementPrompt(workflow, cycle, implCtx);
+      prompt = buildImplementPrompt(workflow, cycle, inlineContext);
       break;
     }
     default:
@@ -411,6 +433,7 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
   });
 
   socket.emitJobNew(job);
+  nudgeQueue();
 
   // Update workflow state
   updateAndEmit(workflow.id, {
@@ -560,6 +583,7 @@ export function startWorkflow(workflow: Workflow): Job {
   });
 
   socket.emitJobNew(job);
+  nudgeQueue();
   updateAndEmit(activeWorkflow.id, { current_phase: 'assess' as WorkflowPhase, current_cycle: 0 });
   console.log(`[workflow ${activeWorkflow.id}] started — assess job ${job.id.slice(0, 8)}`);
   return job;
@@ -613,6 +637,11 @@ export function resumeWorkflow(
   let stopValue: number | null;
   let prompt: string;
 
+  // Pre-read scratchpad notes for review/implement phases
+  const inlineContext = (phase === 'review' || phase === 'implement')
+    ? preReadWorkflowContext(updated.id)
+    : undefined;
+
   switch (phase) {
     case 'assess':
       model = updated.implementer_model;
@@ -626,8 +655,7 @@ export function resumeWorkflow(
       maxTurns = updated.max_turns_review;
       stopMode = updated.stop_mode_review;
       stopValue = updated.stop_value_review;
-      const reviewCtx = fetchInlineContext(updated.id);
-      prompt = buildReviewPrompt(updated, cycle, reviewCtx);
+      prompt = buildReviewPrompt(updated, cycle, inlineContext);
       break;
     }
     case 'implement': {
@@ -635,8 +663,7 @@ export function resumeWorkflow(
       maxTurns = updated.max_turns_implement;
       stopMode = updated.stop_mode_implement;
       stopValue = updated.stop_value_implement;
-      const implCtx = fetchInlineContext(updated.id);
-      prompt = buildImplementPrompt(updated, cycle, implCtx);
+      prompt = buildImplementPrompt(updated, cycle, inlineContext);
       break;
     }
     default:
@@ -665,6 +692,7 @@ export function resumeWorkflow(
   });
 
   socket.emitJobNew(job);
+  nudgeQueue();
   console.log(`[workflow ${workflow.id}] resumed — ${phase} job ${job.id.slice(0, 8)} (cycle ${cycle})`);
   return job;
 }
@@ -751,10 +779,18 @@ function _removeWorktree(workflow: Workflow): void {
   }
 }
 
-function _buildPrBody(workflow: Workflow, planText: string | null): string {
+export function _buildPrBody(workflow: Workflow, planText: string | null): string {
   const { total, done } = parseMilestones(planText ?? '');
-  const checkboxLines = planText
-    ? planText.split('\n').filter(l => /^\s*[-*]\s+\[/.test(l)).map(l => l.trim()).join('\n')
+  const milestoneLines = planText
+    ? planText.split('\n')
+        .filter(l => /^\s*[-*]\s+\[/.test(l))
+        .map(l => {
+          const isDone = CHECKBOX_CHECKED.test(l);
+          // Strip the checkbox prefix, keeping the milestone title (bold or plain)
+          const title = l.replace(/^\s*[-*]\s+\[[xX ]*\]\s*/, '');
+          return isDone ? `- Done: ${title}` : `- Pending: ${title}`;
+        })
+        .join('\n')
     : '';
   return [
     `## ${workflow.title}`,
@@ -764,23 +800,8 @@ function _buildPrBody(workflow: Workflow, planText: string | null): string {
     `**Cycles:** ${workflow.current_cycle}/${workflow.max_cycles} · **Milestones:** ${done}/${total} complete`,
     '',
     '## Milestones',
-    checkboxLines || '_No plan available_',
-    '',
-    '---',
-    `🤖 Generated by a Hurlicane autonomous agent run`,
-    `Implementer: \`${workflow.implementer_model}\` · Reviewer: \`${workflow.reviewer_model}\``,
+    milestoneLines || '_No plan available_',
   ].join('\n');
-}
-
-// ─── Inline Context ─────────────────────────────────────────────────────────
-
-/** Fetch plan, contract, and worklog notes for inline inclusion in prompts. */
-export function fetchInlineContext(workflowId: string): InlineContext {
-  const plan = queries.getNote(`workflow/${workflowId}/plan`)?.value ?? null;
-  const contract = queries.getNote(`workflow/${workflowId}/contract`)?.value ?? null;
-  const worklogNotes = queries.listNotes(`workflow/${workflowId}/worklog/`);
-  const worklogs = worklogNotes.map(n => ({ key: n.key, value: n.value }));
-  return { plan, contract, worklogs };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

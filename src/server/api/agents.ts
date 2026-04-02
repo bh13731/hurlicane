@@ -274,6 +274,7 @@ router.post('/:id/requeue', (req, res) => {
   socket.emitAgentUpdate(updated);
   const updatedJob = queries.getJobById(agent.job_id);
   if (updatedJob) socket.emitJobUpdate(updatedJob);
+  nudgeQueue();
 
   res.json(updated);
 });

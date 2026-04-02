@@ -2,8 +2,8 @@ import { randomUUID } from 'crypto';
 import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import type { Job, Debate, DebateRole } from '../../shared/types.js';
 import { nudgeQueue } from './WorkQueueManager.js';
+import type { Job, Debate, DebateRole } from '../../shared/types.js';
 
 const MAX_VERIFICATION_ROUNDS = 10;
 

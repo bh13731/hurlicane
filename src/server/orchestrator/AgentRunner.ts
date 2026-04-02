@@ -1,7 +1,10 @@
-import { spawn, execSync, type ChildProcess } from 'child_process';
+import { spawn, exec, execSync, type ChildProcess } from 'child_process';
+import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+
+const execAsync = promisify(exec);
 import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
@@ -177,6 +180,10 @@ export function getStderrPath(agentId: string): string {
   return path.join(LOGS_DIR, `${agentId}.stderr`);
 }
 
+export function getPromptPath(agentId: string): string {
+  return path.join(LOGS_DIR, `${agentId}.prompt`);
+}
+
 export function runAgent(options: RunOptions): void {
   const { agentId, job } = options;
   const mcpPort = options.mcpPort ?? Number(MCP_PORT);
@@ -185,10 +192,6 @@ export function runAgent(options: RunOptions): void {
 
   const logPath = getLogPath(agentId);
   const errPath = getStderrPath(agentId);
-
-  // Open file descriptors for the child to write into directly
-  const logFd = fs.openSync(logPath, 'w');
-  const errFd = fs.openSync(errPath, 'w');
 
   const workDir = (job as any).work_dir ?? process.cwd();
   const stopMode = (job as any).stop_mode ?? 'turns';
@@ -215,9 +218,9 @@ export function runAgent(options: RunOptions): void {
       '--skip-git-repo-check',
       '-c', `mcp_servers.orchestrator.url="${mcpUrl}"`,
       ...(codexSubModel ? ['-m', codexSubModel] : []),
-      // Pass prompt as positional arg so Codex exits after processing it.
-      // Piping via stdin causes Codex to loop and hang on "Reading prompt from stdin..."
-      buildPrompt(job),
+      // Prompt is delivered via file-backed stdin (see below), not as a
+      // positional arg, to avoid E2BIG / spawn failure when workflow
+      // prompts grow large with inlined plan/contract/worklog context.
     ];
     binary = CODEX;
     args = codexArgs;
@@ -248,52 +251,75 @@ export function runAgent(options: RunOptions): void {
 
   console.log(`[agent ${agentId}] spawning ${useCodex ? 'codex' : 'claude'} for job "${job.title}"${model ? ` (model: ${model})` : ''}`);
 
-  const launch = buildNiceSpawn(binary, args);
-  if (!isNiceAvailable()) {
-    console.warn(`[agent ${agentId}] 'nice' not available — launching ${launch.command} directly`);
-  }
-  // Spawn via `nice -n 10` when available so agent processes run at lower
-  // scheduling priority than the orchestrator server/UI.
-  const child = spawn(launch.command, launch.args, {
-    cwd: workDir,
-    detached: true,            // becomes process group leader — survives server restart
-    stdio: ['pipe', logFd, errFd],  // stdout/stderr go to files, not pipes
-    env: (() => {
-      const env = { ...process.env };
-      delete env['CLAUDECODE'];
-      // Strip Sentry vars so agent subprocesses don't report test-suite
-      // exceptions to the orchestrator's Sentry project. Repos with their
-      // own Sentry load their DSN from their own .env files.
-      delete env['SENTRY_DSN'];
-      delete env['SENTRY_RELEASE'];
-      delete env['SENTRY_ENVIRONMENT'];
-      env['ORCHESTRATOR_AGENT_ID'] = agentId;
-      env['ORCHESTRATOR_API_URL'] = `http://localhost:${process.env.PORT ?? 3456}`;
-      // Auto-activate Python virtual environment if present in the working directory,
-      // so tools like pytest are on PATH when the agent runs shell commands.
-      for (const venvName of ['venv', '.venv', 'env', '.env']) {
-        const venvBin = path.join(workDir, venvName, 'bin');
-        if (fs.existsSync(path.join(venvBin, 'activate'))) {
-          env['VIRTUAL_ENV'] = path.join(workDir, venvName);
-          env['PATH'] = `${venvBin}:${env['PATH'] ?? ''}`;
-          break;
+  // All file descriptor acquisition (logFd, errFd, and the Codex promptFd)
+  // happens inside this try block so that any failure at any point closes
+  // only the fds that were actually opened, preventing fd leaks.
+  let logFd: number | null = null;
+  let errFd: number | null = null;
+  let promptFd: number | null = null;
+  let child: ReturnType<typeof spawn>;
+  try {
+    logFd = fs.openSync(logPath, 'w');
+    errFd = fs.openSync(errPath, 'w');
+
+    if (useCodex) {
+      const promptPath = getPromptPath(agentId);
+      fs.writeFileSync(promptPath, buildPrompt(job));
+      promptFd = fs.openSync(promptPath, 'r');
+    }
+
+    const launch = buildNiceSpawn(binary, args);
+    if (!isNiceAvailable()) {
+      console.warn(`[agent ${agentId}] 'nice' not available — launching ${launch.command} directly`);
+    }
+
+    child = spawn(launch.command, launch.args, {
+      cwd: workDir,
+      detached: true,            // becomes process group leader — survives server restart
+      stdio: [promptFd !== null ? promptFd : 'pipe', logFd, errFd],
+      env: (() => {
+        const env = { ...process.env };
+        delete env['CLAUDECODE'];
+        // Strip Sentry vars so agent subprocesses don't report test-suite
+        // exceptions to the orchestrator's Sentry project. Repos with their
+        // own Sentry load their DSN from their own .env files.
+        delete env['SENTRY_DSN'];
+        delete env['SENTRY_RELEASE'];
+        delete env['SENTRY_ENVIRONMENT'];
+        env['ORCHESTRATOR_AGENT_ID'] = agentId;
+        env['ORCHESTRATOR_API_URL'] = `http://localhost:${process.env.PORT ?? 3456}`;
+        // Auto-activate Python virtual environment if present in the working directory,
+        // so tools like pytest are on PATH when the agent runs shell commands.
+        for (const venvName of ['venv', '.venv', 'env', '.env']) {
+          const venvBin = path.join(workDir, venvName, 'bin');
+          if (fs.existsSync(path.join(venvBin, 'activate'))) {
+            env['VIRTUAL_ENV'] = path.join(workDir, venvName);
+            env['PATH'] = `${venvBin}:${env['PATH'] ?? ''}`;
+            break;
+          }
         }
-      }
-      return env;
-    })(),
-  });
+        return env;
+      })(),
+    });
+  } catch (err) {
+    // Pre-spawn failure: close only the fds we actually opened.
+    if (logFd !== null) { try { fs.closeSync(logFd); } catch { /* best effort */ } }
+    if (errFd !== null) { try { fs.closeSync(errFd); } catch { /* best effort */ } }
+    if (promptFd !== null) { try { fs.closeSync(promptFd); } catch { /* best effort */ } }
+    throw err;
+  }
 
   // Parent releases its copies of the file descriptors — child keeps its own
   fs.closeSync(logFd);
   fs.closeSync(errFd);
+  if (promptFd !== null) fs.closeSync(promptFd);
 
-  // Write prompt to stdin then close (child reads it all before doing anything else).
-  // Codex gets the prompt as a positional arg instead — piping via stdin causes it to
-  // hang on "Reading prompt from stdin..." after finishing the first prompt.
+  // Write prompt to stdin for Claude (pipe mode). Codex reads from
+  // file-backed stdin instead — no pipe write needed.
   if (!useCodex) {
     child.stdin!.write(buildPrompt(job));
+    child.stdin!.end();
   }
-  child.stdin!.end();
 
   // Capture the current git HEAD SHA so we can diff after the agent finishes
   try {
@@ -498,6 +524,60 @@ function findLastWaitForJobsIds(agentId: string): string[] | null {
  * Handles: git diff, completion checks, job status update, lock release,
  * memory triage, socket events, debate notification, repeat scheduling, retry.
  */
+/**
+ * Capture git diff synchronously. Used only when completion checks require the
+ * diff (e.g. diff_not_empty) before status finalization.
+ */
+function captureAgentDiffSync(agentId: string, baseSha: string, workDir: string): void {
+  try {
+    const committed = execSync(
+      `git log --patch --no-color ${baseSha}..HEAD`,
+      { cwd: workDir, timeout: 10000 }
+    ).toString();
+    const uncommitted = execSync(
+      'git diff HEAD --no-color',
+      { cwd: workDir, timeout: 10000 }
+    ).toString();
+    const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
+    if (fullDiff.trim()) {
+      queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
+    }
+  } catch { /* not a git repo, no changes, or git not available */ }
+}
+
+/**
+ * Capture git diff asynchronously so it does not block phase-transition
+ * callbacks. Re-emits the agent update once the diff is stored.
+ *
+ * `endSha` and `uncommittedSnapshot` are captured synchronously *before*
+ * workflow callbacks fire, so a next-phase agent starting in the same
+ * worktree cannot contaminate the finishing agent's diff.
+ */
+async function captureAgentDiffDeferred(
+  agentId: string,
+  baseSha: string,
+  endSha: string,
+  uncommittedSnapshot: string,
+  workDir: string,
+): Promise<void> {
+  try {
+    const { stdout: committed } = await execAsync(
+      `git log --patch --no-color ${baseSha}..${endSha}`,
+      { cwd: workDir, timeout: 10000, maxBuffer: 1024 * 1024 }
+    );
+    const fullDiff = [committed, uncommittedSnapshot].filter(s => s.trim()).join('\n');
+    if (fullDiff.trim()) {
+      queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
+      // Re-emit so the dashboard picks up the diff
+      const refreshed = queries.getAgentWithJob(agentId);
+      if (refreshed) socket.emitAgentUpdate(refreshed);
+    }
+  } catch { /* not a git repo, no changes, or git not available */ }
+}
+
+// Exposed for testing: tracks the most recent deferred diff promise
+export let _lastDeferredDiffPromise: Promise<void> | null = null;
+
 export async function handleJobCompletion(
   agentId: string,
   job: Job,
@@ -510,23 +590,16 @@ export async function handleJobCompletion(
     execSync(`git tag -d ${tagName} 2>/dev/null || true`, { cwd: workDir, stdio: 'pipe', timeout: 5000 });
   } catch { /* non-fatal */ }
 
-  // Capture git diff between base_sha and current HEAD (committed + staged changes)
   const agentRec = queries.getAgentById(agentId);
-  if (agentRec?.base_sha) {
-    try {
-      const committed = execSync(
-        `git log --patch --no-color ${agentRec.base_sha}..HEAD`,
-        { cwd: workDir, timeout: 10000 }
-      ).toString();
-      const uncommitted = execSync(
-        'git diff HEAD --no-color',
-        { cwd: workDir, timeout: 10000 }
-      ).toString();
-      const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
-      if (fullDiff.trim()) {
-        queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
-      }
-    } catch { /* not a git repo, no changes, or git not available */ }
+
+  // Determine if diff is needed synchronously for completion checks
+  const needsDiffForChecks = status === 'done'
+    && !!job.completion_checks
+    && job.completion_checks.includes('diff_not_empty');
+
+  // Only capture diff synchronously when a completion check requires it
+  if (needsDiffForChecks && agentRec?.base_sha) {
+    captureAgentDiffSync(agentId, agentRec.base_sha, workDir);
   }
 
   // Run completion checks if the agent reported success and checks are configured
@@ -545,6 +618,19 @@ export async function handleJobCompletion(
     } catch (err) { console.error(`[agent ${agentId}] completion check error:`, err); Sentry.captureException(err); }
   }
 
+  // ── Snapshot: capture immutable refs for deferred diff before callbacks can start next phase ──
+  let endSha: string | null = null;
+  let uncommittedSnapshot = '';
+  if (!needsDiffForChecks && agentRec?.base_sha) {
+    try {
+      endSha = execSync('git rev-parse HEAD', { cwd: workDir, timeout: 5000 }).toString().trim();
+    } catch { /* not a git repo */ }
+    try {
+      uncommittedSnapshot = execSync('git diff HEAD --no-color', { cwd: workDir, timeout: 10000 }).toString();
+    } catch { /* ignore */ }
+  }
+
+  // ── Critical path: finalize status, release locks, trigger state-machine callbacks ──
   queries.updateJobStatus(job.id, finalStatus);
   if (finalStatus === 'done') clearRecoveryState(job);
   getFileLockRegistry().releaseAll(agentId);
@@ -614,6 +700,13 @@ export async function handleJobCompletion(
         }
       } catch (err) { console.error(`[agent ${agentId}] proposal fail-update error:`, err); Sentry.captureException(err); }
     }
+  }
+
+  // ── Deferred: capture diff asynchronously when not already captured ──
+  if (!needsDiffForChecks && agentRec?.base_sha && endSha) {
+    _lastDeferredDiffPromise = captureAgentDiffDeferred(agentId, agentRec.base_sha, endSha, uncommittedSnapshot, workDir).catch(err => {
+      console.error(`[agent ${agentId}] deferred diff capture error:`, err);
+    });
   }
 }
 

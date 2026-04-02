@@ -23,6 +23,7 @@ import {
 // Default: return the expected branch so existing tests that trigger spawnPhaseJob on
 // workflows with worktree_path set don't break.
 vi.mock('child_process', () => ({
+  exec: vi.fn(),
   execSync: vi.fn((cmd: string) => {
     if (typeof cmd === 'string' && cmd.includes('rev-parse --abbrev-ref HEAD')) {
       // Default: return a dummy branch — tests that need a specific value override this
