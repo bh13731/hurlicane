@@ -281,6 +281,7 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     const socket = await import('../server/socket/SocketManager.js');
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
     const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { getAvailableModel } = await import('../server/orchestrator/ModelClassifier.js');
     const { upsertNote, getWorkflowById, getJobsForWorkflow } = await import('../server/db/queries.js');
 
     const project = await insertTestProject();
@@ -300,6 +301,13 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     });
 
     vi.mocked(classifyJobFailure).mockReturnValue('rate_limit');
+    // Simulate rate-limiting: the job's model (implementer default 'claude-sonnet-4-6') is unavailable.
+    // Fix-5 requires getAvailableModel to signal unavailability before the fallback search begins.
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => {
+      if (model === 'claude-sonnet-4-6') return null; // rate-limited
+      if (model === 'codex') return null;
+      return model;
+    });
 
     onJobCompleted(job);
 
@@ -324,6 +332,7 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
   it('provider capability failures auto-retry with a fallback model', async () => {
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
     const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { getAvailableModel } = await import('../server/orchestrator/ModelClassifier.js');
     const { getWorkflowById, getJobsForWorkflow } = await import('../server/db/queries.js');
 
     const project = await insertTestProject();
@@ -344,6 +353,12 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     });
 
     vi.mocked(classifyJobFailure).mockReturnValue('provider_capability');
+    // Simulate capability unavailability so Fix-5 early return does not prevent fallback.
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => {
+      if (model === 'claude-sonnet-4-6[1m]') return null; // capability error
+      if (model === 'codex') return null;
+      return model;
+    });
 
     onJobCompleted(job);
 
@@ -623,5 +638,152 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     expect(blocked.status).toBe('blocked');
     expect(blocked.blocked_reason).toBeTruthy();
     expect(blocked.blocked_reason).toContain('plan');
+  });
+});
+
+describe('WorkflowManager: getWorkflowFallbackModel', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+    await resetManagerState();
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('Fix-5: uses configured model without downgrade when no model is rate-limited', async () => {
+    // When the current model is available, spawnPhaseJob must use the phase's configured
+    // model (reviewer_model for review), NOT silently downgrade to a candidate.
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getJobsForWorkflow } = await import('../server/db/queries.js');
+    const { getAvailableModel } = await import('../server/orchestrator/ModelClassifier.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+      implementer_model: 'claude-sonnet-4-6[1m]',
+      reviewer_model: 'claude-opus-4-6[1m]',
+    });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1', null);
+    upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'done',
+    });
+
+    // Default mock: all models available (no rate limits)
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => model);
+
+    onJobCompleted(job);
+
+    const jobs = getJobsForWorkflow(workflow.id);
+    const reviewJob = jobs.find(j => j.id !== job.id);
+    expect(reviewJob).toBeDefined();
+    // Should use the configured reviewer_model, not a fallback
+    expect(reviewJob!.model).toBe('claude-opus-4-6[1m]');
+    expect(reviewJob!.title).not.toContain('(fallback)');
+  });
+
+  it('Fix-6: review phase fallback includes reviewer_model as candidate', async () => {
+    // When a review job fails and the primary model is unavailable, the workflow's
+    // reviewer_model should be tried before hardcoded alternatives.
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { getAvailableModel, getFallbackModel } = await import('../server/orchestrator/ModelClassifier.js');
+    const { upsertNote, getWorkflowById, getJobsForWorkflow } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'review',
+      current_cycle: 1,
+      implementer_model: 'claude-sonnet-4-6',  // also unavailable
+      reviewer_model: 'claude-opus-4-6[1m]',   // available
+    });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+
+    // Job ran on haiku (e.g. a previous fallback), not the reviewer_model
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'review',
+      status: 'failed',
+      model: 'claude-haiku-4-5-20251001',
+    });
+
+    vi.mocked(classifyJobFailure).mockReturnValue('rate_limit');
+    // haiku + sonnet are rate-limited; opus[1m] (reviewer_model) is available
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => {
+      if (model === 'claude-haiku-4-5-20251001') return null;
+      if (model === 'claude-sonnet-4-6') return null;
+      if (model === 'codex') return null;
+      return model;
+    });
+    vi.mocked(getFallbackModel).mockImplementation((model: string) => model);
+
+    onJobCompleted(job);
+
+    expect(getWorkflowById(workflow.id)!.status).toBe('running');
+    const jobs = getJobsForWorkflow(workflow.id);
+    const retryJob = jobs.find(j => j.id !== job.id);
+    expect(retryJob).toBeDefined();
+    // reviewer_model should have been tried and selected
+    expect(retryJob!.model).toBe('claude-opus-4-6[1m]');
+  });
+
+  it('Fix-8: fallback from [1m] model reaches a genuinely different family', async () => {
+    // When the current model is 'claude-opus-4-6[1m]' (rate-limited), the hardcoded
+    // candidate set must not return the non-[1m] variant of the same family.
+    // The result should be from a different model family (sonnet).
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { getAvailableModel, getFallbackModel } = await import('../server/orchestrator/ModelClassifier.js');
+    const { upsertNote, getWorkflowById, getJobsForWorkflow } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 1,
+      implementer_model: 'claude-opus-4-6[1m]',
+    });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'failed',
+      model: 'claude-opus-4-6[1m]',
+    });
+
+    vi.mocked(classifyJobFailure).mockReturnValue('rate_limit');
+    // opus[1m] is rate-limited; sonnet[1m] and haiku are available; non-[1m] opus is also "available"
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => {
+      if (model === 'claude-opus-4-6[1m]') return null;
+      if (model === 'codex') return null;
+      return model;
+    });
+    vi.mocked(getFallbackModel).mockImplementation((model: string) => model);
+
+    onJobCompleted(job);
+
+    expect(getWorkflowById(workflow.id)!.status).toBe('running');
+    const jobs = getJobsForWorkflow(workflow.id);
+    const retryJob = jobs.find(j => j.id !== job.id);
+    expect(retryJob).toBeDefined();
+    // Must be a different model family — NOT 'claude-opus-4-6' (same base, no [1m])
+    expect(retryJob!.model).not.toBe('claude-opus-4-6');
+    // Should be sonnet[1m] — the first genuinely different hardcoded candidate
+    expect(retryJob!.model).toBe('claude-sonnet-4-6[1m]');
   });
 });

@@ -341,13 +341,22 @@ function getWorkflowFallbackModel(
   phase: WorkflowPhase,
   currentModel: string,
 ): string | null {
+  // Fix-5: early return — no fallback needed if the current model is already available.
+  if (getAvailableModel(currentModel) === currentModel) return null;
+
   const candidates = new Set<string>();
   const directFallback = getFallbackModel(currentModel);
   if (directFallback && directFallback !== currentModel) candidates.add(directFallback);
 
+  // Fix-6: include the phase-appropriate workflow model so the user's chosen
+  // reviewer_model is tried before falling through to hardcoded alternatives.
+  if (phase === 'review') candidates.add(workflow.reviewer_model);
   candidates.add(workflow.implementer_model);
-  candidates.add('claude-sonnet-4-6');
-  candidates.add('claude-opus-4-6');
+
+  // Fix-8: use [1m] variants to match MODEL_FALLBACK_CHAIN and avoid returning
+  // a non-[1m] variant of the same model family as a "fallback".
+  candidates.add('claude-sonnet-4-6[1m]');
+  candidates.add('claude-opus-4-6[1m]');
   candidates.add('claude-haiku-4-5-20251001');
   candidates.add('codex');
 
