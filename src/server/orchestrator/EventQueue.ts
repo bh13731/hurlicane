@@ -8,7 +8,7 @@
  * Events older than MAX_AGE_MS or beyond MAX_EVENTS are discarded.
  */
 
-import { getDb } from '../db/database.js';
+import { getDb, isDbInitialized } from '../db/database.js';
 
 const MAX_EVENTS = 5000;
 const MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
@@ -18,6 +18,7 @@ const MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 let _initializedDb: any = null;
 
 function ensureTable(): void {
+  if (!isDbInitialized()) return;
   const db = getDb();
   if (_initializedDb === db) return;
   db.exec(`
@@ -36,6 +37,7 @@ function ensureTable(): void {
  * Push an event into the queue. Called from SocketManager emit wrappers.
  */
 export function pushEvent(eventName: string, payload: any): void {
+  if (!isDbInitialized()) return;
   try {
     ensureTable();
     const db = getDb();
@@ -67,6 +69,7 @@ export function pushEvent(eventName: string, payload: any): void {
  * to replay missed events.
  */
 export function getEventsSince(sinceMs: number): Array<{ event_name: string; payload: any; created_at: number }> {
+  if (!isDbInitialized()) return [];
   try {
     ensureTable();
     const db = getDb();
@@ -88,6 +91,7 @@ export function getEventsSince(sinceMs: number): Array<{ event_name: string; pay
  * Clear old events. Called during shutdown or periodic cleanup.
  */
 export function pruneEvents(): void {
+  if (!isDbInitialized()) return;
   try {
     ensureTable();
     const db = getDb();

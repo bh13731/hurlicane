@@ -14,7 +14,7 @@
 import { Router } from 'express';
 import { execFileSync } from 'child_process';
 import * as path from 'path';
-import { getDb } from '../db/database.js';
+import { getDb, isDbInitialized } from '../db/database.js';
 import * as queries from '../db/queries.js';
 import { getQueueMetrics } from '../orchestrator/WorkQueueManager.js';
 
@@ -23,91 +23,117 @@ const router = Router();
 router.get('/', (_req, res) => {
   const checks: Record<string, any> = {};
   let status: 'ok' | 'degraded' | 'unhealthy' = 'ok';
+  const dbReady = isDbInitialized();
 
   // DB check
-  try {
-    const db = getDb();
-    db.prepare('SELECT 1').get();
-    checks.db = { status: 'ok' };
-  } catch (err: any) {
-    checks.db = { status: 'unhealthy', error: err.message };
+  if (!dbReady) {
+    checks.db = { status: 'unhealthy', error: 'Database not initialized yet' };
     status = 'unhealthy';
+  } else {
+    try {
+      const db = getDb();
+      db.prepare('SELECT 1').get();
+      checks.db = { status: 'ok' };
+    } catch (err: any) {
+      checks.db = { status: 'unhealthy', error: err.message };
+      status = 'unhealthy';
+    }
   }
 
   // Queue stats
-  try {
-    const allJobs = queries.listJobs();
-    const queued = allJobs.filter(j => j.status === 'queued').length;
-    const assigned = allJobs.filter(j => j.status === 'assigned').length;
-    const running = allJobs.filter(j => j.status === 'running').length;
-    checks.queue = { queued, assigned, running };
-  } catch (err: any) {
-    checks.queue = { status: 'error', error: err.message };
+  if (!dbReady) {
+    checks.queue = { status: 'unavailable', error: 'Database not initialized yet' };
+  } else {
+    try {
+      const allJobs = queries.listJobs();
+      const queued = allJobs.filter(j => j.status === 'queued').length;
+      const assigned = allJobs.filter(j => j.status === 'assigned').length;
+      const running = allJobs.filter(j => j.status === 'running').length;
+      checks.queue = { queued, assigned, running };
+    } catch (err: any) {
+      checks.queue = { status: 'error', error: err.message };
+    }
   }
 
   // Active agents
-  try {
-    const agents = queries.listAllRunningAgents();
-    checks.agents = { running: agents.length };
-  } catch (err: any) {
-    checks.agents = { status: 'error', error: err.message };
+  if (!dbReady) {
+    checks.agents = { status: 'unavailable', error: 'Database not initialized yet' };
+  } else {
+    try {
+      const agents = queries.listAllRunningAgents();
+      checks.agents = { running: agents.length };
+    } catch (err: any) {
+      checks.agents = { status: 'error', error: err.message };
+    }
   }
 
   // Active file locks with contention metrics
-  try {
-    const locks = queries.getAllActiveLocks();
-    // Count unique files and agents involved in locking
-    const uniqueFiles = new Set(locks.map(l => l.file_path)).size;
-    const uniqueAgents = new Set(locks.map(l => l.agent_id)).size;
-    // Check for expired but unreleased locks (contention indicator)
-    const expired = queries.getExpiredUnreleasedLocks();
-    checks.locks = {
-      active: locks.length,
-      unique_files: uniqueFiles,
-      agents_holding: uniqueAgents,
-      expired_unreleased: expired.length,
-    };
-    if (expired.length > 10) {
-      if (status === 'ok') status = 'degraded';
-      checks.locks.warning = 'many expired unreleased locks';
+  if (!dbReady) {
+    checks.locks = { status: 'unavailable', error: 'Database not initialized yet' };
+  } else {
+    try {
+      const locks = queries.getAllActiveLocks();
+      // Count unique files and agents involved in locking
+      const uniqueFiles = new Set(locks.map(l => l.file_path)).size;
+      const uniqueAgents = new Set(locks.map(l => l.agent_id)).size;
+      // Check for expired but unreleased locks (contention indicator)
+      const expired = queries.getExpiredUnreleasedLocks();
+      checks.locks = {
+        active: locks.length,
+        unique_files: uniqueFiles,
+        agents_holding: uniqueAgents,
+        expired_unreleased: expired.length,
+      };
+      if (expired.length > 10) {
+        if (status === 'ok') status = 'degraded';
+        checks.locks.warning = 'many expired unreleased locks';
+      }
+    } catch (err: any) {
+      checks.locks = { status: 'error', error: err.message };
     }
-  } catch (err: any) {
-    checks.locks = { status: 'error', error: err.message };
   }
 
   // Recovery state: check for active recovery ledger entries
-  try {
-    const recoveryNotes = queries.listNotes('recovery:');
-    let activeRecoveries = 0;
-    for (const note of recoveryNotes) {
-      const full = queries.getNote(note.key);
-      if (full?.value) {
-        try {
-          const state = JSON.parse(full.value);
-          if (state.lock_until > Date.now()) activeRecoveries++;
-        } catch { /* malformed JSON */ }
+  if (!dbReady) {
+    checks.recovery = { status: 'unavailable', error: 'Database not initialized yet' };
+  } else {
+    try {
+      const recoveryNotes = queries.listNotes('recovery:');
+      let activeRecoveries = 0;
+      for (const note of recoveryNotes) {
+        const full = queries.getNote(note.key);
+        if (full?.value) {
+          try {
+            const state = JSON.parse(full.value);
+            if (state.lock_until > Date.now()) activeRecoveries++;
+          } catch { /* malformed JSON */ }
+        }
       }
+      checks.recovery = {
+        active_recoveries: activeRecoveries,
+        total_recovery_entries: recoveryNotes.length,
+      };
+    } catch (err: any) {
+      checks.recovery = { status: 'error', error: err.message };
     }
-    checks.recovery = {
-      active_recoveries: activeRecoveries,
-      total_recovery_entries: recoveryNotes.length,
-    };
-  } catch (err: any) {
-    checks.recovery = { status: 'error', error: err.message };
   }
 
   // Workflows
-  try {
-    const workflows = queries.listWorkflows();
-    const running = workflows.filter(w => w.status === 'running').length;
-    const blocked = workflows.filter(w => w.status === 'blocked').length;
-    checks.workflows = { running, blocked, total: workflows.length };
-    if (blocked > 0) {
-      if (status === 'ok') status = 'degraded';
-      checks.workflows.warning = `${blocked} blocked workflow(s)`;
+  if (!dbReady) {
+    checks.workflows = { status: 'unavailable', error: 'Database not initialized yet' };
+  } else {
+    try {
+      const workflows = queries.listWorkflows();
+      const running = workflows.filter(w => w.status === 'running').length;
+      const blocked = workflows.filter(w => w.status === 'blocked').length;
+      checks.workflows = { running, blocked, total: workflows.length };
+      if (blocked > 0) {
+        if (status === 'ok') status = 'degraded';
+        checks.workflows.warning = `${blocked} blocked workflow(s)`;
+      }
+    } catch (err: any) {
+      checks.workflows = { status: 'error', error: err.message };
     }
-  } catch (err: any) {
-    checks.workflows = { status: 'error', error: err.message };
   }
 
   // Disk space

@@ -645,6 +645,7 @@ function cleanupZombieProcesses(): void {
         console.warn(`[watchdog] zombie process PID ${agent.pid} for terminal agent ${agent.id.slice(0, 8)} (${agent.status}) — killing`);
         try { process.kill(-agent.pid, 'SIGTERM'); } catch { /* not a process group */ }
         try { process.kill(agent.pid, 'SIGTERM'); } catch { /* already gone */ }
+        queries.updateAgent(agent.id, { pid: null });
         // Schedule SIGKILL as fallback
         setTimeout(() => {
           try {
@@ -653,8 +654,10 @@ function cleanupZombieProcesses(): void {
             try { process.kill(agent.pid!, 'SIGKILL'); } catch { /* ignore */ }
           } catch { /* already gone */ }
         }, 5_000).unref();
-      } catch {
-        // Process is already dead — good
+      } catch (err: any) {
+        if (err?.code === 'ESRCH') {
+          queries.updateAgent(agent.id, { pid: null });
+        }
       }
     }
   } catch (err) {

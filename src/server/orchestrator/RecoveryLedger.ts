@@ -64,7 +64,7 @@ export function claimRecovery(job: Job, reason: string, options: ClaimOptions = 
     : current;
 
   if (base.attempts >= maxAttempts) {
-    console.warn(`[recovery-ledger] deny ${reason} for job family ${familyId(job)}: ${base.attempts}/${maxAttempts} attempts used in window`);
+    console.log(`[recovery-ledger] deny ${reason} for job family ${familyId(job)}: ${base.attempts}/${maxAttempts} attempts used in window`);
     return false;
   }
 

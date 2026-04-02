@@ -180,6 +180,21 @@ describe('Health endpoint', () => {
     const result = db.prepare('SELECT 1 as val').get() as any;
     expect(result.val).toBe(1);
   });
+
+  it('reports uninitialized DB without throwing', async () => {
+    await cleanupTestDb();
+    const { default: healthRouter } = await import('../server/api/health.js');
+    const expressMod = await import('express');
+    const requestMod = await import('supertest');
+
+    const app = expressMod.default();
+    app.use('/', healthRouter);
+
+    const res = await requestMod.default(app).get('/');
+    expect(res.status).toBe(503);
+    expect(res.body.checks.db.status).toBe('unhealthy');
+    expect(res.body.checks.db.error).toContain('not initialized');
+  });
 });
 
 describe('Zombie process cleanup', () => {
@@ -315,6 +330,15 @@ describe('EventQueue', () => {
     // Events less than MAX_AGE_MS old should survive pruning
     const events = getEventsSince(0);
     expect(events.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('no-ops cleanly before DB initialization', async () => {
+    await cleanupTestDb();
+    const { pushEvent, getEventsSince, pruneEvents } = await import('../server/orchestrator/EventQueue.js');
+
+    expect(() => pushEvent('test:event', { data: 'test' })).not.toThrow();
+    expect(() => pruneEvents()).not.toThrow();
+    expect(getEventsSince(0)).toEqual([]);
   });
 });
 

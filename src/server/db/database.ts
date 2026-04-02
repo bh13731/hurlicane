@@ -8,6 +8,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let _db: DatabaseSync | null = null;
 
+export function isDbInitialized(): boolean {
+  return _db !== null;
+}
+
 export function getDb(): DatabaseSync {
   if (!_db) {
     throw new Error('Database not initialized. Call initDb() first.');

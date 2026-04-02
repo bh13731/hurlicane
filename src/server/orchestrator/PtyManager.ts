@@ -15,6 +15,16 @@ const CODEX = process.env.CODEX_BIN ?? 'codex';
 const MCP_PORT = process.env.MCP_PORT ?? '3947';
 const SCRIPTS_DIR = path.join(process.cwd(), 'data', 'agent-scripts');
 const PTY_LOG_DIR = path.join(process.cwd(), 'data', 'agent-logs');
+const TMUX = process.env.TMUX_BIN ?? 'tmux';
+
+function getExistingCwd(preferred?: string | null): string {
+  if (preferred) {
+    try {
+      if (fs.statSync(preferred).isDirectory()) return preferred;
+    } catch { /* fall through */ }
+  }
+  return process.cwd();
+}
 
 /**
  * Ensure a directory is marked as trusted in Codex's config.toml so the
@@ -194,7 +204,7 @@ export interface StartInteractiveOptions {
 }
 
 export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, resumeSessionId, autoFinish = false }: StartInteractiveOptions): void {
-  const workDir = (job as any).work_dir ?? process.cwd();
+  const workDir = getExistingCwd((job as any).work_dir ?? process.cwd());
   const model: string | null = (job as any).model ?? null;
   const mcpPort = Number(MCP_PORT);
 
@@ -308,11 +318,11 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
   try {
     // Kill any existing session with this name
     try {
-      execFileSync('tmux', ['kill-session', '-t', sessionName(agentId)], { stdio: 'pipe' });
+      execFileSync(TMUX, ['kill-session', '-t', sessionName(agentId)], { stdio: 'pipe' });
     } catch { /* no existing session — fine */ }
 
     // Create a new detached tmux session running our launcher script
-    execFileSync('tmux', [
+    execFileSync(TMUX, [
       'new-session', '-d',
       '-s', sessionName(agentId),
       '-x', String(cols),
@@ -322,12 +332,12 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
 
     // Set large scrollback so capture-pane -S - returns full history
     try {
-      execFileSync('tmux', ['set-option', '-t', sessionName(agentId), 'history-limit', '50000'], { stdio: 'pipe' });
+      execFileSync(TMUX, ['set-option', '-t', sessionName(agentId), 'history-limit', '50000'], { stdio: 'pipe' });
     } catch { /* ignore */ }
 
     // Enable mouse mode so scroll wheel enters tmux copy mode for history scrolling
     try {
-      execFileSync('tmux', ['set-option', '-t', sessionName(agentId), 'mouse', 'on'], { stdio: 'pipe' });
+      execFileSync(TMUX, ['set-option', '-t', sessionName(agentId), 'mouse', 'on'], { stdio: 'pipe' });
     } catch { /* ignore — older tmux may not support per-session mouse */ }
 
   } catch (err: any) {
@@ -353,8 +363,8 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
       if (isTmuxSessionAlive(agentId)) {
         if (useCodex) {
           try {
-            execFileSync('tmux', ['load-buffer', '-b', `agent-${agentId}`, pFile], { stdio: 'pipe' });
-            execFileSync('tmux', ['paste-buffer', '-b', `agent-${agentId}`, '-t', sessionName(agentId)], { stdio: 'pipe' });
+            execFileSync(TMUX, ['load-buffer', '-b', `agent-${agentId}`, pFile], { stdio: 'pipe' });
+            execFileSync(TMUX, ['paste-buffer', '-b', `agent-${agentId}`, '-t', sessionName(agentId)], { stdio: 'pipe' });
           } catch (err: any) {
             console.warn(`[pty ${agentId}] failed to paste codex prompt:`, err.message);
           }
@@ -363,7 +373,7 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
         try {
-          execFileSync('tmux', ['send-keys', '-t', sessionName(agentId), 'Enter'], { stdio: 'pipe' });
+          execFileSync(TMUX, ['send-keys', '-t', sessionName(agentId), 'Enter'], { stdio: 'pipe' });
         } catch (err: any) {
           console.warn(`[pty ${agentId}] failed to send Enter:`, err.message);
         }
@@ -456,16 +466,17 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
 
   let ptyInstance: IPty;
   try {
-    ptyInstance = ptySpawn('tmux', ['attach-session', '-t', sessionName(agentId)], {
+    ptyInstance = ptySpawn(TMUX, ['attach-session', '-t', sessionName(agentId)], {
       name: 'xterm-256color',
       cols,
       rows,
-      cwd: (job as any).work_dir ?? process.cwd(),
+      cwd: getExistingCwd((job as any).work_dir ?? process.cwd()),
       env: (() => {
         const env: Record<string, string> = {};
         for (const [k, v] of Object.entries(process.env)) {
           if (v !== undefined) env[k] = v;
         }
+        env['PATH'] = env['PATH'] ?? process.env.PATH ?? '';
         delete env['CLAUDECODE'];
         return env;
       })(),
