@@ -65,8 +65,8 @@ function _onJobCompleted(job: Job): void {
       if (shouldMarkProviderUnavailable(failureKind)) {
         markProviderRateLimited(getModelProvider(currentModel), 5 * 60 * 1000);
       }
-      const fallbackModel = getFallbackModel(currentModel);
-      if (fallbackModel !== currentModel) {
+      const fallbackModel = getWorkflowFallbackModel(workflow, job.workflow_phase as WorkflowPhase, currentModel);
+      if (fallbackModel && fallbackModel !== currentModel) {
         console.log(`[workflow ${workflow.id}] phase '${job.workflow_phase}' failed on ${currentModel} (${failureKind}) → retrying with ${fallbackModel}`);
         const phase = job.workflow_phase as WorkflowPhase;
         const cycle = job.workflow_cycle ?? workflow.current_cycle;
@@ -171,7 +171,7 @@ function _onJobCompleted(job: Job): void {
         // Marking as "complete" with unchecked milestones is misleading and prevents
         // the user from resuming. Block so they can increase max_cycles and continue.
         console.log(`[workflow ${workflow.id}] reached max cycles (${updated.max_cycles}) with ${milestones.done}/${milestones.total} milestones — marking blocked (not complete)`);
-        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'idle' as WorkflowPhase });
+        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'idle' as WorkflowPhase, blocked_reason: `Reached max cycles (${updated.max_cycles}) with ${milestones.done}/${milestones.total} milestones complete` });
       } else {
         // Advance to next cycle's review phase
         const nextCycle = updated.current_cycle + 1;
@@ -286,6 +286,7 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
 
   // Apply model override (used for auto-retry with fallback model on rate limits)
   if (modelOverride) model = modelOverride;
+  model = getWorkflowFallbackModel(workflow, phase, model) ?? model;
 
   const job = queries.insertJob({
     id: randomUUID(),
@@ -317,6 +318,79 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
   });
 
   console.log(`[workflow ${workflow.id}] spawned ${phase} job ${job.id.slice(0, 8)} (cycle ${cycle}, model: ${model})`);
+}
+
+function getWorkflowFallbackModel(
+  workflow: Workflow,
+  phase: WorkflowPhase,
+  currentModel: string,
+): string | null {
+  const candidates = new Set<string>();
+  const directFallback = getFallbackModel(currentModel);
+  if (directFallback && directFallback !== currentModel) candidates.add(directFallback);
+
+  candidates.add(workflow.implementer_model);
+  candidates.add('claude-sonnet-4-6');
+  candidates.add('claude-opus-4-6');
+  candidates.add('claude-haiku-4-5-20251001');
+  candidates.add('codex');
+
+  for (const candidate of candidates) {
+    if (!candidate || candidate === currentModel) continue;
+    const available = getAvailableModel(candidate);
+    if (available && available !== currentModel) return available;
+  }
+  return null;
+}
+
+export function reconcileRunningWorkflows(): void {
+  const ACTIVE = new Set(['queued', 'assigned', 'running']);
+  for (const workflow of queries.listWorkflows()) {
+    if (workflow.status !== 'running') continue;
+
+    const jobs = queries.getJobsForWorkflow(workflow.id);
+    const hasActiveJob = jobs.some(job => ACTIVE.has(job.status));
+    if (hasActiveJob) continue;
+
+    if (workflow.current_phase === 'idle') {
+      updateAndEmit(workflow.id, {
+        status: 'blocked',
+        blocked_reason: 'Workflow marked running but no active phase job exists',
+      });
+      continue;
+    }
+
+    const expectedCycle = workflow.current_phase === 'assess' ? 0 : workflow.current_cycle;
+    const latestPhaseJob = jobs
+      .filter(job => job.workflow_phase === workflow.current_phase && job.workflow_cycle === expectedCycle)
+      .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0];
+
+    if (!latestPhaseJob) {
+      updateAndEmit(workflow.id, {
+        status: 'blocked',
+        blocked_reason: `Workflow stuck in ${workflow.current_phase} with no phase job to resume`,
+      });
+      continue;
+    }
+
+    if (latestPhaseJob.status === 'done' || latestPhaseJob.status === 'failed' || latestPhaseJob.status === 'cancelled') {
+      const before = queries.getWorkflowById(workflow.id);
+      onJobCompleted(latestPhaseJob, { force: true });
+      const after = queries.getWorkflowById(workflow.id);
+      const progressed = !!after && (
+        after.status !== 'running'
+        || after.current_phase !== before?.current_phase
+        || after.current_cycle !== before?.current_cycle
+        || queries.getJobsForWorkflow(workflow.id).some(job => ACTIVE.has(job.status))
+      );
+      if (!progressed) {
+        updateAndEmit(workflow.id, {
+          status: 'blocked',
+          blocked_reason: `Workflow stuck after ${latestPhaseJob.status} ${workflow.current_phase} job ${latestPhaseJob.id.slice(0, 8)}`,
+        });
+      }
+    }
+  }
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -362,7 +436,7 @@ export function startWorkflow(workflow: Workflow): Job {
     description: prompt,
     context: null,
     priority: 0,
-    model: activeWorkflow.implementer_model,
+    model: getWorkflowFallbackModel(activeWorkflow, 'assess', activeWorkflow.implementer_model) ?? activeWorkflow.implementer_model,
     template_id: activeWorkflow.template_id,
     work_dir: activeWorkflow.worktree_path ?? activeWorkflow.work_dir,
     max_turns: effectiveMaxTurns(activeWorkflow.stop_mode_assess, activeWorkflow.stop_value_assess),
@@ -441,6 +515,8 @@ export function resumeWorkflow(
     default:
       throw new Error(`Cannot resume from phase '${phase}'`);
   }
+
+  model = getWorkflowFallbackModel(updated, phase as WorkflowPhase, model) ?? model;
 
   const job = queries.insertJob({
     id: randomUUID(),
