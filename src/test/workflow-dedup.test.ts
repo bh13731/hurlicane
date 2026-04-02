@@ -27,6 +27,7 @@ vi.mock('../server/orchestrator/WorkflowPrompts.js', () => ({
   buildAssessPrompt: vi.fn(() => 'mock assess prompt'),
   buildReviewPrompt: vi.fn(() => 'mock review prompt'),
   buildImplementPrompt: vi.fn(() => 'mock implement prompt'),
+  buildWorkflowRepairPrompt: vi.fn(() => 'mock repair prompt'),
 }));
 
 // Mock ModelClassifier for rate limit fallback tests
@@ -46,6 +47,17 @@ vi.mock('../server/orchestrator/ModelClassifier.js', () => ({
 
 vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
   classifyJobFailure: vi.fn(() => 'unknown'),
+  isFallbackEligibleFailure: vi.fn((kind: string) =>
+    kind === 'rate_limit'
+      || kind === 'provider_overload'
+      || kind === 'provider_capability'
+      || kind === 'provider_billing'
+  ),
+  shouldMarkProviderUnavailable: vi.fn((kind: string) =>
+    kind === 'rate_limit'
+      || kind === 'provider_overload'
+      || kind === 'provider_billing'
+  ),
 }));
 
 // Shared job ID used to prove cross-test dedup independence
@@ -76,6 +88,7 @@ describe('WorkflowManager: dedup guard', () => {
       current_cycle: 0,
     });
     upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1\n- [ ] M2', null);
+    upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
 
     const job = await insertTestJob({
       id: 'dedup-within-test',
@@ -120,6 +133,7 @@ describe('WorkflowManager: dedup guard', () => {
       current_cycle: 0,
     });
     upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1', null);
+    upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
 
     const job = await insertTestJob({
       id: SHARED_JOB_ID,
@@ -150,6 +164,7 @@ describe('WorkflowManager: dedup guard', () => {
       current_cycle: 0,
     });
     upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1', null);
+    upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
 
     const job = await insertTestJob({
       id: SHARED_JOB_ID,
@@ -192,6 +207,7 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
       current_cycle: 0,
     });
     upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1\n- [ ] M2\n- [x] M3', null);
+    upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
 
     const job = await insertTestJob({
       workflow_id: workflow.id,
@@ -216,6 +232,39 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     expect(reviewJob.workflow_id).toBe(workflow.id);
     expect(reviewJob.workflow_phase).toBe('review');
     expect(reviewJob.workflow_cycle).toBe(1);
+  });
+
+  it('assess completion missing notes spawns a repair job before blocking', async () => {
+    const socket = await import('../server/socket/SocketManager.js');
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { getWorkflowById, getJobsForWorkflow } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+    });
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'done',
+    });
+
+    onJobCompleted(job);
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('running');
+    expect(updated.current_phase).toBe('assess');
+
+    const jobs = getJobsForWorkflow(workflow.id);
+    const repairJob = jobs.find(j => j.id !== job.id);
+    expect(repairJob).toBeDefined();
+    expect(repairJob!.title).toContain('repair');
+    expect(vi.mocked(socket.emitWorkflowUpdate).mock.calls.map(c => c[0].status)).not.toContain('blocked');
   });
 
   it('failed phase job auto-retries with fallback model before blocking', async () => {
@@ -260,6 +309,36 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     // Should NOT have emitted blocked status
     const statuses = updateCalls.map(c => c[0].status);
     expect(statuses).not.toContain('blocked');
+  });
+
+  it('provider capability failures auto-retry with a fallback model', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { getWorkflowById, getJobsForWorkflow } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+      implementer_model: 'claude-sonnet-4-6[1m]',
+    });
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'failed',
+      model: 'claude-sonnet-4-6[1m]',
+    });
+
+    vi.mocked(classifyJobFailure).mockReturnValue('provider_capability');
+
+    onJobCompleted(job);
+
+    expect(getWorkflowById(workflow.id)!.status).toBe('running');
+    expect(getJobsForWorkflow(workflow.id).some(j => j.id !== job.id && j.title.includes('(fallback)'))).toBe(true);
   });
 
   it('generic phase failures block the workflow instead of poisoning the model', async () => {

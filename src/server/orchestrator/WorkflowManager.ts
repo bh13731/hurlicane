@@ -7,9 +7,9 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import type { Job, Workflow, WorkflowPhase, StopMode } from '../../shared/types.js';
 import { effectiveMaxTurns } from '../../shared/types.js';
-import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt } from './WorkflowPrompts.js';
+import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildWorkflowRepairPrompt } from './WorkflowPrompts.js';
 import { getFallbackModel, getModelProvider, markModelRateLimited, markProviderRateLimited } from './ModelClassifier.js';
-import { classifyJobFailure } from './FailureClassifier.js';
+import { classifyJobFailure, isFallbackEligibleFailure, shouldMarkProviderUnavailable } from './FailureClassifier.js';
 
 // Track jobs we've already processed to prevent double-exit race from triggering
 // duplicate spawns. Same pattern as DebateManager.
@@ -58,10 +58,12 @@ function _onJobCompleted(job: Job): void {
   if (job.status === 'failed') {
     const currentModel = job.model ?? workflow.implementer_model;
     const failureKind = classifyJobFailure(job.id);
-    if (failureKind === 'rate_limit' || failureKind === 'provider_overload') {
-      // Mark the model and provider as rate-limited so getFallbackModel skips them.
+    if (isFallbackEligibleFailure(failureKind)) {
+      // Mark the failing model, and provider when the error indicates account-wide/provider-wide trouble.
       markModelRateLimited(currentModel, 5 * 60 * 1000);
-      markProviderRateLimited(getModelProvider(currentModel), 5 * 60 * 1000);
+      if (shouldMarkProviderUnavailable(failureKind)) {
+        markProviderRateLimited(getModelProvider(currentModel), 5 * 60 * 1000);
+      }
       const fallbackModel = getFallbackModel(currentModel);
       if (fallbackModel !== currentModel) {
         console.log(`[workflow ${workflow.id}] phase '${job.workflow_phase}' failed on ${currentModel} (${failureKind}) → retrying with ${fallbackModel}`);
@@ -87,8 +89,14 @@ function _onJobCompleted(job: Job): void {
   switch (job.workflow_phase) {
     case 'assess': {
       // After assess: validate plan was written, then move to review
-      if (!planNote?.value) {
-        console.log(`[workflow ${workflow.id}] assess phase completed but no plan note found — marking blocked`);
+      const contractNote = queries.getNote(`workflow/${workflow.id}/contract`);
+      const missingArtifacts = [
+        !planNote?.value ? 'plan' : null,
+        !contractNote?.value ? 'contract' : null,
+      ].filter(Boolean) as string[];
+      if (missingArtifacts.length > 0) {
+        if (spawnRepairJob(workflow, 'assess', job.workflow_cycle ?? 0, missingArtifacts)) return;
+        console.log(`[workflow ${workflow.id}] assess phase completed but missing ${missingArtifacts.join(', ')} — marking blocked`);
         updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'assess' as WorkflowPhase });
         return;
       }
@@ -102,6 +110,12 @@ function _onJobCompleted(job: Job): void {
     }
 
     case 'review': {
+      if (!planNote?.value) {
+        if (spawnRepairJob(workflow, 'review', job.workflow_cycle ?? workflow.current_cycle, ['plan'])) return;
+        console.log(`[workflow ${workflow.id}] review phase completed but no plan note found — marking blocked`);
+        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'review' as WorkflowPhase });
+        return;
+      }
       // After review: update milestones (reviewer may have added/removed), then implement
       updateAndEmit(workflow.id, {
         milestones_total: milestones.total,
@@ -164,6 +178,50 @@ export function parseMilestones(planText: string): { total: number; done: number
 }
 
 // ─── Phase Job Spawning ─────────────────────────────────────────────────────
+
+function repairAttemptsKey(workflowId: string, phase: 'assess' | 'review', cycle: number): string {
+  return `workflow/${workflowId}/repair/${phase}/cycle-${cycle}`;
+}
+
+function spawnRepairJob(
+  workflow: Workflow,
+  phase: 'assess' | 'review',
+  cycle: number,
+  missingArtifacts: string[],
+): boolean {
+  const attemptsKey = repairAttemptsKey(workflow.id, phase, cycle);
+  const existingAttempts = parseInt(queries.getNote(attemptsKey)?.value ?? '0', 10);
+  if (existingAttempts >= 1) return false;
+
+  queries.upsertNote(attemptsKey, String(existingAttempts + 1), null);
+  const model = phase === 'review' ? workflow.reviewer_model : workflow.implementer_model;
+  const stopMode = phase === 'review' ? workflow.stop_mode_review : workflow.stop_mode_assess;
+  const stopValue = phase === 'review' ? workflow.stop_value_review : workflow.stop_value_assess;
+  const prompt = buildWorkflowRepairPrompt(workflow, phase, cycle, missingArtifacts);
+  const job = queries.insertJob({
+    id: randomUUID(),
+    title: `[Workflow C${cycle}] ${phase.charAt(0).toUpperCase() + phase.slice(1)} repair`,
+    description: prompt,
+    context: null,
+    priority: 0,
+    model,
+    template_id: workflow.template_id,
+    work_dir: workflow.worktree_path ?? workflow.work_dir,
+    max_turns: effectiveMaxTurns(stopMode, stopValue),
+    stop_mode: stopMode,
+    stop_value: stopValue,
+    project_id: workflow.project_id,
+    use_worktree: 0,
+    workflow_id: workflow.id,
+    workflow_cycle: cycle,
+    workflow_phase: phase,
+  });
+
+  socket.emitJobNew(job);
+  updateAndEmit(workflow.id, { current_phase: phase, current_cycle: cycle, status: 'running' });
+  console.log(`[workflow ${workflow.id}] spawned ${phase} repair job ${job.id.slice(0, 8)} for missing ${missingArtifacts.join(', ')}`);
+  return true;
+}
 
 function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, modelOverride?: string): void {
   const phaseLabels: Record<string, string> = { assess: 'Assess', review: 'Review', implement: 'Implement' };
