@@ -520,18 +520,24 @@ function captureAgentDiffSync(agentId: string, baseSha: string, workDir: string)
 /**
  * Capture git diff asynchronously so it does not block phase-transition
  * callbacks. Re-emits the agent update once the diff is stored.
+ *
+ * `endSha` and `uncommittedSnapshot` are captured synchronously *before*
+ * workflow callbacks fire, so a next-phase agent starting in the same
+ * worktree cannot contaminate the finishing agent's diff.
  */
-async function captureAgentDiffDeferred(agentId: string, baseSha: string, workDir: string): Promise<void> {
+async function captureAgentDiffDeferred(
+  agentId: string,
+  baseSha: string,
+  endSha: string,
+  uncommittedSnapshot: string,
+  workDir: string,
+): Promise<void> {
   try {
     const { stdout: committed } = await execAsync(
-      `git log --patch --no-color ${baseSha}..HEAD`,
+      `git log --patch --no-color ${baseSha}..${endSha}`,
       { cwd: workDir, timeout: 10000, maxBuffer: 1024 * 1024 }
     );
-    const { stdout: uncommitted } = await execAsync(
-      'git diff HEAD --no-color',
-      { cwd: workDir, timeout: 10000, maxBuffer: 1024 * 1024 }
-    );
-    const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
+    const fullDiff = [committed, uncommittedSnapshot].filter(s => s.trim()).join('\n');
     if (fullDiff.trim()) {
       queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
       // Re-emit so the dashboard picks up the diff
@@ -582,6 +588,18 @@ export async function handleJobCompletion(
         }
       }
     } catch (err) { console.error(`[agent ${agentId}] completion check error:`, err); Sentry.captureException(err); }
+  }
+
+  // ── Snapshot: capture immutable refs for deferred diff before callbacks can start next phase ──
+  let endSha: string | null = null;
+  let uncommittedSnapshot = '';
+  if (!needsDiffForChecks && agentRec?.base_sha) {
+    try {
+      endSha = execSync('git rev-parse HEAD', { cwd: workDir, timeout: 5000 }).toString().trim();
+    } catch { /* not a git repo */ }
+    try {
+      uncommittedSnapshot = execSync('git diff HEAD --no-color', { cwd: workDir, timeout: 10000 }).toString();
+    } catch { /* ignore */ }
   }
 
   // ── Critical path: finalize status, release locks, trigger state-machine callbacks ──
@@ -657,8 +675,8 @@ export async function handleJobCompletion(
   }
 
   // ── Deferred: capture diff asynchronously when not already captured ──
-  if (!needsDiffForChecks && agentRec?.base_sha) {
-    _lastDeferredDiffPromise = captureAgentDiffDeferred(agentId, agentRec.base_sha, workDir).catch(err => {
+  if (!needsDiffForChecks && agentRec?.base_sha && endSha) {
+    _lastDeferredDiffPromise = captureAgentDiffDeferred(agentId, agentRec.base_sha, endSha, uncommittedSnapshot, workDir).catch(err => {
       console.error(`[agent ${agentId}] deferred diff capture error:`, err);
     });
   }
