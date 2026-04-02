@@ -5,7 +5,7 @@ import { reattachAgent, getLogPath } from './AgentRunner.js';
 import { execFileSync } from 'child_process';
 import { isTmuxSessionAlive, attachPty } from './PtyManager.js';
 import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
-import { onJobCompleted as workflowOnJobCompleted } from './WorkflowManager.js';
+import { onJobCompleted as workflowOnJobCompleted, reconcileRunningWorkflows } from './WorkflowManager.js';
 import { orphanedWaits } from '../mcp/McpServer.js';
 import type { ClaudeStreamEvent } from '../../shared/types.js';
 import { isCodexModel, isAutoExitJob } from '../../shared/types.js';
@@ -262,7 +262,7 @@ export function runRecovery(): void {
 
   // Gap detector: find running workflows whose current-phase job is done but no next phase was spawned.
   // This happens when the server restarts between finish_job and onJobCompleted.
-  _recoverStuckWorkflows();
+  reconcileRunningWorkflows();
 }
 
 let _gapDetectorTimer: NodeJS.Timeout | null = null;
@@ -272,41 +272,10 @@ export function startWorkflowGapDetector(): void {
   if (_gapDetectorTimer) return;
   // Run every 60 seconds so stuck workflows recover within a minute of getting stuck.
   _gapDetectorTimer = setInterval(() => {
-    try { _recoverStuckWorkflows(); } catch (err) { console.error('[workflow-gap] tick error:', err); Sentry.captureException(err); }
+    try { reconcileRunningWorkflows(); } catch (err) { console.error('[workflow-gap] tick error:', err); Sentry.captureException(err); }
   }, 60_000);
 }
 
 export function stopWorkflowGapDetector(): void {
   if (_gapDetectorTimer) { clearInterval(_gapDetectorTimer); _gapDetectorTimer = null; }
-}
-
-function _recoverStuckWorkflows(): void {
-  const runningWorkflows = queries.listWorkflows().filter(w => w.status === 'running');
-  for (const workflow of runningWorkflows) {
-    if (workflow.current_phase === 'idle') continue;
-    const jobs = queries.getJobsForWorkflow(workflow.id);
-
-    // Assess always runs at cycle 0, but onJobCompleted bumps current_cycle to 1
-    // before calling spawnPhaseJob — so look for cycle 0 when stuck in assess.
-    const jobCycle = workflow.current_phase === 'assess' ? 0 : workflow.current_cycle;
-
-    // Find the most recent completed job for this phase
-    const phaseJob = jobs
-      .filter(j => j.workflow_phase === workflow.current_phase && j.workflow_cycle === jobCycle)
-      .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0];
-    if (!phaseJob || phaseJob.status !== 'done') continue;
-
-    // Check if the expected next-phase job already exists.
-    // Progression: assess→review(C1), review→implement(Cn), implement→review(Cn+1)
-    const cycle = workflow.current_cycle;
-    const hasNext = workflow.current_phase === 'implement'
-      ? jobs.some(j => j.workflow_phase === 'review' && j.workflow_cycle === cycle + 1)
-      : workflow.current_phase === 'review'
-        ? jobs.some(j => j.workflow_phase === 'implement' && j.workflow_cycle === cycle)
-        : jobs.some(j => j.workflow_phase === 'review' && j.workflow_cycle === 1); // assess stuck
-
-    if (hasNext) continue;
-    console.log(`[recovery] workflow ${workflow.id} stuck — ${workflow.current_phase} C${jobCycle} done but no next phase; re-firing onJobCompleted`);
-    try { workflowOnJobCompleted(phaseJob, { force: true }); } catch (err) { console.error(`[recovery] stuck workflow re-fire error:`, err); Sentry.captureException(err); }
-  }
 }

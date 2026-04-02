@@ -7,8 +7,8 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import type { Job, Workflow, WorkflowPhase, StopMode } from '../../shared/types.js';
 import { effectiveMaxTurns } from '../../shared/types.js';
-import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildWorkflowRepairPrompt } from './WorkflowPrompts.js';
-import { getFallbackModel, getAlternateProviderModel, getModelProvider, markModelRateLimited, markProviderRateLimited } from './ModelClassifier.js';
+import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildWorkflowRepairPrompt, type InlineContext } from './WorkflowPrompts.js';
+import { getAvailableModel, getFallbackModel, getAlternateProviderModel, getModelProvider, markModelRateLimited, markProviderRateLimited } from './ModelClassifier.js';
 import { classifyJobFailure, isFallbackEligibleFailure, isSameModelRetryEligible, shouldMarkProviderUnavailable } from './FailureClassifier.js';
 
 // Track jobs we've already processed to prevent double-exit race from triggering
@@ -65,8 +65,8 @@ function _onJobCompleted(job: Job): void {
       if (shouldMarkProviderUnavailable(failureKind)) {
         markProviderRateLimited(getModelProvider(currentModel), 5 * 60 * 1000);
       }
-      const fallbackModel = getFallbackModel(currentModel);
-      if (fallbackModel !== currentModel) {
+      const fallbackModel = getWorkflowFallbackModel(workflow, job.workflow_phase as WorkflowPhase, currentModel);
+      if (fallbackModel && fallbackModel !== currentModel) {
         console.log(`[workflow ${workflow.id}] phase '${job.workflow_phase}' failed on ${currentModel} (${failureKind}) → retrying with ${fallbackModel}`);
         const phase = job.workflow_phase as WorkflowPhase;
         const cycle = job.workflow_cycle ?? workflow.current_cycle;
@@ -132,6 +132,19 @@ function _onJobCompleted(job: Job): void {
         });
         return;
       }
+      // Plan and contract exist, but check that the plan has actual milestones.
+      // A 0-milestone plan causes wasted review→implement cycles until max_cycles.
+      if (milestones.total === 0) {
+        if (spawnRepairJob(workflow, 'assess', job.workflow_cycle ?? 0, ['plan'])) return;
+        const zeroReason = 'Assess phase produced a plan with no milestones';
+        console.log(`[workflow ${workflow.id}] ${zeroReason} — marking blocked`);
+        updateAndEmit(workflow.id, {
+          status: 'blocked',
+          current_phase: 'assess' as WorkflowPhase,
+          blocked_reason: zeroReason,
+        });
+        return;
+      }
       updateAndEmit(workflow.id, {
         milestones_total: milestones.total,
         milestones_done: milestones.done,
@@ -144,8 +157,9 @@ function _onJobCompleted(job: Job): void {
     case 'review': {
       if (!planNote?.value) {
         if (spawnRepairJob(workflow, 'review', job.workflow_cycle ?? workflow.current_cycle, ['plan'])) return;
-        console.log(`[workflow ${workflow.id}] review phase completed but no plan note found — marking blocked`);
-        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'review' as WorkflowPhase });
+        const reviewReason = 'Review phase completed but plan note was deleted or empty';
+        console.log(`[workflow ${workflow.id}] ${reviewReason} — marking blocked`);
+        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'review' as WorkflowPhase, blocked_reason: reviewReason });
         return;
       }
       // After review: update milestones (reviewer may have added/removed), then implement
@@ -181,8 +195,36 @@ function _onJobCompleted(job: Job): void {
         // Marking as "complete" with unchecked milestones is misleading and prevents
         // the user from resuming. Block so they can increase max_cycles and continue.
         console.log(`[workflow ${workflow.id}] reached max cycles (${updated.max_cycles}) with ${milestones.done}/${milestones.total} milestones — marking blocked (not complete)`);
-        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'idle' as WorkflowPhase });
+        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'idle' as WorkflowPhase, blocked_reason: `Reached max cycles (${updated.max_cycles}) with ${milestones.done}/${milestones.total} milestones complete` });
       } else {
+        // Zero-progress detection: if milestones_done didn't increase during this implement
+        // cycle, track consecutive zero-progress cycles and block after 2 to avoid burning
+        // max_cycles on an agent that can't make progress.
+        const preImplKey = `workflow/${workflow.id}/pre-implement-milestones/${updated.current_cycle}`;
+        const preImplNote = queries.getNote(preImplKey);
+        const zeroProgressKey = `workflow/${workflow.id}/zero-progress-count`;
+
+        if (preImplNote) {
+          const preImplDone = parseInt(preImplNote.value, 10);
+          if (milestones.done <= preImplDone) {
+            // No progress this cycle
+            const prevCount = parseInt(queries.getNote(zeroProgressKey)?.value ?? '0', 10);
+            const newCount = prevCount + 1;
+            const MAX_ZERO_PROGRESS = 2;
+            if (newCount >= MAX_ZERO_PROGRESS) {
+              const zpReason = `${newCount} consecutive implement cycles with no milestone progress (${milestones.done}/${milestones.total} complete)`;
+              console.log(`[workflow ${workflow.id}] ${zpReason} — marking blocked`);
+              updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'implement' as WorkflowPhase, blocked_reason: zpReason });
+              break;
+            }
+            queries.upsertNote(zeroProgressKey, String(newCount), null);
+            console.log(`[workflow ${workflow.id}] zero-progress implement cycle ${newCount}/${MAX_ZERO_PROGRESS} (${milestones.done}/${milestones.total})`);
+          } else {
+            // Progress was made — reset counter
+            queries.upsertNote(zeroProgressKey, '0', null);
+          }
+        }
+
         // Advance to next cycle's review phase
         const nextCycle = updated.current_cycle + 1;
         updateAndEmit(workflow.id, { current_cycle: nextCycle });
@@ -211,6 +253,32 @@ export function parseMilestones(planText: string): { total: number; done: number
   return { total: done + unchecked, done };
 }
 
+// ─── Worktree Branch Verification ──────────────────────────────────────────
+
+/**
+ * Verify a worktree HEAD is on the expected branch. If drifted, attempt checkout.
+ * Returns { ok: true } on success, or { ok: false, error } if checkout fails.
+ */
+export function ensureWorktreeBranch(
+  worktreePath: string,
+  expectedBranch: string,
+): { ok: true } | { ok: false; error: string } {
+  try {
+    const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', {
+      cwd: worktreePath, stdio: 'pipe', timeout: 5000,
+    }).toString().trim();
+    if (currentBranch !== expectedBranch) {
+      console.warn(`[worktree] on '${currentBranch}' instead of '${expectedBranch}' — switching`);
+      execSync(`git checkout ${JSON.stringify(expectedBranch)}`, {
+        cwd: worktreePath, stdio: 'pipe', timeout: 10000,
+      });
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message ?? String(err) };
+  }
+}
+
 // ─── Phase Job Spawning ─────────────────────────────────────────────────────
 
 function repairAttemptsKey(workflowId: string, phase: 'assess' | 'review', cycle: number): string {
@@ -225,7 +293,7 @@ function spawnRepairJob(
 ): boolean {
   const attemptsKey = repairAttemptsKey(workflow.id, phase, cycle);
   const existingAttempts = parseInt(queries.getNote(attemptsKey)?.value ?? '0', 10);
-  if (existingAttempts >= 1) return false;
+  if (existingAttempts >= 2) return false;
 
   queries.upsertNote(attemptsKey, String(existingAttempts + 1), null);
   const model = phase === 'review' ? workflow.reviewer_model : workflow.implementer_model;
@@ -276,26 +344,50 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
       stopValue = workflow.stop_value_assess;
       prompt = buildAssessPrompt(workflow);
       break;
-    case 'review':
+    case 'review': {
       model = workflow.reviewer_model;
       maxTurns = workflow.max_turns_review;
       stopMode = workflow.stop_mode_review;
       stopValue = workflow.stop_value_review;
-      prompt = buildReviewPrompt(workflow, cycle);
+      const reviewCtx = fetchInlineContext(workflow.id);
+      prompt = buildReviewPrompt(workflow, cycle, reviewCtx);
       break;
-    case 'implement':
+    }
+    case 'implement': {
       model = workflow.implementer_model;
       maxTurns = workflow.max_turns_implement;
       stopMode = workflow.stop_mode_implement;
       stopValue = workflow.stop_value_implement;
-      prompt = buildImplementPrompt(workflow, cycle);
+      const implCtx = fetchInlineContext(workflow.id);
+      prompt = buildImplementPrompt(workflow, cycle, implCtx);
       break;
+    }
     default:
       throw new Error(`Invalid phase: ${phase}`);
   }
 
   // Apply model override (used for auto-retry with fallback model on rate limits)
   if (modelOverride) model = modelOverride;
+  model = getWorkflowFallbackModel(workflow, phase, model) ?? model;
+
+  // Verify worktree branch hasn't drifted before spawning
+  if (workflow.worktree_path && workflow.worktree_branch) {
+    const branchCheck = ensureWorktreeBranch(workflow.worktree_path, workflow.worktree_branch);
+    if (!branchCheck.ok) {
+      const reason = `Worktree branch verification failed before ${phase}: ${branchCheck.error}`;
+      console.log(`[workflow ${workflow.id}] ${reason} — marking blocked`);
+      updateAndEmit(workflow.id, { status: 'blocked', current_phase: phase, blocked_reason: reason });
+      return;
+    }
+  }
+
+  // Before spawning an implement job, snapshot current milestones_done so we can
+  // detect zero-progress cycles when the implement job completes.
+  if (phase === 'implement') {
+    const planNote = queries.getNote(`workflow/${workflow.id}/plan`);
+    const milestones = parseMilestones(planNote?.value ?? '');
+    queries.upsertNote(`workflow/${workflow.id}/pre-implement-milestones/${cycle}`, String(milestones.done), null);
+  }
 
   const job = queries.insertJob({
     id: randomUUID(),
@@ -327,6 +419,88 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
   });
 
   console.log(`[workflow ${workflow.id}] spawned ${phase} job ${job.id.slice(0, 8)} (cycle ${cycle}, model: ${model})`);
+}
+
+function getWorkflowFallbackModel(
+  workflow: Workflow,
+  phase: WorkflowPhase,
+  currentModel: string,
+): string | null {
+  // Fix-5: early return — no fallback needed if the current model is already available.
+  if (getAvailableModel(currentModel) === currentModel) return null;
+
+  const candidates = new Set<string>();
+  const directFallback = getFallbackModel(currentModel);
+  if (directFallback && directFallback !== currentModel) candidates.add(directFallback);
+
+  // Fix-6: include the phase-appropriate workflow model so the user's chosen
+  // reviewer_model is tried before falling through to hardcoded alternatives.
+  if (phase === 'review') candidates.add(workflow.reviewer_model);
+  candidates.add(workflow.implementer_model);
+
+  // Fix-8: use [1m] variants to match MODEL_FALLBACK_CHAIN and avoid returning
+  // a non-[1m] variant of the same model family as a "fallback".
+  candidates.add('claude-sonnet-4-6[1m]');
+  candidates.add('claude-opus-4-6[1m]');
+  candidates.add('claude-haiku-4-5-20251001');
+  candidates.add('codex');
+
+  for (const candidate of candidates) {
+    if (!candidate || candidate === currentModel) continue;
+    const available = getAvailableModel(candidate);
+    if (available && available !== currentModel) return available;
+  }
+  return null;
+}
+
+export function reconcileRunningWorkflows(): void {
+  const ACTIVE = new Set(['queued', 'assigned', 'running']);
+  for (const workflow of queries.listWorkflows()) {
+    if (workflow.status !== 'running') continue;
+
+    const jobs = queries.getJobsForWorkflow(workflow.id);
+    const hasActiveJob = jobs.some(job => ACTIVE.has(job.status));
+    if (hasActiveJob) continue;
+
+    if (workflow.current_phase === 'idle') {
+      updateAndEmit(workflow.id, {
+        status: 'blocked',
+        blocked_reason: 'Workflow marked running but no active phase job exists',
+      });
+      continue;
+    }
+
+    const expectedCycle = workflow.current_phase === 'assess' ? 0 : workflow.current_cycle;
+    const latestPhaseJob = jobs
+      .filter(job => job.workflow_phase === workflow.current_phase && job.workflow_cycle === expectedCycle)
+      .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0];
+
+    if (!latestPhaseJob) {
+      updateAndEmit(workflow.id, {
+        status: 'blocked',
+        blocked_reason: `Workflow stuck in ${workflow.current_phase} with no phase job to resume`,
+      });
+      continue;
+    }
+
+    if (latestPhaseJob.status === 'done' || latestPhaseJob.status === 'failed' || latestPhaseJob.status === 'cancelled') {
+      const before = queries.getWorkflowById(workflow.id);
+      onJobCompleted(latestPhaseJob, { force: true });
+      const after = queries.getWorkflowById(workflow.id);
+      const progressed = !!after && (
+        after.status !== 'running'
+        || after.current_phase !== before?.current_phase
+        || after.current_cycle !== before?.current_cycle
+        || queries.getJobsForWorkflow(workflow.id).some(job => ACTIVE.has(job.status))
+      );
+      if (!progressed) {
+        updateAndEmit(workflow.id, {
+          status: 'blocked',
+          blocked_reason: `Workflow stuck after ${latestPhaseJob.status} ${workflow.current_phase} job ${latestPhaseJob.id.slice(0, 8)}`,
+        });
+      }
+    }
+  }
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -372,7 +546,7 @@ export function startWorkflow(workflow: Workflow): Job {
     description: prompt,
     context: null,
     priority: 0,
-    model: activeWorkflow.implementer_model,
+    model: getWorkflowFallbackModel(activeWorkflow, 'assess', activeWorkflow.implementer_model) ?? activeWorkflow.implementer_model,
     template_id: activeWorkflow.template_id,
     work_dir: activeWorkflow.worktree_path ?? activeWorkflow.work_dir,
     max_turns: effectiveMaxTurns(activeWorkflow.stop_mode_assess, activeWorkflow.stop_value_assess),
@@ -404,7 +578,20 @@ export function resumeWorkflow(
     throw new Error(`Cannot resume workflow in status '${workflow.status}'`);
   }
 
+  // Re-fetch to get current worktree fields (caller's object may be stale)
+  const current = queries.getWorkflowById(workflow.id)!;
+
+  // Verify worktree branch BEFORE changing status — if this fails, workflow stays 'blocked'
+  if (current.worktree_path && current.worktree_branch) {
+    const branchCheck = ensureWorktreeBranch(current.worktree_path, current.worktree_branch);
+    if (!branchCheck.ok) {
+      throw new Error(`Worktree branch verification failed before resuming: ${branchCheck.error}`);
+    }
+  }
+
   updateAndEmit(workflow.id, { status: 'running', blocked_reason: null });
+  // Reset zero-progress counter so resumed workflows get a fresh budget
+  queries.upsertNote(`workflow/${workflow.id}/zero-progress-count`, '0', null);
   const updated = queries.getWorkflowById(workflow.id)!;
 
   // Use target phase/cycle if provided, otherwise resume the blocked phase
@@ -434,23 +621,29 @@ export function resumeWorkflow(
       stopValue = updated.stop_value_assess;
       prompt = buildAssessPrompt(updated);
       break;
-    case 'review':
+    case 'review': {
       model = updated.reviewer_model;
       maxTurns = updated.max_turns_review;
       stopMode = updated.stop_mode_review;
       stopValue = updated.stop_value_review;
-      prompt = buildReviewPrompt(updated, cycle);
+      const reviewCtx = fetchInlineContext(updated.id);
+      prompt = buildReviewPrompt(updated, cycle, reviewCtx);
       break;
-    case 'implement':
+    }
+    case 'implement': {
       model = updated.implementer_model;
       maxTurns = updated.max_turns_implement;
       stopMode = updated.stop_mode_implement;
       stopValue = updated.stop_value_implement;
-      prompt = buildImplementPrompt(updated, cycle);
+      const implCtx = fetchInlineContext(updated.id);
+      prompt = buildImplementPrompt(updated, cycle, implCtx);
       break;
+    }
     default:
       throw new Error(`Cannot resume from phase '${phase}'`);
   }
+
+  model = getWorkflowFallbackModel(updated, phase as WorkflowPhase, model) ?? model;
 
   const job = queries.insertJob({
     id: randomUUID(),
@@ -489,18 +682,9 @@ export function finalizeWorkflow(workflow: Workflow): void {
   // Ensure the worktree is on the correct branch before pushing.
   // Agents may have drifted to main — switch back and cherry-pick if needed.
   if (worktree_branch) {
-    try {
-      const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', {
-        cwd: worktree_path, stdio: 'pipe', timeout: 5000,
-      }).toString().trim();
-      if (currentBranch !== worktree_branch) {
-        console.warn(`[workflow ${workflow.id}] worktree on '${currentBranch}' instead of '${worktree_branch}' — switching`);
-        execSync(`git checkout ${JSON.stringify(worktree_branch)}`, {
-          cwd: worktree_path, stdio: 'pipe', timeout: 10000,
-        });
-      }
-    } catch (err: any) {
-      console.warn(`[workflow ${workflow.id}] branch check failed:`, err.message);
+    const branchCheck = ensureWorktreeBranch(worktree_path, worktree_branch);
+    if (!branchCheck.ok) {
+      console.warn(`[workflow ${workflow.id}] branch check failed:`, branchCheck.error);
     }
   }
 
@@ -586,6 +770,17 @@ function _buildPrBody(workflow: Workflow, planText: string | null): string {
     `🤖 Generated by a Hurlicane autonomous agent run`,
     `Implementer: \`${workflow.implementer_model}\` · Reviewer: \`${workflow.reviewer_model}\``,
   ].join('\n');
+}
+
+// ─── Inline Context ─────────────────────────────────────────────────────────
+
+/** Fetch plan, contract, and worklog notes for inline inclusion in prompts. */
+export function fetchInlineContext(workflowId: string): InlineContext {
+  const plan = queries.getNote(`workflow/${workflowId}/plan`)?.value ?? null;
+  const contract = queries.getNote(`workflow/${workflowId}/contract`)?.value ?? null;
+  const worklogNotes = queries.listNotes(`workflow/${workflowId}/worklog/`);
+  const worklogs = worklogNotes.map(n => ({ key: n.key, value: n.value }));
+  return { plan, contract, worklogs };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

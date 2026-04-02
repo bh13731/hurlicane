@@ -127,6 +127,31 @@ When all milestones are checked off (or max cycles reached), the workflow finali
     -H 'Content-Type: application/json' \
     -d '{"phase": "implement", "cycle": 3}'
   ```
+  Use `force=true` to resume a workflow that is still marked as running (e.g., after a crash).
+
+### Recovery & Self-Healing
+
+Autonomous agent runs include several mechanisms that detect failures and recover automatically, so long-running workflows keep progressing without manual intervention.
+
+**Blocked reason tracking.** Every path that blocks a workflow sets a structured `blocked_reason` explaining what went wrong and what needs to happen next. This is visible in the dashboard and returned by the API.
+
+**Plan validation.** After the assess phase, the workflow checks that the plan note exists and contains at least one milestone checkbox. If the plan is empty or missing, a repair job is spawned to fix it. This prevents the workflow from entering the review/implement loop with nothing to work on.
+
+**Repair jobs.** When a required artifact (plan or contract note) is missing at the start of a phase, the workflow spawns a repair agent to regenerate it. Each phase/cycle gets a budget of 2 repair attempts before the workflow blocks with a descriptive reason.
+
+**Zero-progress detection.** Before each implement phase, the workflow snapshots how many milestones are done. After implement completes, it compares against the snapshot. Two consecutive implement cycles with no new milestones checked off block the workflow — this prevents infinite loops where the implementer runs but accomplishes nothing. The counter resets when progress is made, and `resume` clears it.
+
+**Model fallback rotation.** When a model hits a rate limit, the workflow rotates through candidate models including extended-thinking `[1m]` variants. The candidate set is phase-aware: review phases include the reviewer model, implement phases include the implementer model. If all candidates are unavailable, the workflow blocks with a descriptive reason.
+
+**Alternate provider fallback.** After exhausting same-model retries (budget of 3) for transient CLI failures like `codex_cli_crash` or `stdin_hang`, the workflow falls back to an alternate provider model. If no alternate is available, it blocks.
+
+**Worktree branch verification.** Before spawning any phase job, the workflow verifies the git worktree is on the expected branch. If the checkout fails (e.g., the worktree was deleted or the branch drifted), the workflow blocks immediately rather than writing to the wrong branch. This check also runs on `resume`.
+
+**Resume error handling.** The resume API validates the workflow state before changing status, so a failed branch check doesn't leave the workflow orphaned in a `running` state. `force=true` re-reads the workflow from the database to avoid acting on stale data. Errors return a 500 JSON response.
+
+**Reconciliation.** On server startup, `reconcileRunningWorkflows` scans for workflows that were `running` when the server last stopped. It detects idle phases (no active job) and respawns them, and blocks workflows whose required artifacts are missing.
+
+**Inline context.** Phase prompts pre-load the plan, contract, and recent worklogs directly into the agent's prompt (capped at 50,000 characters total). This reduces the chance of agents failing because they couldn't read a shared note.
 
 ## Using the Dashboard
 

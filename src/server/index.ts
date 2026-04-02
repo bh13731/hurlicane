@@ -53,10 +53,7 @@ async function main() {
   // Populate FTS index for any existing output rows not yet indexed
   queries.rebuildFts();
 
-  // 2. Recovery — mark stale agents as failed, requeue their jobs
-  runRecovery();
-
-  // 3. Main Express app
+  // 2. Main Express app
   const app = express();
   app.use(cors());
   app.use(compression());
@@ -123,6 +120,9 @@ async function main() {
       }
     });
   });
+
+  // Recovery may emit socket updates; run it only after SocketManager exists.
+  runRecovery();
 
   // 5. MCP server on separate port
   const mcpApp = createMcpApp();

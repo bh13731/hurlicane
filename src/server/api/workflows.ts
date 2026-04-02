@@ -86,7 +86,7 @@ router.post('/:id/cancel', (req, res) => {
 // Accepts optional body: { phase?: 'assess' | 'review' | 'implement', cycle?: number, force?: boolean }
 // force=true allows resuming a 'running' workflow that has no active jobs (orphaned state).
 router.post('/:id/resume', (req, res) => {
-  const workflow = queries.getWorkflowById(req.params.id);
+  let workflow = queries.getWorkflowById(req.params.id);
   if (!workflow) { res.status(404).json({ error: 'not found' }); return; }
 
   const force = req.body?.force === true;
@@ -95,6 +95,7 @@ router.post('/:id/resume', (req, res) => {
     // Force-resume: mark as blocked first so resumeWorkflow accepts it, then emit update
     const blocked = queries.updateWorkflow(workflow.id, { status: 'blocked' });
     if (blocked) socket.emitWorkflowUpdate(blocked);
+    workflow = blocked ?? workflow;
   } else if (workflow.status !== 'blocked') {
     res.status(400).json({ error: `Workflow is ${workflow.status}, can only resume blocked workflows (use force=true for stuck running workflows)` });
     return;
@@ -108,9 +109,13 @@ router.post('/:id/resume', (req, res) => {
     return;
   }
 
-  const job = resumeWorkflow(workflow, { phase: targetPhase as any, cycle: targetCycle });
-  const updated = queries.getWorkflowById(workflow.id);
-  res.json({ workflow: updated, jobs: [job] });
+  try {
+    const job = resumeWorkflow(workflow, { phase: targetPhase as any, cycle: targetCycle });
+    const updated = queries.getWorkflowById(workflow.id);
+    res.json({ workflow: updated, jobs: [job] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message ?? 'Failed to resume workflow' });
+  }
 });
 
 export default router;
