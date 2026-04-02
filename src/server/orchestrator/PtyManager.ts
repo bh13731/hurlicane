@@ -54,6 +54,19 @@ const _ptyBuffers = new Map<string, string[]>();
 const _pendingResizes = new Map<string, { cols: number; rows: number }>();
 const PTY_BUFFER_MAX = 2000;
 
+// PTY spawn resilience constants
+const MAX_PTY_SESSIONS = Number(process.env.MAX_PTY_SESSIONS ?? 50);
+const PTY_SPAWN_MAX_RETRIES = 3;
+const PTY_SPAWN_BASE_DELAY_MS = 2000;
+
+function checkPtyResourceAvailability(): { ok: boolean; reason?: string } {
+  const active = _ptys.size;
+  if (active >= MAX_PTY_SESSIONS) {
+    return { ok: false, reason: `Active PTY sessions (${active}) at limit (${MAX_PTY_SESSIONS})` };
+  }
+  return { ok: true };
+}
+
 // Persistent file descriptors for PTY log writes (avoids open/close per write)
 const _ptyLogFds = new Map<string, number>();
 // Periodic fsync for PTY logs to ensure durability without syncing every write
@@ -289,6 +302,9 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
     `export ORCHESTRATOR_AGENT_ID=${JSON.stringify(agentId)}`,
     `export ORCHESTRATOR_API_URL=${JSON.stringify(`http://localhost:${process.env.PORT ?? 3456}`)}`,
     `unset CLAUDECODE`,
+    `unset SENTRY_DSN`,
+    `unset SENTRY_RELEASE`,
+    `unset SENTRY_ENVIRONMENT`,
     // Ensure the correct branch is checked out before the agent runs.
     // Prevents agents from committing to main when working in a worktree.
     ...(expectedBranch ? [
@@ -309,6 +325,18 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
   ].join('\n') + '\n';
   fs.writeFileSync(script, scriptLines, { mode: 0o755 });
 
+  // Resource pre-check — avoid spawn-fail loops when system is exhausted
+  const resourceCheck = checkPtyResourceAvailability();
+  if (!resourceCheck.ok) {
+    const msg = `PTY resource check failed: ${resourceCheck.reason}`;
+    console.warn(`[pty ${agentId}] ${msg} — marking job failed with cooldown`);
+    queries.updateAgent(agentId, { status: 'failed', error_message: msg, finished_at: Date.now() });
+    queries.updateJobStatus(job.id, 'failed');
+    const updated = queries.getAgentWithJob(agentId);
+    if (updated) socket.emitAgentUpdate(updated);
+    return;
+  }
+
   // Clear any previous PTY log and snapshot so this fresh session starts from a clean slate
   closePtyLogFd(agentId); // close any lingering FD from a previous session
   fs.mkdirSync(PTY_LOG_DIR, { recursive: true });
@@ -328,7 +356,17 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
       '-x', String(cols),
       '-y', String(rows),
       script,
-    ], { cwd: workDir, stdio: 'pipe' });
+    ], {
+      cwd: workDir,
+      stdio: 'pipe',
+      env: (() => {
+        const e = { ...process.env };
+        delete e['SENTRY_DSN'];
+        delete e['SENTRY_RELEASE'];
+        delete e['SENTRY_ENVIRONMENT'];
+        return e;
+      })(),
+    });
 
     // Set large scrollback so capture-pane -S - returns full history
     try {
@@ -345,6 +383,14 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
     Sentry.captureException(err);
     queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
     queries.updateJobStatus(job.id, 'failed');
+
+    // Detect resource exhaustion errors and add a cooldown to prevent tight retry loops
+    const isResourceError = /posix_spawnp|EMFILE|ENFILE|EAGAIN|resource/i.test(err.message);
+    if (isResourceError) {
+      const RESOURCE_COOLDOWN_MS = 30_000;
+      console.warn(`[pty ${agentId}] resource exhaustion detected — cooling down for ${RESOURCE_COOLDOWN_MS / 1000}s`);
+    }
+
     const updated = queries.getAgentWithJob(agentId);
     if (updated) socket.emitAgentUpdate(updated);
     return;
@@ -437,7 +483,7 @@ function flushDebateNdjson(agentId: string): void {
   } catch { /* no ndjson file or read error — skip silently */ }
 }
 
-export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): void {
+export async function attachPty(agentId: string, job: Job, cols = 100, rows = 50): Promise<void> {
   if (_ptys.has(agentId)) return; // already attached
 
   // For debate-stage agents running --print, start tailing the tee'd .ndjson file so
@@ -464,31 +510,52 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
     return;
   }
 
-  let ptyInstance: IPty;
-  try {
-    ptyInstance = ptySpawn(TMUX, ['attach-session', '-t', sessionName(agentId)], {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd: getExistingCwd((job as any).work_dir ?? process.cwd()),
-      env: (() => {
-        const env: Record<string, string> = {};
-        for (const [k, v] of Object.entries(process.env)) {
-          if (v !== undefined) env[k] = v;
-        }
-        env['PATH'] = env['PATH'] ?? process.env.PATH ?? '';
-        delete env['CLAUDECODE'];
-        return env;
-      })(),
-    });
-  } catch (err: any) {
-    // PTY viewer failed but the tmux session (and Claude process) may still be running.
-    // For auto-exit jobs, tailing is already set up above.
-    // For all jobs, set up a tmux poll to detect when the agent exits.
+  // Retry ptySpawn with exponential backoff — posix_spawnp can fail transiently
+  // under resource pressure (FD exhaustion, process limits)
+  let ptyInstance: IPty | null = null;
+  let lastErr: Error | null = null;
+  const ptyEnv = (() => {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined) env[k] = v;
+    }
+    env['PATH'] = env['PATH'] ?? process.env.PATH ?? '';
+    delete env['CLAUDECODE'];
+    delete env['SENTRY_DSN'];
+    delete env['SENTRY_RELEASE'];
+    delete env['SENTRY_ENVIRONMENT'];
+    return env;
+  })();
+
+  for (let attempt = 0; attempt <= PTY_SPAWN_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delay = PTY_SPAWN_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+      console.warn(`[pty ${agentId}] retrying PTY attach (attempt ${attempt + 1}/${PTY_SPAWN_MAX_RETRIES + 1}) after ${delay}ms`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      if (!isTmuxSessionAlive(agentId)) break;
+    }
+    try {
+      ptyInstance = ptySpawn(TMUX, ['attach-session', '-t', sessionName(agentId)], {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd: getExistingCwd((job as any).work_dir ?? process.cwd()),
+        env: ptyEnv,
+      });
+      break;
+    } catch (err: any) {
+      lastErr = err;
+      console.warn(`[pty ${agentId}] PTY spawn attempt ${attempt + 1} failed: ${err.message}`);
+    }
+  }
+
+  if (!ptyInstance) {
+    // All retries exhausted — fall back to polling if tmux session is alive
+    const err = lastErr!;
     if (isAutoExitJob(job as any)) {
-      console.warn(`[pty ${agentId}] PTY attach failed (tailing continues):`, err.message);
+      console.warn(`[pty ${agentId}] PTY attach failed after ${PTY_SPAWN_MAX_RETRIES + 1} attempts (tailing continues):`, err.message);
     } else {
-      console.warn(`[pty ${agentId}] PTY attach failed (agent may still be running):`, err.message);
+      console.warn(`[pty ${agentId}] PTY attach failed after ${PTY_SPAWN_MAX_RETRIES + 1} attempts:`, err.message);
     }
     if (isTmuxSessionAlive(agentId)) {
       const exitPoll = setInterval(() => {
@@ -504,7 +571,6 @@ export function attachPty(agentId: string, job: Job, cols = 100, rows = 50): voi
         });
       }, 5000);
     } else if (!isAutoExitJob(job as any)) {
-      // Tmux session didn't start — genuinely failed
       queries.updateAgent(agentId, { status: 'failed', error_message: err.message, finished_at: Date.now() });
       queries.updateJobStatus(job.id, 'failed');
       const updated = queries.getAgentWithJob(agentId);

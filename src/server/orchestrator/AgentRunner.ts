@@ -256,6 +256,12 @@ export function runAgent(options: RunOptions): void {
     env: (() => {
       const env = { ...process.env };
       delete env['CLAUDECODE'];
+      // Strip Sentry vars so agent subprocesses don't report test-suite
+      // exceptions to the orchestrator's Sentry project. Repos with their
+      // own Sentry load their DSN from their own .env files.
+      delete env['SENTRY_DSN'];
+      delete env['SENTRY_RELEASE'];
+      delete env['SENTRY_ENVIRONMENT'];
       env['ORCHESTRATOR_AGENT_ID'] = agentId;
       env['ORCHESTRATOR_API_URL'] = `http://localhost:${process.env.PORT ?? 3456}`;
       // Auto-activate Python virtual environment if present in the working directory,
