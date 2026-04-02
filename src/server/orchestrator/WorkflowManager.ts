@@ -10,6 +10,7 @@ import { effectiveMaxTurns } from '../../shared/types.js';
 import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt } from './WorkflowPrompts.js';
 import { getFallbackModel, getModelProvider, markModelRateLimited, markProviderRateLimited } from './ModelClassifier.js';
 import { classifyJobFailure } from './FailureClassifier.js';
+import { nudgeQueue } from './WorkQueueManager.js';
 
 // Track jobs we've already processed to prevent double-exit race from triggering
 // duplicate spawns. Same pattern as DebateManager.
@@ -227,6 +228,7 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
   });
 
   socket.emitJobNew(job);
+  nudgeQueue();
 
   // Update workflow state
   updateAndEmit(workflow.id, {
@@ -294,6 +296,7 @@ export function startWorkflow(workflow: Workflow): Job {
   });
 
   socket.emitJobNew(job);
+  nudgeQueue();
   updateAndEmit(activeWorkflow.id, { current_phase: 'assess' as WorkflowPhase, current_cycle: 0 });
   console.log(`[workflow ${activeWorkflow.id}] started — assess job ${job.id.slice(0, 8)}`);
   return job;
@@ -380,6 +383,7 @@ export function resumeWorkflow(
   });
 
   socket.emitJobNew(job);
+  nudgeQueue();
   console.log(`[workflow ${workflow.id}] resumed — ${phase} job ${job.id.slice(0, 8)} (cycle ${cycle})`);
   return job;
 }
