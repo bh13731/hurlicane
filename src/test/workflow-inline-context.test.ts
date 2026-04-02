@@ -23,6 +23,7 @@ import {
   buildReviewPrompt,
   buildImplementPrompt,
   renderInlineContext,
+  hasInlineContent,
   INLINE_CONTEXT_MAX_CHARS,
   type InlineWorkflowContext,
 } from '../server/orchestrator/WorkflowPrompts.js';
@@ -65,6 +66,32 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
     ...overrides,
   };
 }
+
+describe('hasInlineContent', () => {
+  it('returns false for undefined', () => {
+    expect(hasInlineContent(undefined)).toBe(false);
+  });
+
+  it('returns false for object with all empty fields', () => {
+    expect(hasInlineContent({ plan: undefined, contract: undefined, worklogs: [] })).toBe(false);
+  });
+
+  it('returns false for object with empty strings and empty worklogs', () => {
+    expect(hasInlineContent({ plan: '', contract: '', worklogs: [] })).toBe(false);
+  });
+
+  it('returns true when plan has content', () => {
+    expect(hasInlineContent({ plan: 'some plan' })).toBe(true);
+  });
+
+  it('returns true when contract has content', () => {
+    expect(hasInlineContent({ contract: 'some contract' })).toBe(true);
+  });
+
+  it('returns true when worklogs has entries', () => {
+    expect(hasInlineContent({ worklogs: [{ key: 'k', value: 'v' }] })).toBe(true);
+  });
+});
 
 describe('renderInlineContext', () => {
   const planKey = 'workflow/wf-test-123/plan';
@@ -144,14 +171,12 @@ describe('buildReviewPrompt with InlineWorkflowContext', () => {
   it('falls back to read_note instructions when inline context has empty values', () => {
     const emptyCtx: InlineWorkflowContext = { plan: undefined, contract: undefined, worklogs: [] };
     const prompt = buildReviewPrompt(wf, 2, emptyCtx);
-    // hasInline is !!inlineContext which is truthy for the object, but renderInlineContext returns ''
-    // so the prompt should still mention read_note indirectly through the read context section
-    // The current code: hasInline = !!inlineContext evaluates truthy — this is the M20 bug.
-    // For now, verify the prompt does NOT contain actual pre-loaded content sections.
-    // The read context section says "pre-loaded below" but renderInlineContext returns empty.
-    // This test documents the current (buggy) behavior that M20 will fix.
-    expect(prompt).not.toContain('Plan (snapshot');
-    expect(prompt).not.toContain('Worklogs (read-only snapshots)');
+    // With empty context, hasInlineContent returns false so prompts use read_note fallback
+    expect(prompt).toContain('Read the current plan: `read_note');
+    expect(prompt).toContain('Read the operating contract: `read_note');
+    expect(prompt).toContain('list_notes("workflow/wf-test-123/worklog/")');
+    expect(prompt).not.toContain('pre-loaded below');
+    expect(prompt).not.toContain('Pre-loaded Context');
   });
 
   it('shows worklog reference in code review section pointing to pre-loaded context', () => {
@@ -208,6 +233,17 @@ describe('buildImplementPrompt with InlineWorkflowContext', () => {
     expect(prompt).toContain('Read the current plan**: `read_note');
     expect(prompt).toContain('Read the operating contract**: `read_note');
     expect(prompt).not.toContain('Pre-loaded Context');
+  });
+
+  it('falls back to read_note instructions when inline context has empty values', () => {
+    const emptyCtx: InlineWorkflowContext = { plan: undefined, contract: undefined, worklogs: [] };
+    const prompt = buildImplementPrompt(wf, 2, emptyCtx);
+    expect(prompt).toContain('Read the current plan**: `read_note');
+    expect(prompt).toContain('Read the operating contract**: `read_note');
+    expect(prompt).not.toContain('pre-loaded context');
+    expect(prompt).not.toContain('Pre-loaded Context');
+    // Step numbering should use the non-inline values
+    expect(prompt).toContain('5. **Implement it**');
   });
 });
 

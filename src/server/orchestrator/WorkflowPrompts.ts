@@ -15,6 +15,15 @@ export interface InlineWorkflowContext {
  */
 export const INLINE_CONTEXT_MAX_CHARS = 60_000;
 
+/** Returns true only when the context object has at least one non-empty field. */
+export function hasInlineContent(ctx: InlineWorkflowContext | undefined): boolean {
+  if (!ctx) return false;
+  if (ctx.plan) return true;
+  if (ctx.contract) return true;
+  if (ctx.worklogs && ctx.worklogs.length > 0) return true;
+  return false;
+}
+
 /**
  * Render an inline context section if context is available.
  * Truncates to INLINE_CONTEXT_MAX_CHARS so prompt size stays bounded.
@@ -128,7 +137,7 @@ export function buildReviewPrompt(workflow: Workflow, cycle: number, inlineConte
   const worklogKey = `workflow/${workflow.id}/worklog/cycle-${cycle - 1}`;
   const worklogPrefix = `workflow/${workflow.id}/worklog/`;
   const isFirstReview = cycle === 1;
-  const hasInline = !!inlineContext;
+  const hasInline = hasInlineContent(inlineContext);
 
   const codeReviewSection = isFirstReview ? '' : `
 ## Step 2: Code Review (MOST IMPORTANT)
@@ -211,7 +220,7 @@ export function buildImplementPrompt(workflow: Workflow, cycle: number, inlineCo
   const contractKey = `workflow/${workflow.id}/contract`;
   const worklogKey = `workflow/${workflow.id}/worklog/cycle-${cycle}`;
   const worklogPrefix = `workflow/${workflow.id}/worklog/`;
-  const hasInline = !!inlineContext;
+  const hasInline = hasInlineContent(inlineContext);
 
   const readSteps = hasInline
     ? `1. **Review the pre-loaded context** below — the current plan, contract, and prior worklogs are already included.
