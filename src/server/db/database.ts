@@ -471,6 +471,12 @@ export function initDb(dbPath: string): DatabaseSync {
   // ── Output deduplication: unique index on (agent_id, seq) ──────────────────
   // Allows INSERT OR IGNORE to safely de-duplicate replay of log files during
   // recovery. The old non-unique idx_output_agent index is superseded.
+  // First, remove any existing duplicates so the unique index can be created.
+  try {
+    db.exec(`DELETE FROM agent_output WHERE rowid NOT IN (
+      SELECT MIN(rowid) FROM agent_output GROUP BY agent_id, seq
+    )`);
+  } catch { /* table may not exist yet */ }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_output_agent_seq ON agent_output(agent_id, seq)');
 
   // ── Periodic WAL checkpoint ────────────────────────────────────────────────
