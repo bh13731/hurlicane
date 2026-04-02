@@ -3,6 +3,7 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import type { Job } from '../../shared/types.js';
 import { claimRecovery } from './RecoveryLedger.js';
+import { nudgeQueue } from './WorkQueueManager.js';
 
 // Exponential backoff parameters
 const BASE_DELAY_MS = 30_000;      // 30s base delay
@@ -73,6 +74,7 @@ function retrySame(job: Job): boolean {
   });
 
   socket.emitJobNew(retryJob);
+  nudgeQueue();
   console.log(`[retry] queued retry job ${retryJob.id} (attempt ${retryCount}/${job.max_retries}, scheduled in ${Math.round(backoffMs / 1000)}s)`);
   return true;
 }
@@ -148,6 +150,7 @@ function retryAnalyze(job: Job, agentId: string): boolean {
   });
 
   socket.emitJobNew(analysisJob);
+  nudgeQueue();
   console.log(`[retry] queued analysis job ${analysisJob.id} for failed job ${job.id}`);
   return true;
 }
