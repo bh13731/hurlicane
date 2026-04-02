@@ -24,6 +24,13 @@ let _timer: NodeJS.Timeout | null = null;
 const _classifying = new Set<string>();
 // Debounce flag for nudgeQueue — prevents queueing multiple microtask ticks
 let _nudgePending = false;
+// Reentrancy guard: only one tick() executes at a time.
+// If a second tick() call arrives while one is in-flight (e.g. setInterval fires
+// while the previous tick is awaiting resolveModel), it sets _retickRequested instead
+// of running concurrently. The in-flight tick checks this flag in its finally block
+// and schedules one follow-up tick so the job is not lost.
+let _tickInProgress = false;
+let _retickRequested = false;
 
 // Queue metrics for health endpoint
 let _totalDispatched = 0;
@@ -59,6 +66,8 @@ export function nudgeQueue(): void {
 export function _resetForTest(): void {
   _classifying.clear();
   _nudgePending = false;
+  _tickInProgress = false;
+  _retickRequested = false;
 }
 
 /** Exposed for testing — runs one full dispatch cycle (temporarily enables _running). */
@@ -90,6 +99,18 @@ export function stopWorkQueue(): void {
 
 async function tick(): Promise<void> {
   if (!_running) return;
+
+  // Reentrancy guard: the setInterval and nudgeQueue microtasks can both fire
+  // tick() while a previous invocation is awaiting resolveModel. Only one tick
+  // runs at a time; additional calls set a flag so the running tick re-checks
+  // the queue once it finishes, ensuring no job is silently dropped.
+  if (_tickInProgress) {
+    _retickRequested = true;
+    return;
+  }
+  _tickInProgress = true;
+
+  try {
 
   // Cascade-fail: mark queued jobs as failed if any dependency failed/cancelled
   for (const job of queries.getJobsWithFailedDeps()) {
@@ -188,6 +209,17 @@ async function tick(): Promise<void> {
       socket.emitJobUpdate(queries.getJobById(job.id)!);
     } finally {
       _classifying.delete(job.id);
+    }
+  }
+
+  } finally {
+    _tickInProgress = false;
+    // If another caller arrived while this tick was in-flight, run one follow-up
+    // tick now that the concurrency slot is free. Scheduling via microtask avoids
+    // deep call stacks from rapid nudge sequences.
+    if (_retickRequested && _running) {
+      _retickRequested = false;
+      Promise.resolve().then(() => tick().catch(console.error));
     }
   }
 }
