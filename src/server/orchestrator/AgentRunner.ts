@@ -17,6 +17,7 @@ import type { Job, ClaudeStreamEvent, CodexStreamEvent } from '../../shared/type
 import { isCodexModel, codexModelName, effectiveMaxTurns } from '../../shared/types.js';
 import { buildEyePrompt, isEyeJob } from './EyeConfig.js';
 import { ensureCodexTrusted } from './PtyManager.js';
+import { nudgeQueue } from './WorkQueueManager.js';
 
 // ─── Adaptive Eye Interval ──────────────────────────────────────────────────
 const EYE_MIN_INTERVAL_MS = 120_000;   // 2 minutes
@@ -214,6 +215,9 @@ export function runAgent(options: RunOptions): void {
       '--skip-git-repo-check',
       '-c', `mcp_servers.orchestrator.url="${mcpUrl}"`,
       ...(codexSubModel ? ['-m', codexSubModel] : []),
+      // Pass prompt as positional arg so Codex exits after processing it.
+      // Piping via stdin causes Codex to loop and hang on "Reading prompt from stdin..."
+      buildPrompt(job),
     ];
     binary = CODEX;
     args = codexArgs;
@@ -273,8 +277,12 @@ export function runAgent(options: RunOptions): void {
   fs.closeSync(logFd);
   fs.closeSync(errFd);
 
-  // Write prompt to stdin then close (child reads it all before doing anything else)
-  child.stdin!.write(buildPrompt(job));
+  // Write prompt to stdin then close (child reads it all before doing anything else).
+  // Codex gets the prompt as a positional arg instead — piping via stdin causes it to
+  // hang on "Reading prompt from stdin..." after finishing the first prompt.
+  if (!useCodex) {
+    child.stdin!.write(buildPrompt(job));
+  }
   child.stdin!.end();
 
   // Capture the current git HEAD SHA so we can diff after the agent finishes
@@ -580,6 +588,7 @@ export async function handleJobCompletion(
         }
         const nextJob = queries.scheduleRepeatJob(updatedJob, descriptionOverride, intervalOverride);
         socket.emitJobNew(nextJob);
+        nudgeQueue();
       } catch (err) { console.error(`[agent ${agentId}] scheduleRepeatJob error:`, err); Sentry.captureException(err); }
     }
     // If the job failed, also attempt retry (independent of repeat scheduling)
