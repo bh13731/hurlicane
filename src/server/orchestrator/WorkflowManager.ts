@@ -1016,6 +1016,35 @@ export function resumeWorkflow(
     }
   }
 
+  // Restore missing worktree metadata BEFORE changing status to running.
+  // After DB recovery, use_worktree=1 may exist with null worktree_path/branch.
+  // We must recreate the worktree and persist the metadata before any phase job
+  // is spawned — otherwise the job gets work_dir and commits to main.
+  if (current.use_worktree && !current.worktree_path && current.work_dir) {
+    const shortId = current.id.slice(0, 8);
+    const slug = current.title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40);
+    const branchName = `workflow/${slug}-${shortId}`;
+    const worktreePath = path.resolve(current.work_dir, '..', '.orchestrator-worktrees', `wf-${shortId}`);
+    try {
+      mkdirSync(path.dirname(worktreePath), { recursive: true });
+      // Prune stale worktree registrations before attempting to add
+      try {
+        execSync('git worktree prune', { cwd: current.work_dir, stdio: 'pipe', timeout: 10000 });
+      } catch { /* prune failure is non-fatal */ }
+      execSync(`git worktree add ${JSON.stringify(worktreePath)} -b ${JSON.stringify(branchName)}`, {
+        cwd: current.work_dir, timeout: 30000, stdio: 'pipe',
+      });
+      queries.updateWorkflow(current.id, { worktree_path: worktreePath, worktree_branch: branchName });
+      console.log(`[workflow ${current.id}] restored worktree at ${worktreePath} (branch: ${branchName}) during resume`);
+    } catch (err: any) {
+      throw new Error(`Worktree restoration failed during resume: ${err.message}`);
+    }
+  }
+
   updateAndEmit(workflow.id, { status: 'running', blocked_reason: null });
   // Reset zero-progress counter so resumed workflows get a fresh budget
   queries.upsertNote(`workflow/${workflow.id}/zero-progress-count`, '0', null);
