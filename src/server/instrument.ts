@@ -39,4 +39,15 @@ if (dsn) {
   console.log('[sentry] SENTRY_DSN not set — Sentry disabled');
 }
 
+/**
+ * Capture an exception with structured context tags (agent_id, job_id, workflow_id, component).
+ * Falls back to bare captureException if Sentry is disabled — safe to call unconditionally.
+ */
+export function captureWithContext(
+  err: unknown,
+  context?: { agent_id?: string; job_id?: string; workflow_id?: string; component?: string },
+): void {
+  Sentry.captureException(err, context ? { tags: { ...context } } : undefined);
+}
+
 export { Sentry };

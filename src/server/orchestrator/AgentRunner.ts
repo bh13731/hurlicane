@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const execAsync = promisify(exec);
-import { Sentry } from '../instrument.js';
+import { captureWithContext } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
@@ -444,7 +444,7 @@ export function startTailing(
           handleAgentExit(agentId, job, code);
         } catch (err) {
           console.error(`[agent ${agentId}] error in close handler:`, err);
-          Sentry.captureException(err);
+          captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' });
         }
       }, 500);
     });
@@ -452,7 +452,7 @@ export function startTailing(
     child.on('error', (err) => {
       try {
         console.error(`[agent ${agentId}] spawn error:`, err);
-        Sentry.captureException(err);
+        captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' });
         stopTailing(agentId);
         queries.updateAgent(agentId, { status: 'failed', error_message: `Agent launch failed: ${err.message}`, finished_at: Date.now() });
         queries.updateJobStatus(job.id, 'failed');
@@ -460,7 +460,7 @@ export function startTailing(
         if (updated) socket.emitAgentUpdate(updated);
       } catch (innerErr) {
         console.error(`[agent ${agentId}] error in spawn error handler:`, innerErr);
-        Sentry.captureException(innerErr);
+        captureWithContext(innerErr, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' });
       }
     });
   } else {
@@ -481,7 +481,7 @@ export function startTailing(
             handleAgentExit(agentId, job, null);
           } catch (err) {
             console.error(`[agent ${agentId}] error in reattach exit handler:`, err);
-            Sentry.captureException(err);
+            captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' });
           }
         }, 500);
       }
@@ -636,7 +636,7 @@ export async function handleJobCompletion(
           queries.updateAgent(agentId, { status: 'failed', error_message: `Completion check failed: ${checkFailure}` });
         }
       }
-    } catch (err) { console.error(`[agent ${agentId}] completion check error:`, err); Sentry.captureException(err); }
+    } catch (err) { console.error(`[agent ${agentId}] completion check error:`, err); captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' }); }
   }
 
   // ── Snapshot: capture immutable refs for deferred diff before callbacks can start next phase ──
@@ -660,7 +660,7 @@ export async function handleJobCompletion(
   if (finalStatus === 'done') {
     triageLearnings(agentId, job).catch(err => {
       console.error(`[agent ${agentId}] memory triage error:`, err);
-      Sentry.captureException(err);
+      captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' });
     });
   }
 
@@ -668,10 +668,10 @@ export async function handleJobCompletion(
   if (updated) socket.emitAgentUpdate(updated);
   const updatedJob = queries.getJobById(job.id);
   if (updatedJob) {
-    try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); Sentry.captureException(err); }
+    try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' }); }
     // If this job is part of a debate, check if the round is complete
-    try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] debateOnJobCompleted error:`, err); Sentry.captureException(err); }
-    try { workflowOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] workflowOnJobCompleted error:`, err); Sentry.captureException(err); }
+    try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] debateOnJobCompleted error:`, err); captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' }); }
+    try { workflowOnJobCompleted(updatedJob); } catch (err) { console.error(`[agent ${agentId}] workflowOnJobCompleted error:`, err); captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' }); }
     // Create PR for worktree jobs that completed with commits (async, non-blocking).
     // Skip workflow jobs — those are handled by WorkflowManager.finalizeWorkflow.
     if (updatedJob.use_worktree === 1 && !updatedJob.workflow_id) {
@@ -684,7 +684,7 @@ export async function handleJobCompletion(
           }
         }).catch(err => {
           console.error(`[agent ${agentId}] PR creation error:`, err);
-          Sentry.captureException(err);
+          captureWithContext(err, { agent_id: agentId, job_id: updatedJob.id, component: 'AgentRunner' });
         });
       } else if (updatedJob.status === 'failed') {
         // Push branch for failed jobs to preserve work (sync, best-effort)
@@ -705,11 +705,11 @@ export async function handleJobCompletion(
         }
         const nextJob = queries.scheduleRepeatJob(updatedJob, descriptionOverride, intervalOverride);
         socket.emitJobNew(nextJob);
-      } catch (err) { console.error(`[agent ${agentId}] scheduleRepeatJob error:`, err); Sentry.captureException(err); }
+      } catch (err) { console.error(`[agent ${agentId}] scheduleRepeatJob error:`, err); captureWithContext(err, { agent_id: agentId, job_id: updatedJob.id, component: 'AgentRunner' }); }
     }
     // If the job failed, also attempt retry (independent of repeat scheduling)
     if (updatedJob.status === 'failed') {
-      try { handleRetry(updatedJob, agentId); } catch (err) { console.error(`[agent ${agentId}] handleRetry error:`, err); Sentry.captureException(err); }
+      try { handleRetry(updatedJob, agentId); } catch (err) { console.error(`[agent ${agentId}] handleRetry error:`, err); captureWithContext(err, { agent_id: agentId, job_id: updatedJob.id, component: 'AgentRunner' }); }
       // If this job was executing a proposal, mark the proposal as failed so Eye can handle it
       try {
         const linkedProposal = queries.listProposals('in_progress').find(p => p.execution_job_id === updatedJob.id);
@@ -719,7 +719,7 @@ export async function handleJobCompletion(
           socket.emitProposalUpdate(updatedProp);
           console.log(`[agent ${agentId}] marked proposal ${linkedProposal.id} as failed`);
         }
-      } catch (err) { console.error(`[agent ${agentId}] proposal fail-update error:`, err); Sentry.captureException(err); }
+      } catch (err) { console.error(`[agent ${agentId}] proposal fail-update error:`, err); captureWithContext(err, { agent_id: agentId, job_id: updatedJob.id, component: 'AgentRunner' }); }
     }
   }
 
@@ -891,7 +891,7 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
   // Shared post-processing (git diff, completion checks, learnings, debate, retry, etc.)
   handleJobCompletion(agentId, job, status).catch(err => {
     console.error(`[agent ${agentId}] handleJobCompletion error:`, err);
-    Sentry.captureException(err);
+    captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' });
   });
 }
 

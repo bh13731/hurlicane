@@ -19,7 +19,7 @@
 import * as fs from 'fs';
 import { execFileSync } from 'child_process';
 import { randomUUID } from 'crypto';
-import { Sentry } from '../instrument.js';
+import { captureWithContext } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { runAgent, getLogPath } from './AgentRunner.js';
@@ -152,10 +152,10 @@ function check(): void {
                 socket.emitJobNew(nextJob);
                 nudgeQueue();
                 console.log(`[watchdog] scheduled next repeat for idle job "${idleJobFresh.title}"`);
-              } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); Sentry.captureException(err); }
+              } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
             }
             if (idleJobFresh.status === 'failed') {
-              try { handleRetry(idleJobFresh, agent.id); } catch (err) { console.error(`[watchdog] handleRetry error:`, err); Sentry.captureException(err); }
+              try { handleRetry(idleJobFresh, agent.id); } catch (err) { console.error(`[watchdog] handleRetry error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
             }
           }
         }
@@ -260,9 +260,9 @@ function check(): void {
     // Trigger debate/workflow state machines for the completed job
     const updatedJob = queries.getJobById(agent.job_id);
     if (updatedJob) {
-      try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[watchdog] emitJobUpdate error:`, err); Sentry.captureException(err); }
-      try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] debateOnJobCompleted error:`, err); Sentry.captureException(err); }
-      try { workflowOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] workflowOnJobCompleted error:`, err); Sentry.captureException(err); }
+      try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[watchdog] emitJobUpdate error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
+      try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] debateOnJobCompleted error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
+      try { workflowOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] workflowOnJobCompleted error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
       // For repeat jobs (e.g. Eye cycles), schedule the next run so the cycle continues
       if (updatedJob.repeat_interval_ms) {
         try {
@@ -270,13 +270,13 @@ function check(): void {
           socket.emitJobNew(nextJob);
           nudgeQueue();
           console.log(`[watchdog] scheduled next repeat for job "${updatedJob.title}" (${updatedJob.id})`);
-        } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); Sentry.captureException(err); }
+        } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
       }
       // Invoke retry policy for failed jobs
       if (updatedJob.status === 'failed') {
         try {
           handleRetry(updatedJob, agent.id);
-        } catch (err) { console.error(`[watchdog] handleRetry error for job ${agent.job_id}:`, err); Sentry.captureException(err); }
+        } catch (err) { console.error(`[watchdog] handleRetry error for job ${agent.job_id}:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
       }
     }
   }
@@ -469,11 +469,11 @@ function check(): void {
     // Trigger workflow/debate state machines so the workflow doesn't get orphaned.
     // Without this, a job that failed (and was cleaned up here) would leave its
     // parent workflow stuck in 'running' with no active job forever.
-    try { socket.emitJobUpdate(job); } catch (err) { console.error(`[watchdog] Check 4 emitJobUpdate error:`, err); Sentry.captureException(err); }
-    try { debateOnJobCompleted(job); } catch (err) { console.error(`[watchdog] Check 4 debateOnJobCompleted error:`, err); Sentry.captureException(err); }
-    try { workflowOnJobCompleted(job); } catch (err) { console.error(`[watchdog] Check 4 workflowOnJobCompleted error:`, err); Sentry.captureException(err); }
+    try { socket.emitJobUpdate(job); } catch (err) { console.error(`[watchdog] Check 4 emitJobUpdate error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: job.id, component: 'StuckJobWatchdog' }); }
+    try { debateOnJobCompleted(job); } catch (err) { console.error(`[watchdog] Check 4 debateOnJobCompleted error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: job.id, component: 'StuckJobWatchdog' }); }
+    try { workflowOnJobCompleted(job); } catch (err) { console.error(`[watchdog] Check 4 workflowOnJobCompleted error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: job.id, component: 'StuckJobWatchdog' }); }
     if (job.status === 'failed') {
-      try { handleRetry(job, agent.id); } catch (err) { console.error(`[watchdog] Check 4 handleRetry error:`, err); Sentry.captureException(err); }
+      try { handleRetry(job, agent.id); } catch (err) { console.error(`[watchdog] Check 4 handleRetry error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: job.id, component: 'StuckJobWatchdog' }); }
     }
   }
 
@@ -498,7 +498,7 @@ function check(): void {
 
     const lastJob = currentLoopJobs[currentLoopJobs.length - 1];
     console.warn(`[watchdog] debate ${debate.id} stuck in 'running' with no active jobs — re-triggering state machine via job ${lastJob.id.slice(0, 8)}`);
-    try { debateOnJobCompleted(lastJob); } catch (err) { console.error(`[watchdog] stuck-debate recovery error for debate ${debate.id}:`, err); Sentry.captureException(err); }
+    try { debateOnJobCompleted(lastJob); } catch (err) { console.error(`[watchdog] stuck-debate recovery error for debate ${debate.id}:`, err); captureWithContext(err, { job_id: lastJob.id, component: 'StuckJobWatchdog' }); }
   }
 
   // ── Check 5: Rate-limited agents in tmux ──────────────────────────────────
@@ -685,9 +685,9 @@ function cleanupZombieProcesses(): void {
 export function startWatchdog(): void {
   console.log('[watchdog] started (interval: 30s)');
   // Run once immediately to catch anything from startup
-  try { check(); } catch (err) { console.error('[watchdog] initial check error:', err); Sentry.captureException(err); }
+  try { check(); } catch (err) { console.error('[watchdog] initial check error:', err); captureWithContext(err, { component: 'StuckJobWatchdog' }); }
   _timer = setInterval(() => {
-    try { check(); } catch (err) { console.error('[watchdog] check error:', err); Sentry.captureException(err); }
+    try { check(); } catch (err) { console.error('[watchdog] check error:', err); captureWithContext(err, { component: 'StuckJobWatchdog' }); }
   }, WATCHDOG_INTERVAL_MS);
 }
 

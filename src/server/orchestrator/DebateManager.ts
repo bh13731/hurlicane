@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { Sentry } from '../instrument.js';
+import { captureWithContext } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { nudgeQueue } from './WorkQueueManager.js';
@@ -19,7 +19,7 @@ export function onJobCompleted(job: Job): void {
     _onJobCompleted(job);
   } catch (err) {
     console.error(`[debate] error handling job completion for job ${job.id}:`, err);
-    Sentry.captureException(err);
+    captureWithContext(err, { job_id: job.id, component: 'DebateManager' });
   }
 }
 

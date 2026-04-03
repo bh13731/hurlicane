@@ -1,5 +1,5 @@
 import * as fs from 'fs';
-import { Sentry } from '../instrument.js';
+import { captureWithContext } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import { reattachAgent, getLogPath } from './AgentRunner.js';
 import { execFileSync } from 'child_process';
@@ -117,7 +117,7 @@ export function runRecovery(): void {
               queries.scheduleRepeatJob(job);
               nudgeQueue();
               console.log(`[recovery] scheduled next repeat for job "${job.title}" (${job.id})`);
-            } catch (err) { console.error(`[recovery] failed to schedule repeat for job ${job.id}:`, err); Sentry.captureException(err); }
+            } catch (err) { console.error(`[recovery] failed to schedule repeat for job ${job.id}:`, err); captureWithContext(err, { agent_id: agent.id, job_id: job.id, component: 'recovery' }); }
           }
 
           // If failed, invoke retry policy (independent of repeat scheduling)
@@ -125,7 +125,7 @@ export function runRecovery(): void {
             try {
               const freshJob = queries.getJobById(agent.job_id);
               if (freshJob) handleRetry(freshJob, agent.id);
-            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); Sentry.captureException(err); }
+            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'recovery' }); }
           }
 
           logResilienceEvent('agent_recovered', 'agent', agent.id, { type: 'codex', outcome: finalStatus, job_id: agent.job_id });
@@ -166,7 +166,7 @@ export function runRecovery(): void {
                 console.log(`[recovery] scheduled next repeat for job "${job.title}" (${job.id})`);
               } catch (err) {
                 console.error(`[recovery] failed to schedule repeat for job ${job.id}:`, err);
-                Sentry.captureException(err);
+                captureWithContext(err, { agent_id: agent.id, job_id: job.id, component: 'recovery' });
               }
             }
 
@@ -174,7 +174,7 @@ export function runRecovery(): void {
             try {
               const freshJob = queries.getJobById(agent.job_id);
               if (freshJob) handleRetry(freshJob, agent.id);
-            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); Sentry.captureException(err); }
+            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'recovery' }); }
 
             logResilienceEvent('agent_recovered', 'agent', agent.id, { type: 'tmux_automated', outcome: 'failed', reason: 'mcp_session_lost', job_id: agent.job_id });
             tmuxFailed++;
@@ -230,8 +230,8 @@ export function runRecovery(): void {
           if (finalStatus === 'done') {
             const doneJob = queries.getJobById(agent.job_id);
             if (doneJob) {
-              try { debateOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] debateOnJobCompleted error for agent ${agent.id}:`, err); Sentry.captureException(err); }
-              try { workflowOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] workflowOnJobCompleted error for agent ${agent.id}:`, err); Sentry.captureException(err); }
+              try { debateOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] debateOnJobCompleted error for agent ${agent.id}:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'recovery' }); }
+              try { workflowOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] workflowOnJobCompleted error for agent ${agent.id}:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'recovery' }); }
             }
             tmuxRecovered++;
           } else {
@@ -241,14 +241,14 @@ export function runRecovery(): void {
                 queries.scheduleRepeatJob(job);
                 nudgeQueue();
                 console.log(`[recovery] scheduled next repeat for job "${job.title}" (${job.id})`);
-              } catch (err) { console.error(`[recovery] failed to schedule repeat for job ${job.id}:`, err); Sentry.captureException(err); }
+              } catch (err) { console.error(`[recovery] failed to schedule repeat for job ${job.id}:`, err); captureWithContext(err, { agent_id: agent.id, job_id: job.id, component: 'recovery' }); }
             }
 
             // Invoke retry policy for the failed job
             try {
               const freshJob = queries.getJobById(agent.job_id);
               if (freshJob) handleRetry(freshJob, agent.id);
-            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); Sentry.captureException(err); }
+            } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'recovery' }); }
 
             tmuxFailed++;
           }
@@ -289,7 +289,7 @@ export function startWorkflowGapDetector(): void {
     } catch (err) {
       console.error('[workflow-gap] tick error:', err);
       logResilienceEvent('gap_detector_error', 'system', 'gap_detector', { error: String(err) });
-      Sentry.captureException(err);
+      captureWithContext(err, { component: 'recovery' });
     }
   }, 60_000);
 }
