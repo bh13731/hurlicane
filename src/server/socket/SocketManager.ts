@@ -101,6 +101,14 @@ export function emitLockAcquired(lock: FileLock): void {
   pushEvent('lock:acquired', payload);
 }
 
+export function emitDeadlockResolved(details: { cycle_agents: string[]; released_agent: string; released_file: string; lock_id: string; lock_acquired_at: number; resolution_count: number }): void {
+  try {
+    getIo().emit('deadlock:resolved', details);
+  } catch (err) {
+    console.warn('[socket] emitDeadlockResolved error:', err);
+  }
+}
+
 export function emitLockReleased(lockId: string, filePath: string): void {
   const payload = { lock_id: lockId, file_path: filePath };
   try {

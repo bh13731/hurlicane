@@ -248,6 +248,7 @@ export interface ServerToClientEvents {
   'question:answered': (payload: { question: Question }) => void;
   'lock:acquired': (payload: { lock: FileLock }) => void;
   'lock:released': (payload: { lock_id: string; file_path: string }) => void;
+  'deadlock:resolved': (payload: { cycle_agents: string[]; released_agent: string; released_file: string; lock_id: string; lock_acquired_at: number; resolution_count: number }) => void;
   'job:new': (payload: { job: Job }) => void;
   'job:update': (payload: { job: Job }) => void;
   'pty:data': (payload: { agent_id: string; data: string }) => void;
