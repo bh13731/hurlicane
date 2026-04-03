@@ -326,6 +326,31 @@ describe('POST /api/workflows/:id/wrap-up', () => {
     expect(vi.mocked(cleanupWorktree)).not.toHaveBeenCalled();
   });
 
+  it('blocks with descriptive reason when worktree_path is missing but milestones_done > 0', async () => {
+    const { getPrCreationOutcome, cleanupWorktree } = await import('../../server/orchestrator/WorkflowManager.js');
+    vi.mocked(getPrCreationOutcome).mockReturnValue('no_publishable_commits');
+
+    const project = await insertTestProject();
+    const wf = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      use_worktree: 1,
+      milestones_total: 5,
+      milestones_done: 3,
+    });
+    // Deliberately do NOT set worktree_path — simulating lost metadata
+
+    const res = await request(app).post(`/api/workflows/${wf.id}/wrap-up`);
+    expect(res.status).toBe(409);
+    expect(res.body.outcome).toBe('missing_worktree_with_progress');
+    expect(res.body.pr_url).toBeNull();
+    expect(res.body.workflow.status).toBe('blocked');
+    expect(res.body.workflow.blocked_reason).toContain('worktree metadata missing');
+    expect(res.body.workflow.blocked_reason).toContain('3/5 milestones');
+    expect(vi.mocked(cleanupWorktree)).not.toHaveBeenCalled();
+  });
+
   it('cancels wrap-up explicitly when there are no publishable commits', async () => {
     const { pushAndCreatePr, getPrCreationOutcome, cleanupWorktree } = await import('../../server/orchestrator/WorkflowManager.js');
     vi.mocked(pushAndCreatePr).mockReturnValue(null);
