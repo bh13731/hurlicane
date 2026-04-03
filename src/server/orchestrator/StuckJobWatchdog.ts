@@ -610,7 +610,13 @@ function check(): void {
 
       // Read real-time milestone count from the plan note (NOT workflow.milestones_done which is stale)
       const planNote = queries.getNote(`workflow/${job.workflow_id}/plan`);
-      if (!planNote?.value) continue;
+      if (!planNote?.value) {
+        // Plan note missing (e.g., during repair job rewrite or race condition).
+        // Clear any existing snapshot to prevent stale checkedAt from triggering
+        // a false warning/block when the plan note reappears.
+        _milestoneSnapshots.delete(job.workflow_id);
+        continue;
+      }
       const { done: currentDone } = parseMilestones(planNote.value);
 
       const snapshot = _milestoneSnapshots.get(job.workflow_id);

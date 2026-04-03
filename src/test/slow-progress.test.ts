@@ -426,6 +426,38 @@ describe('StuckJobWatchdog: slow-progress detection', () => {
     expect(_logResilienceEvent).not.toHaveBeenCalled();
   });
 
+  it('clears snapshot when plan note is missing to prevent false stall (Fix-C3b)', async () => {
+    const { _getMilestoneSnapshotsForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    const queries = await import('../server/db/queries.js');
+    const socket = await import('../server/socket/SocketManager.js');
+
+    const { workflowId } = await setupWorkflowWithAgent({
+      milestonesPlan: '- [x] M1\n- [ ] M2\n- [ ] M3',
+      agentUpdatedAt: Date.now(), // agent is active
+    });
+
+    // Pre-seed a stale snapshot (20 min ago — past both warn and block thresholds)
+    _getMilestoneSnapshotsForTest().set(workflowId, {
+      milestonesDone: 1,
+      checkedAt: Date.now() - 20 * 60 * 1000,
+    });
+
+    // Remove the plan note to simulate temporary unavailability
+    queries.deleteNote(`workflow/${workflowId}/plan`);
+
+    const { startWatchdog, stopWatchdog } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    startWatchdog();
+    stopWatchdog();
+
+    // Snapshot should be deleted — not left with stale checkedAt
+    expect(_getMilestoneSnapshotsForTest().has(workflowId)).toBe(false);
+
+    // No warnings or blocks should be emitted
+    expect(_logResilienceEvent).not.toHaveBeenCalled();
+    expect(socket.emitWarningNew).not.toHaveBeenCalled();
+    expect(socket.emitWorkflowUpdate).not.toHaveBeenCalled();
+  });
+
   it('does not warn if agent is inactive (updated_at > 5 min ago)', async () => {
     const { _getMilestoneSnapshotsForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
 
