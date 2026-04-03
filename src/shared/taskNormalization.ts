@@ -167,6 +167,18 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
     throw new Error('Workflow tasks require a description (templateId alone is not sufficient)');
   }
 
+  // Fail fast on single-pass stop fields that have no workflow equivalent —
+  // callers should not rely on a separate validation step to catch these.
+  if (req.stopMode !== undefined) {
+    throw new Error('stopMode is not supported for workflow tasks; use stopModeAssess/Review/Implement instead');
+  }
+  if (req.stopValue !== undefined) {
+    throw new Error('stopValue is not supported for workflow tasks; use stopValueAssess/Review/Implement instead');
+  }
+  if (req.maxTurns !== undefined) {
+    throw new Error('maxTurns is not supported for workflow tasks; use maxTurnsAssess/Review/Implement instead');
+  }
+
   return {
     task: req.description,
     title: req.title,

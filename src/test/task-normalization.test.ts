@@ -399,26 +399,38 @@ describe('taskToWorkflowRequest', () => {
     expect(result.completionThreshold).toBe(0.8);
   });
 
-  it('does not map single-pass stop settings into workflow requests', () => {
-    const result = taskToWorkflowRequest({
+  it('throws on stopMode (single-pass field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      stopMode: 'turns',
+    })).toThrow(/stopMode is not supported for workflow/);
+  });
+
+  it('throws on stopValue (single-pass field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      stopValue: 99,
+    })).toThrow(/stopValue is not supported for workflow/);
+  });
+
+  it('throws on maxTurns (single-pass field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      maxTurns: 99,
+    })).toThrow(/maxTurns is not supported for workflow/);
+  });
+
+  it('throws on all three single-pass stop fields together', () => {
+    expect(() => taskToWorkflowRequest({
       description: 'x',
       iterations: 3,
       stopMode: 'turns',
       stopValue: 99,
       maxTurns: 99,
-      stopModeImplement: 'budget',
-      stopValueImplement: 5,
-      maxTurnsImplement: 80,
-    });
-    expect(result.stopModeAssess).toBeUndefined();
-    expect(result.stopValueAssess).toBeUndefined();
-    expect(result.maxTurnsAssess).toBeUndefined();
-    expect(result.stopModeReview).toBeUndefined();
-    expect(result.stopValueReview).toBeUndefined();
-    expect(result.maxTurnsReview).toBeUndefined();
-    expect(result.stopModeImplement).toBe('budget');
-    expect(result.stopValueImplement).toBe(5);
-    expect(result.maxTurnsImplement).toBe(80);
+    })).toThrow(/stopMode is not supported for workflow/);
   });
 
   it('uses resolved useWorktree from config', () => {
