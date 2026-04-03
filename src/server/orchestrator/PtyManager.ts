@@ -597,7 +597,7 @@ export async function attachPty(agentId: string, job: Job, cols = 100, rows = 50
       } catch { /* ignore write errors */ }
     } catch (err) {
       console.error(`[pty ${agentId}] onData error:`, err);
-      captureWithContext(err, { agent_id: agentId, component: 'PtyManager' });
+      captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'PtyManager' });
     }
   });
 
@@ -646,7 +646,7 @@ export async function attachPty(agentId: string, job: Job, cols = 100, rows = 50
       }
     } catch (err) {
       console.error(`[pty ${agentId}] onExit error:`, err);
-      captureWithContext(err, { agent_id: agentId, component: 'PtyManager' });
+      captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'PtyManager' });
     }
   });
 }
