@@ -73,7 +73,7 @@ export function DiscussionThread({ messages, onSendMessage, status, onResolve, o
             ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e as any); } }}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e as React.FormEvent); } }}
             placeholder="Reply..."
             disabled={sending}
             rows={1}

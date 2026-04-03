@@ -19,6 +19,7 @@ import { reportLearningsHandler, reportLearningsSchema } from './tools/reportLea
 import { finishJobHandler, finishJobSchema } from './tools/finishJob.js';
 import { startDiscussionHandler, startDiscussionSchema, checkDiscussionsHandler, checkDiscussionsSchema, replyDiscussionHandler, replyDiscussionSchema, createProposalHandler, createProposalSchema, checkProposalsHandler, checkProposalsSchema, replyProposalHandler, replyProposalSchema, updateProposalHandler, updateProposalSchema, reportPrHandler, reportPrSchema, reportPrReviewHandler, reportPrReviewSchema, checkPrReviewsHandler, checkPrReviewsSchema, replyPrReviewHandler, replyPrReviewSchema, updateDailySummaryHandler, updateDailySummarySchema } from './tools/eye.js';
 import { queryLinearHandler, queryLinearSchema, queryLogsHandler, queryLogsSchema, queryDbHandler, queryDbSchema, queryCiLogsHandler, queryCiLogsSchema } from './tools/integrations.js';
+import { z } from 'zod';
 import * as queries from '../db/queries.js';
 
 // agentId → { sessionId → transport }
@@ -280,7 +281,7 @@ function buildMcpServer(agentId: string): MCP {
     'Ask the human a question and wait for their answer before continuing.',
     { question: askUserSchema.shape.question, timeout_ms: askUserSchema.shape.timeout_ms },
     safeTool('ask_user', agentId, async (input) => {
-      const answer = await askUserHandler(agentId, input as any);
+      const answer = await askUserHandler(agentId, input as z.infer<typeof askUserSchema>);
       return { content: [{ type: 'text' as const, text: answer }] };
     })
   );
@@ -290,7 +291,7 @@ function buildMcpServer(agentId: string): MCP {
     'Acquire exclusive locks on files before editing them. BLOCKS until locks are available or timeout_ms elapses. On timeout, returns success=false with timed_out=true — release your own locks then IMMEDIATELY call lock_files again (do not pause to reason first). If a deadlock cycle is detected (success=false, deadlock_detected=true), release ALL your currently held locks with release_files, then retry lock_files for all files you need in a single call. The default timeout (660s) exceeds the default TTL (600s), so with defaults you will always eventually get the lock without timing out.',
     { files: lockFilesSchema.shape.files, reason: lockFilesSchema.shape.reason, ttl_ms: lockFilesSchema.shape.ttl_ms, timeout_ms: lockFilesSchema.shape.timeout_ms },
     safeTool('lock_files', agentId, async (input) => {
-      const result = await lockFilesHandler(agentId, input as any);
+      const result = await lockFilesHandler(agentId, input as z.infer<typeof lockFilesSchema>);
       return { content: [{ type: 'text' as const, text: result }] };
     })
   );
@@ -300,7 +301,7 @@ function buildMcpServer(agentId: string): MCP {
     'Release file locks when done editing.',
     { files: releaseFilesSchema.shape.files },
     safeTool('release_files', agentId, async (input) => {
-      const result = await releaseFilesHandler(agentId, input as any);
+      const result = await releaseFilesHandler(agentId, input as z.infer<typeof releaseFilesSchema>);
       return { content: [{ type: 'text' as const, text: result }] };
     })
   );
@@ -310,7 +311,7 @@ function buildMcpServer(agentId: string): MCP {
     'See what files other agents currently have locked.',
     {},
     safeTool('check_file_locks', agentId, async (input) => {
-      const result = await checkFileLocksHandler(agentId, input as any);
+      const result = await checkFileLocksHandler(agentId, input as z.infer<typeof checkFileLocksSchema>);
       return { content: [{ type: 'text' as const, text: result }] };
     })
   );
@@ -320,7 +321,7 @@ function buildMcpServer(agentId: string): MCP {
     'Update your status message displayed in the orchestrator dashboard.',
     { message: reportStatusSchema.shape.message },
     safeTool('report_status', agentId, async (input) => {
-      const result = await reportStatusHandler(agentId, input as any);
+      const result = await reportStatusHandler(agentId, input as z.infer<typeof reportStatusSchema>);
       return { content: [{ type: 'text' as const, text: result }] };
     })
   );
@@ -338,7 +339,7 @@ function buildMcpServer(agentId: string): MCP {
       depends_on: createJobSchema.shape.depends_on,
     },
     safeTool('create_job', agentId, async (input) => {
-      const result = await createJobHandler(agentId, input as any);
+      const result = await createJobHandler(agentId, input as z.infer<typeof createJobSchema>);
       return { content: [{ type: 'text' as const, text: result }] };
     })
   );
@@ -366,7 +367,7 @@ function buildMcpServer(agentId: string): MCP {
       useWorktree: createAutonomousAgentRunSchema.shape.useWorktree,
     },
     safeTool('create_autonomous_agent_run', agentId, async (input) => {
-      const result = await createAutonomousAgentRunHandler(agentId, input as any);
+      const result = await createAutonomousAgentRunHandler(agentId, input as z.infer<typeof createAutonomousAgentRunSchema>);
       return { content: [{ type: 'text' as const, text: result }] };
     })
   );
@@ -379,7 +380,7 @@ function buildMcpServer(agentId: string): MCP {
       timeout_ms: waitForJobsSchema.shape.timeout_ms,
     },
     safeTool('wait_for_jobs', agentId, async (input) => {
-      const result = await waitForJobsHandler(agentId, input as any);
+      const result = await waitForJobsHandler(agentId, input as z.infer<typeof waitForJobsSchema>);
       return { content: [{ type: 'text' as const, text: result }] };
     })
   );
@@ -392,7 +393,7 @@ function buildMcpServer(agentId: string): MCP {
       value: writeNoteSchema.shape.value,
     },
     async (input) => {
-      const result = await writeNoteHandler(agentId, input as any);
+      const result = await writeNoteHandler(agentId, input as z.infer<typeof writeNoteSchema>);
       return { content: [{ type: 'text', text: result }] };
     }
   );
@@ -402,7 +403,7 @@ function buildMcpServer(agentId: string): MCP {
     'Read a note from the shared scratchpad. Returns { found, key, value, updated_at }.',
     { key: readNoteSchema.shape.key },
     async (input) => {
-      const result = await readNoteHandler(agentId, input as any);
+      const result = await readNoteHandler(agentId, input as z.infer<typeof readNoteSchema>);
       return { content: [{ type: 'text', text: result }] };
     }
   );
@@ -412,7 +413,7 @@ function buildMcpServer(agentId: string): MCP {
     'List all note keys in the shared scratchpad. Optionally filter by prefix (e.g. "plan/").',
     { prefix: listNotesSchema.shape.prefix },
     async (input) => {
-      const result = await listNotesHandler(agentId, input as any);
+      const result = await listNotesHandler(agentId, input as z.infer<typeof listNotesSchema>);
       return { content: [{ type: 'text', text: result }] };
     }
   );
@@ -427,7 +428,7 @@ function buildMcpServer(agentId: string): MCP {
       timeout_ms: watchNotesSchema.shape.timeout_ms,
     },
     async (input) => {
-      const result = await watchNotesHandler(agentId, input as any);
+      const result = await watchNotesHandler(agentId, input as z.infer<typeof watchNotesSchema>);
       return { content: [{ type: 'text', text: result }] };
     }
   );
@@ -440,7 +441,7 @@ function buildMcpServer(agentId: string): MCP {
       project_id: searchKBSchema.shape.project_id,
     },
     async (input) => {
-      const result = await searchKBHandler(agentId, input as any);
+      const result = await searchKBHandler(agentId, input as z.infer<typeof searchKBSchema>);
       return { content: [{ type: 'text', text: result }] };
     }
   );
@@ -452,7 +453,7 @@ function buildMcpServer(agentId: string): MCP {
       learnings: reportLearningsSchema.shape.learnings,
     },
     async (input) => {
-      const result = await reportLearningsHandler(agentId, input as any);
+      const result = await reportLearningsHandler(agentId, input as z.infer<typeof reportLearningsSchema>);
       return { content: [{ type: 'text', text: result }] };
     }
   );
@@ -464,7 +465,7 @@ function buildMcpServer(agentId: string): MCP {
       result: finishJobSchema.shape.result,
     },
     safeTool('finish_job', agentId, async (input) => {
-      const result = await finishJobHandler(agentId, input as any);
+      const result = await finishJobHandler(agentId, input as z.infer<typeof finishJobSchema>);
       return { content: [{ type: 'text', text: result }] };
     })
   );
@@ -473,69 +474,69 @@ function buildMcpServer(agentId: string): MCP {
 
   server.tool('start_discussion', 'Start a non-blocking discussion thread with the user. Does NOT block the agent.',
     { topic: startDiscussionSchema.shape.topic, message: startDiscussionSchema.shape.message, category: startDiscussionSchema.shape.category, priority: startDiscussionSchema.shape.priority, context: startDiscussionSchema.shape.context },
-    async (input) => ({ content: [{ type: 'text', text: await startDiscussionHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await startDiscussionHandler(agentId, input as z.infer<typeof startDiscussionSchema>) }] }));
 
   server.tool('check_discussions', 'Check for new user replies on discussions.',
     { discussion_ids: checkDiscussionsSchema.shape.discussion_ids, unread_only: checkDiscussionsSchema.shape.unread_only },
-    async (input) => ({ content: [{ type: 'text', text: await checkDiscussionsHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await checkDiscussionsHandler(agentId, input as z.infer<typeof checkDiscussionsSchema>) }] }));
 
   server.tool('reply_discussion', 'Reply to a discussion thread. Optionally mark it as resolved.',
     { discussion_id: replyDiscussionSchema.shape.discussion_id, message: replyDiscussionSchema.shape.message, resolve: replyDiscussionSchema.shape.resolve, requires_user_reply: replyDiscussionSchema.shape.requires_user_reply },
-    async (input) => ({ content: [{ type: 'text', text: await replyDiscussionHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await replyDiscussionHandler(agentId, input as z.infer<typeof replyDiscussionSchema>) }] }));
 
   server.tool('create_proposal', 'Create a product/engineering proposal for the user to approve, reject, or discuss. Does NOT block.',
     { title: createProposalSchema.shape.title, summary: createProposalSchema.shape.summary, rationale: createProposalSchema.shape.rationale, confidence: createProposalSchema.shape.confidence, estimated_complexity: createProposalSchema.shape.estimated_complexity, category: createProposalSchema.shape.category, evidence: createProposalSchema.shape.evidence, implementation_plan: createProposalSchema.shape.implementation_plan, codex_confirmed: createProposalSchema.shape.codex_confirmed, codex_confidence: createProposalSchema.shape.codex_confidence, codex_reasoning: createProposalSchema.shape.codex_reasoning },
-    async (input) => ({ content: [{ type: 'text', text: await createProposalHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await createProposalHandler(agentId, input as z.infer<typeof createProposalSchema>) }] }));
 
   server.tool('check_proposals', 'Check the status of proposals.',
     { proposal_ids: checkProposalsSchema.shape.proposal_ids, status_filter: checkProposalsSchema.shape.status_filter },
-    async (input) => ({ content: [{ type: 'text', text: await checkProposalsHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await checkProposalsHandler(agentId, input as z.infer<typeof checkProposalsSchema>) }] }));
 
   server.tool('reply_proposal', 'Reply to a proposal discussion thread.',
     { proposal_id: replyProposalSchema.shape.proposal_id, message: replyProposalSchema.shape.message, update_plan: replyProposalSchema.shape.update_plan },
-    async (input) => ({ content: [{ type: 'text', text: await replyProposalHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await replyProposalHandler(agentId, input as z.infer<typeof replyProposalSchema>) }] }));
 
   server.tool('update_proposal', 'Update a proposal status (in_progress, done) and/or link it to an execution job. Call this when you start working on an approved proposal and when you finish.',
     { proposal_id: updateProposalSchema.shape.proposal_id, status: updateProposalSchema.shape.status, execution_job_id: updateProposalSchema.shape.execution_job_id },
-    async (input) => ({ content: [{ type: 'text', text: await updateProposalHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await updateProposalHandler(agentId, input as z.infer<typeof updateProposalSchema>) }] }));
 
   server.tool('report_pr', 'Record a GitHub PR that Eye created so it appears in the PRs tab of the dashboard.',
     { url: reportPrSchema.shape.url, title: reportPrSchema.shape.title, description: reportPrSchema.shape.description, proposal_id: reportPrSchema.shape.proposal_id },
-    async (input) => ({ content: [{ type: 'text', text: await reportPrHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await reportPrHandler(agentId, input as z.infer<typeof reportPrSchema>) }] }));
 
   server.tool('report_pr_review', 'Submit a PR review with comments on specific files/lines. Automatically creates a pending (draft) GitHub review — visible only to you, not the PR author, until you submit it. Updates existing review if one exists for the same PR number + repo.',
     { pr_number: reportPrReviewSchema.shape.pr_number, pr_url: reportPrReviewSchema.shape.pr_url, pr_title: reportPrReviewSchema.shape.pr_title, pr_author: reportPrReviewSchema.shape.pr_author, repo: reportPrReviewSchema.shape.repo, summary: reportPrReviewSchema.shape.summary, comments: reportPrReviewSchema.shape.comments },
-    async (input) => ({ content: [{ type: 'text', text: await reportPrReviewHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await reportPrReviewHandler(agentId, input as z.infer<typeof reportPrReviewSchema>) }] }));
 
   server.tool('check_pr_reviews', 'Check PR reviews, optionally filtered to only those with new user replies. Use this at the start of each cycle to see if the user has sent feedback on any review.',
     { unread_only: checkPrReviewsSchema.shape.unread_only, review_ids: checkPrReviewsSchema.shape.review_ids },
-    async (input) => ({ content: [{ type: 'text', text: await checkPrReviewsHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await checkPrReviewsHandler(agentId, input as z.infer<typeof checkPrReviewsSchema>) }] }));
 
   server.tool('reply_pr_review', 'Reply to user feedback on a PR review. Optionally provide updated_comments to revise the review findings based on the user\'s feedback.',
     { review_id: replyPrReviewSchema.shape.review_id, message: replyPrReviewSchema.shape.message, updated_comments: replyPrReviewSchema.shape.updated_comments },
-    async (input) => ({ content: [{ type: 'text', text: await replyPrReviewHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await replyPrReviewHandler(agentId, input as z.infer<typeof replyPrReviewSchema>) }] }));
 
   server.tool('update_daily_summary', 'Add bullet-point items to today\'s running summary. Eye should call this each cycle to record key findings and actions. At end of day, call with replace=true to compress to just the most important items.',
     { items: updateDailySummarySchema.shape.items, replace: updateDailySummarySchema.shape.replace },
-    async (input) => ({ content: [{ type: 'text', text: await updateDailySummaryHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await updateDailySummaryHandler(agentId, input as z.infer<typeof updateDailySummarySchema>) }] }));
 
   // ─── Integration Tools ────────────────────────────────────────────────────
 
   server.tool('query_linear', 'Query the Linear API using GraphQL.',
     { query: queryLinearSchema.shape.query, variables: queryLinearSchema.shape.variables },
-    async (input) => ({ content: [{ type: 'text', text: await queryLinearHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await queryLinearHandler(agentId, input as z.infer<typeof queryLinearSchema>) }] }));
 
   server.tool('query_logs', 'Search OpenSearch logs. Requires AWS SSO authentication.',
     { env: queryLogsSchema.shape.env, query_string: queryLogsSchema.shape.query_string, container: queryLogsSchema.shape.container, namespace: queryLogsSchema.shape.namespace, node: queryLogsSchema.shape.node, request_id: queryLogsSchema.shape.request_id, task: queryLogsSchema.shape.task, start_time: queryLogsSchema.shape.start_time, end_time: queryLogsSchema.shape.end_time, errors_only: queryLogsSchema.shape.errors_only, size: queryLogsSchema.shape.size },
-    async (input) => ({ content: [{ type: 'text', text: await queryLogsHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await queryLogsHandler(agentId, input as z.infer<typeof queryLogsSchema>) }] }));
 
   server.tool('query_db', 'Execute a READ-ONLY SQL query against Postgres. Write operations are blocked.',
     { sql: queryDbSchema.shape.sql, env: queryDbSchema.shape.env, database: queryDbSchema.shape.database },
-    async (input) => ({ content: [{ type: 'text', text: await queryDbHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await queryDbHandler(agentId, input as z.infer<typeof queryDbSchema>) }] }));
 
   server.tool('query_ci_logs', 'Fetch GitHub Actions CI logs for a PR, branch, or specific run. Returns run status, failed jobs, and failure log output. Useful for diagnosing CI failures.',
     { pr_number: queryCiLogsSchema.shape.pr_number, run_id: queryCiLogsSchema.shape.run_id, branch: queryCiLogsSchema.shape.branch, workflow: queryCiLogsSchema.shape.workflow, failed_only: queryCiLogsSchema.shape.failed_only, include_logs: queryCiLogsSchema.shape.include_logs, repo_path: queryCiLogsSchema.shape.repo_path, limit: queryCiLogsSchema.shape.limit },
-    async (input) => ({ content: [{ type: 'text', text: await queryCiLogsHandler(agentId, input as any) }] }));
+    async (input) => ({ content: [{ type: 'text', text: await queryCiLogsHandler(agentId, input as z.infer<typeof queryCiLogsSchema>) }] }));
 
   return server;
 }

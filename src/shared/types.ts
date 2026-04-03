@@ -732,7 +732,7 @@ export interface PrReview {
   pr_author: string | null;
   repo: string;
   summary: string;
-  comments: PrReviewComment[];
+  comments: string;  // JSON-serialized PrReviewComment[] — stored and transmitted as string
   status: 'draft' | 'submitted' | 'dismissed';
   github_review_id: string | null;
   needs_reply?: boolean;

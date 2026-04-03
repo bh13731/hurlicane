@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import socket from '../socket';
-import type { AgentWithJob, Job, Project, Question, FileLock, AgentOutput, QueueSnapshot, Debate, Workflow, Discussion, Proposal } from '@shared/types';
+import type { AgentWithJob, AgentWarning, Job, Project, Question, FileLock, AgentOutput, QueueSnapshot, Debate, Workflow, Discussion, Proposal, ServerToClientEvents } from '@shared/types';
 
 interface SocketHandlers {
   onSnapshot: (snapshot: QueueSnapshot) => void;
@@ -18,6 +18,7 @@ interface SocketHandlers {
   onDebateUpdate?: (debate: Debate) => void;
   onWorkflowNew?: (workflow: Workflow) => void;
   onWorkflowUpdate?: (workflow: Workflow) => void;
+  onWarningNew?: (payload: { warning: AgentWarning }) => void;
   onDiscussionNew?: (discussion: Discussion) => void;
   onDiscussionUpdate?: (discussion: Discussion) => void;
   onProposalNew?: (proposal: Proposal) => void;
@@ -30,9 +31,12 @@ export function useSocket(handlers: SocketHandlers): void {
   ref.current = handlers;
 
   useEffect(() => {
-    const h = (ev: string, fn: (...args: any[]) => void) => {
-      socket.on(ev as any, fn);
-      return () => { socket.off(ev as any, fn); };
+    // socket.io's generic on/off signatures use conditional types that don't resolve
+    // when the event name is a forwarded generic — cast to our expected shape.
+    type OnOff = <E extends keyof ServerToClientEvents>(ev: E, fn: ServerToClientEvents[E]) => void;
+    const h = <E extends keyof ServerToClientEvents>(ev: E, fn: ServerToClientEvents[E]) => {
+      (socket.on as OnOff)(ev, fn);
+      return () => { (socket.off as OnOff)(ev, fn); };
     };
 
     const offs = [
@@ -51,11 +55,11 @@ export function useSocket(handlers: SocketHandlers): void {
       h('debate:update', ({ debate }: { debate: Debate }) => ref.current.onDebateUpdate?.(debate)),
       h('workflow:new', ({ workflow }: { workflow: Workflow }) => ref.current.onWorkflowNew?.(workflow)),
       h('workflow:update', ({ workflow }: { workflow: Workflow }) => ref.current.onWorkflowUpdate?.(workflow)),
-      h('warning:new', (payload: any) => (ref.current as any).onWarningNew?.(payload)),
-      h('eye:discussion:new', ({ discussion }: { discussion: Discussion }) => ref.current.onDiscussionNew?.(discussion)),
-      h('eye:discussion:update', ({ discussion }: { discussion: Discussion }) => ref.current.onDiscussionUpdate?.(discussion)),
-      h('eye:proposal:new', ({ proposal }: { proposal: Proposal }) => ref.current.onProposalNew?.(proposal)),
-      h('eye:proposal:update', ({ proposal }: { proposal: Proposal }) => ref.current.onProposalUpdate?.(proposal)),
+      h('warning:new', (payload: { warning: AgentWarning }) => ref.current.onWarningNew?.(payload)),
+      h('eye:discussion:new', ({ discussion }) => ref.current.onDiscussionNew?.(discussion)),
+      h('eye:discussion:update', ({ discussion }) => ref.current.onDiscussionUpdate?.(discussion)),
+      h('eye:proposal:new', ({ proposal }) => ref.current.onProposalNew?.(proposal)),
+      h('eye:proposal:update', ({ proposal }) => ref.current.onProposalUpdate?.(proposal)),
     ];
 
     // The server already pushes a snapshot on every new connection (io.on('connection')),

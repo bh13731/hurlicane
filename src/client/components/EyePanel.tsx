@@ -765,8 +765,8 @@ function PrsTab() {
     const onPrNew = ({ pr }: { pr: EyePr }) => {
       setPrs(prev => [pr, ...prev.filter(p => p.id !== pr.id)]);
     };
-    socket.on('eye:pr:new' as any, onPrNew);
-    return () => { socket.off('eye:pr:new' as any, onPrNew); };
+    socket.on('eye:pr:new', onPrNew);
+    return () => { socket.off('eye:pr:new', onPrNew); };
   }, []);
 
   const filtered = prs
@@ -1001,13 +1001,13 @@ function PrReviewsTab() {
         [message.review_id]: [...(prev[message.review_id] ?? []), message],
       }));
     };
-    socket.on('eye:pr-review:new' as any, onNew);
-    socket.on('eye:pr-review:update' as any, onUpdate);
-    socket.on('eye:pr-review:message' as any, onMessage);
+    socket.on('eye:pr-review:new', onNew);
+    socket.on('eye:pr-review:update', onUpdate);
+    socket.on('eye:pr-review:message', onMessage);
     return () => {
-      socket.off('eye:pr-review:new' as any, onNew);
-      socket.off('eye:pr-review:update' as any, onUpdate);
-      socket.off('eye:pr-review:message' as any, onMessage);
+      socket.off('eye:pr-review:new', onNew);
+      socket.off('eye:pr-review:update', onUpdate);
+      socket.off('eye:pr-review:message', onMessage);
     };
   }, []);
 
@@ -1387,13 +1387,13 @@ export function EyePanel({ discussions, proposals, onClose }: EyePanelProps) {
     const onDiscNew = ({ discussion, message }: { discussion: Discussion; message: DiscussionMessage }) => {
       setDiscMessages(prev => ({ ...prev, [discussion.id]: [message] }));
     };
-    socket.on('eye:discussion:message' as any, onDiscMsg);
-    socket.on('eye:proposal:message' as any, onPropMsg);
-    socket.on('eye:discussion:new' as any, onDiscNew);
+    socket.on('eye:discussion:message', onDiscMsg);
+    socket.on('eye:proposal:message', onPropMsg);
+    socket.on('eye:discussion:new', onDiscNew);
     return () => {
-      socket.off('eye:discussion:message' as any, onDiscMsg);
-      socket.off('eye:proposal:message' as any, onPropMsg);
-      socket.off('eye:discussion:new' as any, onDiscNew);
+      socket.off('eye:discussion:message', onDiscMsg);
+      socket.off('eye:proposal:message', onPropMsg);
+      socket.off('eye:discussion:new', onDiscNew);
     };
   }, []);
 
