@@ -151,6 +151,7 @@ function AgentCardInner({ agent, onClick, onSelectParent, onArchiveJob, onIntera
   return (
     <div
       className={`${styles.card}${isSelected ? ` ${styles.selected}` : ''}`}
+      data-agent-card
       style={borderColor !== 'transparent' ? { borderLeftColor: borderColor, borderLeftWidth: 3 } : undefined}
       onClick={() => onClick(agent)}
     >

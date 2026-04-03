@@ -916,7 +916,7 @@ body {
   cursor: grabbing;
 }
 
-.agent-drag-wrapper .agent-card {
+.agent-drag-wrapper [data-agent-card] {
   cursor: inherit;
 }
 
@@ -924,7 +924,7 @@ body {
   opacity: 0.4;
 }
 
-.agent-drag-over .agent-card {
+.agent-drag-over [data-agent-card] {
   box-shadow: 0 0 0 2px var(--accent);
   background: var(--bg-elevated);
 }
