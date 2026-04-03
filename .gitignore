@@ -4,11 +4,15 @@ dist/
 # Runtime data (databases, logs, scripts)
 data/agent-logs/
 data/agent-scripts/
+data/backups/
 github-monitor/state.json
 data/*.db
 data/*.db-wal
 data/*.db-shm
 data/*.db-journal
+
+# Claude artifacts
+.claude/
 
 # Environment
 .env
