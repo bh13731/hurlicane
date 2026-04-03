@@ -14,15 +14,10 @@ export async function finishJobHandler(
   const agentWithJob = queries.getAgentWithJob(agentId);
   if (!agentWithJob) return JSON.stringify({ error: 'Agent not found' });
 
-  // Idempotency: if agent is already in a terminal state, skip processing
-  const TERMINAL = ['done', 'failed', 'cancelled'];
-  if (agentWithJob.agent?.status && TERMINAL.includes(agentWithJob.agent.status)) {
-    return JSON.stringify({ ok: true, message: 'Already completed.' });
-  }
+  const { agent, job } = agentWithJob;
 
-  const { job } = agentWithJob;
-
-  // Store result as a synthetic result event so getAgentResultText can find it
+  // Store result as a synthetic result event so getAgentResultText can find it.
+  // Always store first — even if already terminal — so result text is never lost.
   if (input.result) {
     const seq = queries.getAgentLastSeq(agentId) + 1;
     queries.insertAgentOutput({
@@ -32,6 +27,13 @@ export async function finishJobHandler(
       content: JSON.stringify({ type: 'result', result: input.result, is_error: false }),
       created_at: Date.now(),
     });
+  }
+
+  // Idempotency: if agent is already in a terminal state, skip processing.
+  // The result event above is still stored so we never lose result text.
+  const TERMINAL = ['done', 'failed', 'cancelled'];
+  if (agent && TERMINAL.includes(agent.status)) {
+    return JSON.stringify({ ok: true, message: 'Already completed.' });
   }
 
   // Mark agent done before running post-processing
