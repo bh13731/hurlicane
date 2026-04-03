@@ -873,7 +873,7 @@ describe('Fix-C11a: transient rev-parse errors propagate to callers via countBra
     // Safe-default logging contract verified (Fix-C12b)
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('rev-list failed'),
-      expect.anything(),
+      expect.objectContaining({ message: expect.stringContaining('Permission denied') }),
     );
   });
 
