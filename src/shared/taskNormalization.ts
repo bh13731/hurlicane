@@ -172,11 +172,20 @@ export function taskToJobRequest(req: CreateTaskRequest, config?: ResolvedTaskCo
  */
 export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedTaskConfig): CreateWorkflowRequest {
   const canonical = resolveTaskConfig(req);
-  if (config && config.routesTo !== canonical.routesTo) {
-    throw new Error(`Supplied config.routesTo ('${config.routesTo}') does not match the request's resolved routing ('${canonical.routesTo}') — route selection must come from the request itself`);
+  if (config) {
+    // Reject any supplied config that disagrees with canonical on ANY normalized field.
+    // This prevents stale same-route configs from being silently accepted.
+    const mismatches: string[] = [];
+    if (config.routesTo !== canonical.routesTo) mismatches.push(`routesTo: supplied '${config.routesTo}' vs canonical '${canonical.routesTo}'`);
+    if (config.preset !== canonical.preset) mismatches.push(`preset: supplied '${config.preset}' vs canonical '${canonical.preset}'`);
+    if (config.review !== canonical.review) mismatches.push(`review: supplied ${config.review} vs canonical ${canonical.review}`);
+    if (config.iterations !== canonical.iterations) mismatches.push(`iterations: supplied ${config.iterations} vs canonical ${canonical.iterations}`);
+    if (config.useWorktree !== canonical.useWorktree) mismatches.push(`useWorktree: supplied ${config.useWorktree} vs canonical ${canonical.useWorktree}`);
+    if (mismatches.length > 0) {
+      throw new Error(`Supplied config does not match the request's resolved configuration: ${mismatches.join('; ')}`);
+    }
   }
-  const cfg = config ?? canonical;
-  if (cfg.routesTo !== 'workflow') {
+  if (canonical.routesTo !== 'workflow') {
     throw new Error('Cannot convert single-pass task (iterations = 1) to a workflow request');
   }
 
