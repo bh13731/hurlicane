@@ -785,6 +785,22 @@ describe('taskToWorkflowRequest', () => {
     // Output must follow canonical (iterations=10) → maxCycles=10
     expect(result.maxCycles).toBe(10);
   });
+
+  it('ignores stale config with useWorktree=true when canonical useWorktree is false', () => {
+    // Request explicitly disables worktree; stale config claims useWorktree=true
+    const req: CreateTaskRequest = { description: 'x', iterations: 5, useWorktree: false };
+    const stale = { ...resolveTaskConfig(req), useWorktree: true };
+    const result = taskToWorkflowRequest(req, stale);
+    expect(result.useWorktree).toBe(false);
+  });
+
+  it('ignores stale config with useWorktree=false when canonical useWorktree is true', () => {
+    // Autonomous defaults to useWorktree=true; stale config claims useWorktree=false
+    const req: CreateTaskRequest = { description: 'x', iterations: 5 };
+    const stale = { ...resolveTaskConfig(req), useWorktree: false };
+    const result = taskToWorkflowRequest(req, stale);
+    expect(result.useWorktree).toBe(true);
+  });
 });
 
 // ─── Round-trip: preset → resolve → convert determinism ─────────────────────

@@ -252,7 +252,9 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
     implementerModel: req.model,
     reviewerModel: req.reviewerModel,
     maxCycles: canonical.iterations,
-    useWorktree: cfg.useWorktree,
+    // Always derive useWorktree from canonical config — a stale same-route
+    // config must not silently enable or disable worktree creation.
+    useWorktree: canonical.useWorktree,
     templateId: req.templateId,
     completionThreshold: req.completionThreshold,
     // Per-phase stopping conditions
