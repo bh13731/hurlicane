@@ -1,0 +1,202 @@
+/**
+ * Tests for M1: Partial PR label on draft PRs.
+ *
+ * Proves:
+ * 1. When isDraft=true, `gh label create partial` is attempted before PR creation
+ * 2. When isDraft=true, `gh pr create` includes `--label partial`
+ * 3. When isDraft=false, no label creation or `--label` flag is used
+ * 4. Label creation failure (already exists) does not prevent PR creation
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  setupTestDb,
+  cleanupTestDb,
+  createSocketMock,
+  insertTestWorkflow,
+} from './helpers.js';
+
+// Track all execSync calls for assertion
+const execSyncCalls: Array<{ cmd: string; opts?: any }> = [];
+
+vi.mock('child_process', () => ({
+  exec: vi.fn(),
+  execSync: vi.fn((cmd: string, opts?: any) => {
+    execSyncCalls.push({ cmd, opts });
+    // rev-parse for ensureWorktreeBranch
+    if (cmd.includes('rev-parse --abbrev-ref HEAD')) {
+      return Buffer.from('workflow/test-branch\n');
+    }
+    // rev-list for commit count check
+    if (cmd.includes('rev-list --count')) {
+      return Buffer.from('3\n');
+    }
+    // git push
+    if (cmd.startsWith('git push')) {
+      return Buffer.from('');
+    }
+    // gh label create — default success
+    if (cmd.includes('gh label create')) {
+      return Buffer.from('');
+    }
+    // gh pr create
+    if (cmd.includes('gh pr create')) {
+      return Buffer.from('https://github.com/test/repo/pull/42\n');
+    }
+    return Buffer.from('');
+  }),
+}));
+
+vi.mock('../server/socket/SocketManager.js', () => createSocketMock());
+
+vi.mock('../server/orchestrator/WorkflowPrompts.js', () => ({
+  buildAssessPrompt: vi.fn(() => 'mock assess prompt'),
+  buildReviewPrompt: vi.fn(() => 'mock review prompt'),
+  buildImplementPrompt: vi.fn(() => 'mock implement prompt'),
+  buildWorkflowRepairPrompt: vi.fn(() => 'mock repair prompt'),
+}));
+
+vi.mock('../server/orchestrator/ModelClassifier.js', () => ({
+  getAvailableModel: vi.fn((m: string) => m),
+  getFallbackModel: vi.fn((m: string) => m),
+  getAlternateProviderModel: vi.fn(() => null),
+  getModelProvider: vi.fn(() => 'anthropic'),
+  markModelRateLimited: vi.fn(),
+  markProviderRateLimited: vi.fn(),
+  resolveModel: vi.fn(async (job: any) => job.model ?? 'claude-sonnet-4-6'),
+  _resetForTest: vi.fn(),
+}));
+
+vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
+  classifyJobFailure: vi.fn(() => 'unknown'),
+  isFallbackEligibleFailure: vi.fn(() => false),
+  isSameModelRetryEligible: vi.fn(() => false),
+  shouldMarkProviderUnavailable: vi.fn(() => false),
+  _resetWarnedUnclassifiedForTest: vi.fn(),
+}));
+
+import type { Workflow } from '../shared/types.js';
+import { execSync } from 'child_process';
+
+function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
+  return {
+    id: 'wf-partial-test',
+    title: 'Partial Test',
+    task: 'Test partial PR',
+    work_dir: '/tmp/test',
+    implementer_model: 'claude-sonnet-4-6',
+    reviewer_model: 'codex',
+    max_cycles: 5,
+    current_cycle: 3,
+    current_phase: 'implement',
+    status: 'running',
+    milestones_total: 4,
+    milestones_done: 2,
+    project_id: null,
+    max_turns_assess: 20,
+    max_turns_review: 15,
+    max_turns_implement: 50,
+    stop_mode_assess: 'turns',
+    stop_value_assess: null,
+    stop_mode_review: 'turns',
+    stop_value_review: null,
+    stop_mode_implement: 'turns',
+    stop_value_implement: null,
+    template_id: null,
+    use_worktree: 1,
+    worktree_path: '/tmp/wt',
+    worktree_branch: 'workflow/test-branch',
+    pr_url: null,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+    ...overrides,
+  };
+}
+
+describe('pushAndCreatePr: partial label', () => {
+  beforeEach(async () => {
+    execSyncCalls.length = 0;
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+    vi.restoreAllMocks();
+  });
+
+  it('creates "partial" label and includes --label flag when isDraft=true', async () => {
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow();
+
+    const prUrl = pushAndCreatePr(wf, true);
+
+    expect(prUrl).toBe('https://github.com/test/repo/pull/42');
+
+    // Find the label creation call
+    const labelCreateCall = execSyncCalls.find(c => c.cmd.includes('gh label create partial'));
+    expect(labelCreateCall).toBeDefined();
+    expect(labelCreateCall!.cmd).toContain('--description "Partial workflow completion"');
+    expect(labelCreateCall!.cmd).toContain('--color FBCA04');
+
+    // Find the PR creation call
+    const prCreateCall = execSyncCalls.find(c => c.cmd.includes('gh pr create'));
+    expect(prCreateCall).toBeDefined();
+    expect(prCreateCall!.cmd).toContain('--draft');
+    expect(prCreateCall!.cmd).toContain('--label partial');
+  });
+
+  it('does not create label or include --label flag when isDraft=false', async () => {
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow();
+
+    const prUrl = pushAndCreatePr(wf, false);
+
+    expect(prUrl).toBe('https://github.com/test/repo/pull/42');
+
+    // No label creation call
+    const labelCreateCall = execSyncCalls.find(c => c.cmd.includes('gh label create'));
+    expect(labelCreateCall).toBeUndefined();
+
+    // PR creation without --label or --draft
+    const prCreateCall = execSyncCalls.find(c => c.cmd.includes('gh pr create'));
+    expect(prCreateCall).toBeDefined();
+    expect(prCreateCall!.cmd).not.toContain('--draft');
+    expect(prCreateCall!.cmd).not.toContain('--label');
+  });
+
+  it('proceeds with PR creation even if label creation fails', async () => {
+    // Override execSync to throw on label creation
+    const mockedExecSync = vi.mocked(execSync);
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd === 'string' && cmd.includes('gh label create')) {
+        throw new Error('label already exists');
+      }
+      if (typeof cmd === 'string' && cmd.includes('rev-parse --abbrev-ref HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      if (typeof cmd === 'string' && cmd.includes('rev-list --count')) {
+        return Buffer.from('3\n');
+      }
+      if (typeof cmd === 'string' && cmd.includes('gh pr create')) {
+        return Buffer.from('https://github.com/test/repo/pull/99\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow();
+
+    const prUrl = pushAndCreatePr(wf, true);
+
+    expect(prUrl).toBe('https://github.com/test/repo/pull/99');
+
+    // Label creation was attempted
+    const labelCreateCall = execSyncCalls.find(c => c.cmd.includes('gh label create'));
+    expect(labelCreateCall).toBeDefined();
+
+    // PR creation still happened with --label flag
+    const prCreateCall = execSyncCalls.find(c => c.cmd.includes('gh pr create'));
+    expect(prCreateCall).toBeDefined();
+    expect(prCreateCall!.cmd).toContain('--label partial');
+  });
+});

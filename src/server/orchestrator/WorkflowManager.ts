@@ -768,10 +768,21 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
     const body = _buildPrBody(workflow, planNote?.value ?? null, { partial: isDraft });
     const title = `[Workflow] ${workflow.title}`;
 
+    // For draft (partial) PRs, ensure the "partial" label exists and attach it
+    let labelFlag = '';
+    if (isDraft) {
+      try {
+        execSync('gh label create partial --description "Partial workflow completion" --color FBCA04', {
+          cwd: worktree_path, stdio: 'pipe', timeout: 10000,
+        });
+      } catch { /* label already exists — fine */ }
+      labelFlag = ' --label partial';
+    }
+
     // Create PR via gh CLI
     const draftFlag = isDraft ? ' --draft' : '';
     const prUrl = execSync(
-      `gh pr create --title ${JSON.stringify(title)} --body ${JSON.stringify(body)} --head ${JSON.stringify(worktree_branch)}${draftFlag}`,
+      `gh pr create --title ${JSON.stringify(title)} --body ${JSON.stringify(body)} --head ${JSON.stringify(worktree_branch)}${draftFlag}${labelFlag}`,
       { cwd: worktree_path, stdio: 'pipe', timeout: 30000 }
     ).toString().trim();
 
