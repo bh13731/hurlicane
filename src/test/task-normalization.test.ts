@@ -436,7 +436,7 @@ describe('taskToJobRequest', () => {
     expect(() => taskToJobRequest(req, fabricated)).toThrow(/routesTo: supplied 'job' vs canonical 'workflow'/);
   });
 
-  it('accepts supplied config when routesTo matches the request', () => {
+  it('accepts supplied config only when it exactly matches the canonical resolved config', () => {
     const req: CreateTaskRequest = { description: 'x', preset: 'quick' };
     const matching = resolveTaskConfig(req);
     const result = taskToJobRequest(req, matching);
@@ -780,7 +780,7 @@ describe('taskToWorkflowRequest', () => {
     expect(() => taskToWorkflowRequest(req, fabricated)).toThrow(/routesTo: supplied 'workflow' vs canonical 'job'/);
   });
 
-  it('accepts supplied config when routesTo matches the request', () => {
+  it('accepts supplied config only when it exactly matches the canonical resolved config', () => {
     const req: CreateTaskRequest = { description: 'x', iterations: 5 };
     const matching = resolveTaskConfig(req);
     const result = taskToWorkflowRequest(req, matching);
