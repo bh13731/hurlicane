@@ -767,6 +767,7 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2\n- [ ] M3', null);
     // Pre-implement snapshot: 1 done (same as current)
     upsertNote(`workflow/${workflow.id}/pre-implement-milestones/2`, '1', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/2`, '1', null);
     // Already had 1 zero-progress cycle
     upsertNote(`workflow/${workflow.id}/zero-progress-count`, '1', null);
 

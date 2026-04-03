@@ -97,6 +97,7 @@ describe('WorkflowManager: diminishing returns detector', () => {
     upsertNote(`workflow/${workflow.id}/plan`,
       '- [x] M1\n- [x] M2\n- [x] M3\n- [x] M4\n- [ ] M5\n- [ ] M6\n- [ ] M7\n- [ ] M8\n- [ ] M9\n- [ ] M10', null);
     upsertNote(`workflow/${workflow.id}/pre-implement-milestones/5`, '4', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/5`, '1', null);
     // Previous cycles had 0 progress each
     upsertNote(`workflow/${workflow.id}/cycle-progress/3`, '0', null);
     upsertNote(`workflow/${workflow.id}/cycle-progress/4`, '0', null);
@@ -207,6 +208,7 @@ describe('WorkflowManager: diminishing returns detector', () => {
     // Plan: 2/5 done, pre-implement was 2 → zero progress
     upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4\n- [ ] M5', null);
     upsertNote(`workflow/${workflow.id}/pre-implement-milestones/4`, '2', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/4`, '1', null);
     // Already at 1 zero-progress — this will be the 2nd, triggering block
     upsertNote(`workflow/${workflow.id}/zero-progress-count`, '1', null);
 
@@ -266,6 +268,7 @@ describe('WorkflowManager: diminishing returns detector', () => {
     // Now simulate a new implement cycle (cycle 5 re-run) with zero progress
     const resumed = getWorkflowById(workflow.id)!;
     upsertNote(`workflow/${workflow.id}/pre-implement-milestones/5`, '4', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/5`, '1', null);
 
     const job = await insertTestJob({
       workflow_id: resumed.id,
