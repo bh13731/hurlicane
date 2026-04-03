@@ -111,9 +111,12 @@ describe('writeBlockedDiagnostic', () => {
     project = await insertTestProject();
     vi.mocked(fs.writeFileSync).mockClear();
     vi.mocked(fs.mkdirSync).mockClear();
+    // Unset VITEST so writeBlockedDiagnostic doesn't early-return
+    delete process.env.VITEST;
   });
 
   afterEach(async () => {
+    process.env.VITEST = 'true';
     await cleanupTestDb();
   });
 
