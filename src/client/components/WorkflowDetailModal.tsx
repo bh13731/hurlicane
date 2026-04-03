@@ -116,6 +116,9 @@ export function WorkflowDetailModal({ workflow, agents, onClose, onWorkflowUpdat
         if (data.workflow) onWorkflowUpdate(data.workflow);
         alert(`Draft PR creation failed. ${data.outcome === 'missing_worktree_with_progress' ? 'The worktree is missing but publishable commits exist — see blocked reason for details.' : 'The worktree has been preserved — see blocked reason for details.'}`);
         await fetchDetail();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Wrap-up failed' }));
+        alert(err.error || 'Wrap-up failed');
       }
     } finally { setActing(false); }
   };
