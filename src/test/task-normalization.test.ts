@@ -449,6 +449,29 @@ describe('taskToJobRequest', () => {
     expect(withConfig.reviewConfig).toBeDefined();
   });
 
+  it('exact-match success: reviewConfig built from explicit reviewerModel', () => {
+    // Exercises the buildReviewConfig(req.reviewerModel) branch with a non-default model.
+    const req: CreateTaskRequest = { description: 'review task', review: true, reviewerModel: 'claude-sonnet-4-6' };
+    const matching = resolveTaskConfig(req);
+    const withConfig = taskToJobRequest(req, matching);
+    const withoutConfig = taskToJobRequest(req);
+    expect(withConfig).toEqual(withoutConfig);
+    // Spot-check the reviewerModel was actually used, not the default 'codex'.
+    expect(withConfig.reviewConfig).toEqual({ models: ['claude-sonnet-4-6'], auto: true });
+  });
+
+  it('exact-match success: caller-supplied reviewConfig preserved as-is', () => {
+    // Exercises the req.reviewConfig ?? ... branch where the caller supplies their own config.
+    const customReview = { models: ['gpt-4', 'codex'], auto: false };
+    const req: CreateTaskRequest = { description: 'custom review', review: true, reviewConfig: customReview };
+    const matching = resolveTaskConfig(req);
+    const withConfig = taskToJobRequest(req, matching);
+    const withoutConfig = taskToJobRequest(req);
+    expect(withConfig).toEqual(withoutConfig);
+    // Spot-check that the caller-supplied reviewConfig was passed through, not rebuilt.
+    expect(withConfig.reviewConfig).toEqual(customReview);
+  });
+
   it('throws on stale config with review=true when canonical review is false', () => {
     const req: CreateTaskRequest = { description: 'x', preset: 'quick' };
     const stale = { ...resolveTaskConfig(req), review: true };
