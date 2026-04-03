@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import path from 'path';
 import { captureWithContext, Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
@@ -135,8 +135,8 @@ function _onJobCompleted(job: Job): void {
   }
 
   // Parse milestones from the plan note
-  const planNote = queries.getNote(`workflow/${workflow.id}/plan`);
-  const milestones = parseMilestones(planNote?.value ?? '');
+  let planNote = queries.getNote(`workflow/${workflow.id}/plan`);
+  let milestones = parseMilestones(planNote?.value ?? '');
 
   // Phase-specific transitions
   switch (job.workflow_phase) {
@@ -144,10 +144,23 @@ function _onJobCompleted(job: Job): void {
       try {
         // After assess: validate plan was written, then move to review
         const contractNote = queries.getNote(`workflow/${workflow.id}/contract`);
-        const missingArtifacts = [
+        let missingArtifacts = [
           !planNote?.value ? 'plan' : null,
           !contractNote?.value ? 'contract' : null,
         ].filter(Boolean) as string[];
+
+        // M7/4C: If plan is missing, attempt to recover it from the assess agent's output
+        if (missingArtifacts.includes('plan')) {
+          const recovered = recoverPlanFromAgentOutput(job, workflow.id);
+          if (recovered) {
+            // Re-read after recovery
+            planNote = queries.getNote(`workflow/${workflow.id}/plan`);
+            milestones = parseMilestones(planNote?.value ?? '');
+            missingArtifacts = missingArtifacts.filter(a => a !== 'plan');
+            console.log(`[workflow ${workflow.id}] recovered plan from agent output (${milestones.total} milestones)`);
+          }
+        }
+
         if (missingArtifacts.length > 0) {
           if (spawnRepairJob(workflow, 'assess', job.workflow_cycle ?? 0, missingArtifacts)) return;
           const assessReason = `Assess phase completed but missing ${missingArtifacts.join(', ')}`;
@@ -338,6 +351,75 @@ export function parseMilestones(planText: string): { total: number; done: number
     else if (CHECKBOX_UNCHECKED.test(line)) unchecked++;
   }
   return { total: done + unchecked, done };
+}
+
+// ─── Plan Recovery from Agent Output (M7/4C) ─────────────────────────────────
+
+/**
+ * Attempt to recover a plan from the assess agent's text output.
+ * Scans assistant text blocks for a "# Plan" header followed by at least one
+ * unchecked milestone (`- [ ]`). If found, writes it as the plan note.
+ * Returns true if a valid plan was recovered.
+ */
+export function recoverPlanFromAgentOutput(job: Job, workflowId: string): boolean {
+  try {
+    const agents = queries.getAgentsWithJobByJobId(job.id);
+    if (agents.length === 0) return false;
+
+    // Check each agent (most recent first — getAgentsWithJobByJobId orders DESC)
+    for (const agent of agents) {
+      const output = queries.getAgentOutput(agent.id);
+      // Collect all assistant text blocks
+      for (const row of output) {
+        if (row.event_type !== 'assistant') continue;
+        try {
+          const ev = JSON.parse(row.content);
+          if (ev.type !== 'assistant' || !Array.isArray(ev.message?.content)) continue;
+          for (const block of ev.message.content) {
+            if (block.type !== 'text' || typeof block.text !== 'string') continue;
+            const plan = extractPlanFromText(block.text);
+            if (plan) {
+              queries.upsertNote(`workflow/${workflowId}/plan`, plan, null);
+              return true;
+            }
+          }
+        } catch { /* skip malformed */ }
+      }
+    }
+  } catch (err) {
+    console.warn(`[workflow ${workflowId}] failed to recover plan from agent output:`, err);
+  }
+  return false;
+}
+
+/**
+ * Extract a plan section from text. Looks for a "# Plan" header and captures
+ * everything from that header until the next top-level heading or end of text.
+ * Returns the extracted plan if it contains at least one unchecked milestone.
+ */
+export function extractPlanFromText(text: string): string | null {
+  // Find "# Plan" header (allowing ## Plan, ### Plan, etc.)
+  const planHeaderIdx = text.search(/^#{1,3}\s+Plan\b/m);
+  if (planHeaderIdx === -1) return null;
+
+  // Extract from header to next same-or-higher-level heading or end
+  const fromHeader = text.slice(planHeaderIdx);
+  const headerMatch = fromHeader.match(/^(#{1,3})\s/);
+  const headerLevel = headerMatch ? headerMatch[1].length : 1;
+
+  // Find the next heading at the same or higher level (skip past the first line)
+  const firstNewline = fromHeader.indexOf('\n');
+  if (firstNewline === -1) return null; // just a header with no body
+  const rest = fromHeader.slice(firstNewline + 1);
+  const nextHeaderPattern = new RegExp(`^#{1,${headerLevel}}\\s`, 'm');
+  const nextIdx = rest.search(nextHeaderPattern);
+  const planSection = nextIdx === -1 ? fromHeader : fromHeader.slice(0, firstNewline + 1 + nextIdx).trimEnd();
+
+  // Validate: must contain at least one unchecked milestone
+  const { total, done } = parseMilestones(planSection);
+  if (total === 0 || total === done) return null;
+
+  return planSection;
 }
 
 // ─── Worktree Health & Branch Verification ─────────────────────────────────
@@ -1132,9 +1214,11 @@ export function _resetForTest(): void {
 }
 
 function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkflow>[1]): void {
+  let previousStatus: string | undefined;
   if (fields.status) {
     const current = queries.getWorkflowById(id);
-    validateTransition('workflow', current?.status, fields.status, id);
+    previousStatus = current?.status;
+    validateTransition('workflow', previousStatus, fields.status, id);
   }
   const updated = queries.updateWorkflow(id, fields);
   if (!updated) {
@@ -1148,10 +1232,22 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
     console.warn(`[workflow] updateAndEmit: socket.emitWorkflowUpdate failed for workflow ${id}:`, emitErr);
   }
   // Blocked is a real error — report to Sentry and write diagnostic
-  if (fields.status === 'blocked') {
+  // Only fire on actual transitions (not re-processing already-blocked workflows)
+  if (fields.status === 'blocked' && previousStatus !== 'blocked') {
     const reason = fields.blocked_reason ?? updated.blocked_reason ?? 'unknown';
     const err = new Error(`Workflow blocked: ${updated.title} — ${reason}`);
     err.name = 'WorkflowBlocked';
+    // Gather last failed job + agent error for Sentry context
+    const wfJobs = queries.getJobsForWorkflow(updated.id);
+    const lastFailed = [...wfJobs].reverse().find((j: Job) => j.status === 'failed');
+    let lastFailedError = '';
+    let lastFailedAgentId = '';
+    if (lastFailed) {
+      const failedAgents = queries.getAgentsWithJobByJobId(lastFailed.id);
+      const failedAgent = failedAgents[0];
+      lastFailedError = failedAgent?.error_message ?? '';
+      lastFailedAgentId = failedAgent?.id ?? '';
+    }
     Sentry.captureException(err, {
       tags: {
         component: 'WorkflowManager',
@@ -1167,6 +1263,11 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
         implementer_model: updated.implementer_model,
         reviewer_model: updated.reviewer_model,
         worktree_branch: updated.worktree_branch ?? 'none',
+        last_failed_job: lastFailed ? `${lastFailed.title} (${lastFailed.id.slice(0, 8)})` : 'none',
+        last_failed_agent: lastFailedAgentId ? lastFailedAgentId.slice(0, 8) : 'none',
+        last_failed_error: lastFailedError.slice(0, 500) || 'no error recorded',
+        total_jobs: wfJobs.length,
+        failed_jobs: wfJobs.filter((j: Job) => j.status === 'failed').length,
       },
     });
     try { writeBlockedDiagnostic(updated); } catch { /* best effort */ }
@@ -1182,31 +1283,82 @@ function writeBlockedDiagnostic(workflow: Workflow): void {
 
   // Gather context
   const jobs = queries.getJobsForWorkflow(workflow.id);
-  const recentJobs = jobs.slice(-10); // last 10 jobs
+  const recentJobs = jobs.slice(-10);
   const failedJobs = jobs.filter((j: Job) => j.status === 'failed');
   const recentFailed = failedJobs.slice(-5);
 
-  // Get the last agent error for each recent failed job
+  // Get the last agent error + output tail for each recent failed job
+  const LOG_DIR = path.join(process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : './data', 'agent-logs');
   const failedDetails = recentFailed.map((j: Job) => {
     const agents = queries.getAgentsWithJobByJobId(j.id);
     const agent = agents[0];
+
+    // Read last 30 lines of the agent's NDJSON log for the real error
+    let logTail = '';
+    if (agent) {
+      try {
+        const logPath = path.join(LOG_DIR, `${agent.id}.ndjson`);
+        const raw = readFileSync(logPath, 'utf8');
+        const lines = raw.trim().split('\n').slice(-30);
+        // Extract text content and errors from NDJSON
+        const relevant = lines.map(line => {
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.type === 'error' || parsed.error) return `[ERROR] ${parsed.error ?? JSON.stringify(parsed)}`;
+            if (parsed.type === 'assistant' && parsed.message?.content) {
+              const texts = parsed.message.content
+                .filter((c: { type: string }) => c.type === 'text')
+                .map((c: { text: string }) => c.text);
+              if (texts.length > 0) return texts.join('\n').slice(-500);
+            }
+            if (parsed.type === 'result' && parsed.result) return `[RESULT] ${JSON.stringify(parsed.result).slice(0, 300)}`;
+            return null;
+          } catch { return `[RAW] ${line.slice(0, 200)}`; }
+        }).filter(Boolean);
+        logTail = relevant.slice(-10).join('\n');
+      } catch { /* log not available */ }
+    }
+
     return {
       job_id: j.id.slice(0, 8),
       title: j.title,
       phase: j.workflow_phase,
       model: j.model,
-      error: agent?.error_message ?? 'no agent error',
+      error: agent?.error_message ?? 'no agent error recorded',
       exit_code: agent?.exit_code,
       turns: agent?.num_turns,
+      cost: agent?.cost_usd,
+      agent_id: agent?.id?.slice(0, 8) ?? 'n/a',
+      logTail,
     };
   });
 
-  // Get plan and worklog notes
+  // Get plan note
   let planSnippet = '';
   try {
     const plan = queries.getNote(`workflow/${workflow.id}/plan`);
-    if (plan) planSnippet = plan.value.slice(0, 2000);
+    if (plan) planSnippet = plan.value.slice(0, 3000);
   } catch { /* ignore */ }
+
+  // Get latest worklog
+  let worklogSnippet = '';
+  try {
+    const notes = queries.listNotes(`workflow/${workflow.id}/worklog`);
+    if (notes.length > 0) {
+      const latest = notes.sort((a, b) => b.updated_at - a.updated_at)[0];
+      worklogSnippet = latest.value.slice(0, 2000);
+    }
+  } catch { /* ignore */ }
+
+  // Get git state from worktree
+  let gitState = '';
+  if (workflow.worktree_path) {
+    try {
+      const status = execSync('git status --short', { cwd: workflow.worktree_path, timeout: 5000 }).toString().trim();
+      const lastCommit = execSync('git log --oneline -3', { cwd: workflow.worktree_path, timeout: 5000 }).toString().trim();
+      gitState = `### Working tree status\n\`\`\`\n${status || '(clean)'}\n\`\`\`\n\n### Last 3 commits\n\`\`\`\n${lastCommit}\n\`\`\``;
+    } catch { gitState = '(git state unavailable)'; }
+  }
 
   const md = `# Workflow Blocked Diagnostic
 
@@ -1223,20 +1375,22 @@ function writeBlockedDiagnostic(workflow: Workflow): void {
 - **Worktree:** ${workflow.worktree_path ?? 'none'} (branch: ${workflow.worktree_branch ?? 'none'})
 
 ## Job History (last 10)
-| ID | Phase | Status | Title |
-|----|-------|--------|-------|
-${recentJobs.map((j: Job) => `| ${j.id.slice(0, 8)} | ${j.workflow_phase ?? '-'} | ${j.status} | ${j.title} |`).join('\n')}
+| ID | Phase | Status | Model | Title |
+|----|-------|--------|-------|-------|
+${recentJobs.map((j: Job) => `| ${j.id.slice(0, 8)} | ${j.workflow_phase ?? '-'} | ${j.status} | ${j.model ?? '-'} | ${j.title} |`).join('\n')}
 
 ## Failed Jobs (last 5 with details)
 ${failedDetails.length === 0 ? 'No failed jobs.' : failedDetails.map(f => `### ${f.title}
-- **Job ID:** ${f.job_id}
-- **Phase:** ${f.phase}
-- **Model:** ${f.model}
-- **Exit code:** ${f.exit_code ?? 'n/a'}
-- **Turns used:** ${f.turns ?? 'n/a'}
-- **Error:**
+- **Job ID:** ${f.job_id} | **Agent ID:** ${f.agent_id}
+- **Phase:** ${f.phase} | **Model:** ${f.model}
+- **Exit code:** ${f.exit_code ?? 'n/a'} | **Turns used:** ${f.turns ?? 'n/a'} | **Cost:** $${f.cost?.toFixed(2) ?? 'n/a'}
+- **DB Error:**
 \`\`\`
 ${f.error}
+\`\`\`
+- **Agent output (last lines):**
+\`\`\`
+${f.logTail || '(no log output available)'}
 \`\`\`
 `).join('\n')}
 
@@ -1245,6 +1399,15 @@ ${f.error}
 - Done: ${jobs.filter((j: Job) => j.status === 'done').length}
 - Failed: ${failedJobs.length}
 - Cancelled: ${jobs.filter((j: Job) => j.status === 'cancelled').length}
+- Success rate: ${jobs.length > 0 ? Math.round(100 * jobs.filter((j: Job) => j.status === 'done').length / jobs.length) : 0}%
+
+## Git State
+${gitState || '(no worktree configured)'}
+
+## Latest Worklog Entry
+\`\`\`
+${worklogSnippet || '(no worklog found)'}
+\`\`\`
 
 ## Plan (truncated)
 \`\`\`
