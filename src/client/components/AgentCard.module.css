@@ -205,8 +205,8 @@
 .retryBadge {
   font-size: 10px;
   color: var(--status-running);
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: color-mix(in srgb, var(--status-running) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-running) 30%, transparent);
   border-radius: 4px;
   padding: 1px 6px;
   margin-top: 4px;
