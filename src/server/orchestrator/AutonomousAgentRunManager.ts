@@ -62,5 +62,5 @@ export function createAutonomousAgentRun(
   queries.insertWorkflow(workflow);
 
   const assessJob = startWorkflow(workflow);
-  return { workflow, project, jobs: [assessJob] };
+  return { workflow, project, jobs: assessJob ? [assessJob] : [] };
 }

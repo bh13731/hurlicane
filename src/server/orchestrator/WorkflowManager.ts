@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { execSync } from 'child_process';
-import { mkdirSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import path from 'path';
 import { Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
@@ -559,7 +559,25 @@ export function reconcileRunningWorkflows(): void {
  * Start a workflow by spawning the assess phase job.
  * Called from the API route when a workflow is created.
  */
-export function startWorkflow(workflow: Workflow): Job {
+export function startWorkflow(workflow: Workflow): Job | null {
+  // Pre-flight validation: ensure work_dir exists and git is functional
+  if (workflow.work_dir) {
+    if (!existsSync(workflow.work_dir)) {
+      const reason = `Pre-flight failed: work_dir does not exist: ${workflow.work_dir}`;
+      console.warn(`[workflow ${workflow.id}] ${reason}`);
+      updateAndEmit(workflow.id, { status: 'blocked', blocked_reason: reason });
+      return null;
+    }
+    try {
+      execSync('git status --porcelain', { cwd: workflow.work_dir, timeout: 5000, stdio: 'pipe' });
+    } catch (err: any) {
+      const reason = `Pre-flight failed: git is not functional in ${workflow.work_dir}: ${err.message}`;
+      console.warn(`[workflow ${workflow.id}] ${reason}`);
+      updateAndEmit(workflow.id, { status: 'blocked', blocked_reason: reason });
+      return null;
+    }
+  }
+
   // Create a single worktree for the entire workflow so all phases share one branch.
   // Changes accumulate linearly: assess → review → implement → review → ...
   let activeWorkflow = workflow;

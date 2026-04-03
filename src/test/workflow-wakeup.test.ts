@@ -16,6 +16,18 @@ import {
   insertTestJob,
 } from './helpers.js';
 
+// Mock fs so pre-flight existsSync passes for test paths
+vi.mock(import('fs'), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, existsSync: vi.fn(() => true) };
+});
+
+// Mock child_process so pre-flight git check passes
+vi.mock('child_process', () => ({
+  exec: vi.fn(),
+  execSync: vi.fn(() => Buffer.from('')),
+}));
+
 // Mock SocketManager
 vi.mock('../server/socket/SocketManager.js', () => createSocketMock());
 
