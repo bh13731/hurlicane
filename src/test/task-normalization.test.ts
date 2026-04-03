@@ -231,6 +231,66 @@ describe('validateTaskRequest', () => {
     })).toMatch(/maxTurns/);
   });
 
+  it('rejects priority on autonomous tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 5, priority: 10 }))
+      .toMatch(/priority is not supported/);
+    expect(validateTaskRequest({ description: 'x', preset: 'autonomous', priority: 1 }))
+      .toMatch(/priority is not supported/);
+  });
+
+  it('rejects retryPolicy on autonomous tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 5, retryPolicy: 'analyze' }))
+      .toMatch(/retryPolicy is not supported/);
+  });
+
+  it('rejects maxRetries on autonomous tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 5, maxRetries: 3 }))
+      .toMatch(/maxRetries is not supported/);
+  });
+
+  it('rejects completionChecks on autonomous tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 5, completionChecks: ['lint'] }))
+      .toMatch(/completionChecks is not supported/);
+    // Empty array should pass (falsy length)
+    expect(validateTaskRequest({ description: 'x', iterations: 5, completionChecks: [] }))
+      .toBeNull();
+  });
+
+  it('rejects context on autonomous tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 5, context: { env: 'prod' } }))
+      .toMatch(/context is not supported/);
+  });
+
+  it('rejects reviewConfig on autonomous tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 5, reviewConfig: { models: ['codex'], auto: true } }))
+      .toMatch(/reviewConfig is not supported/);
+  });
+
+  it('rejects remaining job-only fields on preset override combinations routing to workflow', () => {
+    // Quick preset with iterations override
+    expect(validateTaskRequest({ description: 'x', preset: 'quick', iterations: 3, priority: 5 }))
+      .toMatch(/priority is not supported/);
+    // Reviewed preset with iterations override
+    expect(validateTaskRequest({ description: 'x', preset: 'reviewed', iterations: 4, retryPolicy: 'same' }))
+      .toMatch(/retryPolicy is not supported/);
+    // Autonomous preset with context
+    expect(validateTaskRequest({ description: 'x', preset: 'autonomous', context: { key: 'val' } }))
+      .toMatch(/context is not supported/);
+  });
+
+  it('allows priority, retryPolicy, maxRetries, completionChecks, context, reviewConfig on job-routed tasks', () => {
+    expect(validateTaskRequest({
+      description: 'x',
+      iterations: 1,
+      priority: 10,
+      retryPolicy: 'analyze',
+      maxRetries: 3,
+      completionChecks: ['lint', 'test'],
+      context: { env: 'prod' },
+      reviewConfig: { models: ['codex'], auto: true },
+    })).toBeNull();
+  });
+
   it('allows job-only options on single-pass tasks', () => {
     expect(validateTaskRequest({
       description: 'x',

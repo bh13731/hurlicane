@@ -101,6 +101,12 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
     if (req.debate)                  return 'debate is not supported for autonomous tasks';
     if (req.repeatIntervalMs)        return 'repeatIntervalMs is not supported for autonomous tasks';
     if (req.scheduledAt)             return 'scheduledAt is not supported for autonomous tasks';
+    if (req.priority !== undefined)  return 'priority is not supported for autonomous tasks (iterations > 1)';
+    if (req.retryPolicy !== undefined) return 'retryPolicy is not supported for autonomous tasks (iterations > 1)';
+    if (req.maxRetries !== undefined) return 'maxRetries is not supported for autonomous tasks (iterations > 1)';
+    if (req.completionChecks?.length) return 'completionChecks is not supported for autonomous tasks (iterations > 1)';
+    if (req.context !== undefined)   return 'context is not supported for autonomous tasks (iterations > 1)';
+    if (req.reviewConfig !== undefined) return 'reviewConfig is not supported for autonomous tasks (iterations > 1); reviewer model is set via reviewerModel';
   }
   return null;
 }
