@@ -86,6 +86,34 @@ export function renderInlineContext(
   return `\n\n## Pre-loaded Context\n\nThe following scratchpad context has been pre-read for you. You do NOT need to call \`read_note\` for these unless you need to refresh after an update.\n\n${body}`;
 }
 
+/**
+ * Extract the first unchecked milestone from a plan and generate a review
+ * checklist based on its description. Returns empty string if no unchecked
+ * milestone is found or no plan is provided.
+ */
+export function extractMilestoneChecklist(plan: string | null | undefined): string {
+  if (!plan) return '';
+  // Find the first unchecked milestone
+  const match = plan.match(/^- \[ \] \*\*(.+?)\*\*(?:\s*—\s*(.+))?$/m);
+  if (!match) return '';
+  const title = match[1].trim();
+  const description = match[2]?.trim() ?? '';
+
+  const items: string[] = [];
+  items.push(`- Does the implementation satisfy the core requirement of "${title}"?`);
+  if (description) {
+    // Extract acceptance criteria if description mentions them
+    if (/accept|criteria|must|should|ensure|verify/i.test(description)) {
+      items.push(`- Are all acceptance criteria from the milestone description met?`);
+    }
+    items.push(`- Does the implementation match the specific details: "${description.slice(0, 120)}${description.length > 120 ? '...' : ''}"?`);
+  }
+  items.push(`- Are there tests covering the new behavior?`);
+  items.push(`- Are there edge cases or error paths not handled?`);
+
+  return `\n### Milestone Review Checklist\n\nThe implementer was working on: **${title}**\n\n${items.join('\n')}\n`;
+}
+
 export function renderRecentChanges(diff: string | undefined): string {
   if (!diff || !diff.trim()) return '';
 
@@ -302,7 +330,7 @@ Write the updated plan back: \`write_note("${planKey}", <updated plan>)\`
 - If the implementation was poor quality, add multiple specific fix milestones rather than vague notes.
 - The implementer reads your plan directly — be precise and actionable.${workflow.worktree_branch ? `
 - **You are on branch \`${workflow.worktree_branch}\`. Do NOT switch branches or checkout main.**` : ''}
-- Call \`report_status\` to update your progress.${renderInlineContext(inlineContext, planKey, contractKey, worklogPrefix)}${!isFirstReview ? renderRecentChanges(inlineContext?.recentDiff) : ''}`;
+- Call \`report_status\` to update your progress.${!isFirstReview ? extractMilestoneChecklist(inlineContext?.plan) : ''}${renderInlineContext(inlineContext, planKey, contractKey, worklogPrefix)}${!isFirstReview ? renderRecentChanges(inlineContext?.recentDiff) : ''}`;
 }
 
 export function buildImplementPrompt(workflow: Workflow, cycle: number, inlineContext?: InlineWorkflowContext): string {

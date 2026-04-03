@@ -5,6 +5,7 @@ import {
   buildReviewPrompt,
   buildImplementPrompt,
   buildAssessPrompt,
+  extractMilestoneChecklist,
   type InlineContext,
 } from '../server/orchestrator/WorkflowPrompts.js';
 
@@ -298,5 +299,58 @@ describe('buildAssessPrompt turn-aware milestone sizing', () => {
 
     expect(prompt).toContain('1000 turns');
     expect(prompt).toContain('30-40 tool calls');
+  });
+});
+
+// ─── extractMilestoneChecklist (M11/5C) ─────────────────────────────────────
+
+describe('extractMilestoneChecklist', () => {
+  it('generates checklist from first unchecked milestone', () => {
+    const plan = '- [x] M1: Done\n- [ ] **M2: Add validation** — Ensure all inputs are validated before processing. Acceptance: no unvalidated inputs reach the handler.';
+    const result = extractMilestoneChecklist(plan);
+    expect(result).toContain('### Milestone Review Checklist');
+    expect(result).toContain('M2: Add validation');
+    expect(result).toContain('acceptance criteria');
+    expect(result).toContain('tests covering');
+  });
+
+  it('returns empty string when no unchecked milestones', () => {
+    const plan = '- [x] M1: Done\n- [x] M2: Also done';
+    expect(extractMilestoneChecklist(plan)).toBe('');
+  });
+
+  it('returns empty string when plan is null', () => {
+    expect(extractMilestoneChecklist(null)).toBe('');
+  });
+
+  it('handles milestone without description', () => {
+    const plan = '- [ ] **M1: Quick fix**';
+    const result = extractMilestoneChecklist(plan);
+    expect(result).toContain('M1: Quick fix');
+    expect(result).toContain('tests covering');
+  });
+});
+
+describe('buildReviewPrompt milestone checklist integration (M11/5C)', () => {
+  it('includes milestone checklist in cycle 2+ review with inline context', () => {
+    const wf = makeWorkflow();
+    const ctx: InlineContext = {
+      plan: '- [x] M1: Done\n- [ ] **M2: Add logging** — Add structured logging to all API endpoints.',
+      contract: 'contract',
+      worklogs: [],
+    };
+    const prompt = buildReviewPrompt(wf, 2, ctx);
+    expect(prompt).toContain('### Milestone Review Checklist');
+    expect(prompt).toContain('M2: Add logging');
+  });
+
+  it('does NOT include milestone checklist in cycle 1 (plan review)', () => {
+    const wf = makeWorkflow();
+    const ctx: InlineContext = {
+      plan: '- [ ] **M1: First milestone** — Do something.',
+      worklogs: [],
+    };
+    const prompt = buildReviewPrompt(wf, 1, ctx);
+    expect(prompt).not.toContain('### Milestone Review Checklist');
   });
 });
