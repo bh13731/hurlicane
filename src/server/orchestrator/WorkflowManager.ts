@@ -938,7 +938,10 @@ export function startWorkflow(workflow: Workflow): Job | null {
       }) ?? workflow;
       console.log(`[workflow ${workflow.id}] created worktree at ${worktreePath} (branch: ${branchName})`);
     } catch (err: any) {
-      console.warn(`[workflow ${workflow.id}] worktree creation failed, using work_dir directly:`, err.message);
+      const reason = `Worktree creation failed: ${err.message}`;
+      console.warn(`[workflow ${workflow.id}] ${reason}`);
+      updateAndEmit(workflow.id, { status: 'blocked', blocked_reason: reason });
+      return null;
     }
   }
 

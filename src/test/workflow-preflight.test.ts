@@ -17,6 +17,7 @@ import {
 // Track execSync calls
 const execSyncCalls: Array<{ cmd: string; opts?: any }> = [];
 let gitStatusShouldFail = false;
+let worktreeAddShouldFail = false;
 let missingPaths = new Set<string>();
 
 vi.mock(import('fs'), async (importOriginal) => {
@@ -35,6 +36,9 @@ vi.mock('child_process', () => ({
       throw new Error('fatal: not a git repository');
     }
     if (cmd.includes('git worktree add')) {
+      if (worktreeAddShouldFail) {
+        throw new Error('fatal: branch already exists');
+      }
       return Buffer.from('');
     }
     return Buffer.from('');
@@ -73,6 +77,7 @@ describe('startWorkflow: pre-flight validation', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
     gitStatusShouldFail = false;
+    worktreeAddShouldFail = false;
     missingPaths = new Set();
     await setupTestDb();
   });
@@ -131,5 +136,25 @@ describe('startWorkflow: pre-flight validation', () => {
     const gitStatusCall = execSyncCalls.find(c => c.cmd === 'git status --porcelain');
     expect(gitStatusCall).toBeDefined();
     expect(gitStatusCall!.opts.cwd).toBe('/tmp/valid-repo');
+  });
+
+  it('blocks workflow and avoids creating an assess job when worktree creation fails', async () => {
+    const { startWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const { getWorkflowById, listJobs } = await import('../server/db/queries.js');
+
+    worktreeAddShouldFail = true;
+    const wf = await insertTestWorkflow({ work_dir: '/tmp/valid-repo', use_worktree: 1 });
+
+    const result = startWorkflow(wf);
+
+    expect(result).toBeNull();
+
+    const updated = getWorkflowById(wf.id);
+    expect(updated?.status).toBe('blocked');
+    expect(updated?.blocked_reason).toContain('Worktree creation failed');
+    expect(updated?.blocked_reason).toContain('fatal: branch already exists');
+
+    const jobs = listJobs().filter(job => job.workflow_id === wf.id);
+    expect(jobs).toHaveLength(0);
   });
 });

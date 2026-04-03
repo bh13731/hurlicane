@@ -75,9 +75,11 @@ const _actualParseMilestones = vi.fn((text: string) => {
   }
   return { total: done + unchecked, done };
 });
+const _writeBlockedDiagnostic = vi.fn();
 vi.mock('../server/orchestrator/WorkflowManager.js', () => ({
   onJobCompleted: vi.fn(),
   parseMilestones: _actualParseMilestones,
+  writeBlockedDiagnostic: _writeBlockedDiagnostic,
   _resetForTest: vi.fn(),
 }));
 
@@ -561,5 +563,38 @@ describe('StuckJobWatchdog: slow-progress detection', () => {
 
     // Agent is inactive — idle detection handles this, not slow-progress
     expect(_logResilienceEvent).not.toHaveBeenCalled();
+  });
+
+  it('calls writeBlockedDiagnostic when slow-progress blocks a workflow (Fix-C10b)', async () => {
+    const { _getMilestoneSnapshotsForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    const queries = await import('../server/db/queries.js');
+
+    const { workflowId } = await setupWorkflowWithAgent({
+      milestonesPlan: '- [x] M1\n- [ ] M2\n- [ ] M3',
+      agentUpdatedAt: Date.now(),
+    });
+
+    // Pre-seed snapshot: 1 milestone done, 31 minutes ago
+    _getMilestoneSnapshotsForTest().set(workflowId, {
+      milestonesDone: 1,
+      checkedAt: Date.now() - 31 * 60 * 1000,
+    });
+
+    const { startWatchdog, stopWatchdog } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    startWatchdog();
+    stopWatchdog();
+
+    // Workflow should be blocked
+    const updated = queries.getWorkflowById(workflowId);
+    expect(updated!.status).toBe('blocked');
+
+    // writeBlockedDiagnostic should have been called with the blocked workflow
+    expect(_writeBlockedDiagnostic).toHaveBeenCalledTimes(1);
+    expect(_writeBlockedDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: workflowId,
+        status: 'blocked',
+      }),
+    );
   });
 });

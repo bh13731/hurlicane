@@ -34,7 +34,7 @@ import { markModelRateLimited, getFallbackModel, getModelProvider, markProviderR
 import { claimRecovery } from './RecoveryLedger.js';
 import { classifyFailureText, isFallbackEligibleFailure, shouldMarkProviderUnavailable } from './FailureClassifier.js';
 import { nudgeQueue } from './WorkQueueManager.js';
-import { parseMilestones } from './WorkflowManager.js';
+import { parseMilestones, writeBlockedDiagnostic } from './WorkflowManager.js';
 import { logResilienceEvent } from './ResilienceLogger.js';
 
 const WATCHDOG_INTERVAL_MS = 30_000;
@@ -656,6 +656,7 @@ function check(): void {
         const updatedWorkflow = queries.getWorkflowById(job.workflow_id);
         if (updatedWorkflow) {
           try { socket.emitWorkflowUpdate(updatedWorkflow); } catch { /* ignore */ }
+          try { writeBlockedDiagnostic(updatedWorkflow); } catch { /* best effort */ }
         }
         logResilienceEvent('slow_progress_block', 'workflow', job.workflow_id, {
           agent_id: agent.id,
