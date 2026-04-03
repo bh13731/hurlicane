@@ -99,7 +99,7 @@
 }
 
 .interactiveToggleActive {
-  color: #3b82f6;
+  color: var(--status-idle);
 }
 
 .requeueBtn {
@@ -204,7 +204,7 @@
 
 .retryBadge {
   font-size: 10px;
-  color: #f59e0b;
+  color: var(--status-running);
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.3);
   border-radius: 4px;

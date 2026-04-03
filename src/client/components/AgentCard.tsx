@@ -56,15 +56,15 @@ function ArchiveIcon() {
 }
 
 function getBorderColor(agent: AgentWithJob, isPtyIdle?: boolean): string {
-  if (isPtyIdle && agent.status === 'running') return '#3b82f6';
+  if (isPtyIdle && agent.status === 'running') return 'var(--status-idle)';
   switch (agent.status) {
     case 'starting':
     case 'running':
-      return '#f59e0b';
+      return 'var(--status-running)';
     case 'waiting_user':
-      return '#ef4444';
+      return 'var(--status-waiting)';
     case 'done':
-      return agent.output_read ? 'transparent' : '#22c55e';
+      return agent.output_read ? 'transparent' : 'var(--status-done)';
     case 'failed':
       return 'transparent';
     case 'cancelled':
@@ -88,8 +88,8 @@ function getStatusLabel(agent: AgentWithJob, isPtyIdle?: boolean): React.ReactNo
     case 'starting': return 'Starting...';
     case 'running': return agent.status_message ?? (agent.job.is_interactive
       ? (isPtyIdle
-          ? <>'Running' <span style={{ color: '#3b82f6' }}>(waiting for input)</span></>
-          : <>'Running' <span style={{ color: '#ef4444' }}>(interactive)</span></>)
+          ? <>'Running' <span style={{ color: 'var(--status-idle)' }}>(waiting for input)</span></>
+          : <>'Running' <span style={{ color: 'var(--status-waiting)' }}>(interactive)</span></>)
       : 'Running');
     case 'waiting_user': return 'Waiting for answer';
     case 'done': return agent.output_read ? 'Done (read)' : 'Done';
