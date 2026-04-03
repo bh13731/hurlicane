@@ -256,7 +256,8 @@ function _onJobCompleted(job: Job): void {
             const preImplDone = parseInt(preImplNote.value, 10);
 
             // Write per-cycle progress delta BEFORE zero-progress check (persists even if break fires)
-            const delta = milestones.done - preImplDone;
+            // Clamp to 0: plan restructuring (reviewer unchecking milestones) can make done < preImplDone
+            const delta = Math.max(0, milestones.done - preImplDone);
             queries.upsertNote(`workflow/${workflow.id}/cycle-progress/${updated.current_cycle}`, String(delta), null);
 
             if (milestones.done <= preImplDone) {
