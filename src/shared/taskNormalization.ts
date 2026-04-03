@@ -119,7 +119,11 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
  * WorkQueueManager.  Only valid when `resolveTaskConfig(req).routesTo === 'job'`.
  */
 export function taskToJobRequest(req: CreateTaskRequest, config?: ResolvedTaskConfig): CreateJobRequest {
-  const cfg = config ?? resolveTaskConfig(req);
+  const canonical = resolveTaskConfig(req);
+  if (config && config.routesTo !== canonical.routesTo) {
+    throw new Error(`Supplied config.routesTo ('${config.routesTo}') does not match the request's resolved routing ('${canonical.routesTo}') — route selection must come from the request itself`);
+  }
+  const cfg = config ?? canonical;
   if (cfg.routesTo !== 'job') {
     throw new Error('Cannot convert autonomous task (iterations > 1) to a job request');
   }
@@ -165,7 +169,11 @@ export function taskToJobRequest(req: CreateTaskRequest, config?: ResolvedTaskCo
  * AutonomousAgentRunManager.  Only valid when `resolveTaskConfig(req).routesTo === 'workflow'`.
  */
 export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedTaskConfig): CreateWorkflowRequest {
-  const cfg = config ?? resolveTaskConfig(req);
+  const canonical = resolveTaskConfig(req);
+  if (config && config.routesTo !== canonical.routesTo) {
+    throw new Error(`Supplied config.routesTo ('${config.routesTo}') does not match the request's resolved routing ('${canonical.routesTo}') — route selection must come from the request itself`);
+  }
+  const cfg = config ?? canonical;
   if (cfg.routesTo !== 'workflow') {
     throw new Error('Cannot convert single-pass task (iterations = 1) to a workflow request');
   }

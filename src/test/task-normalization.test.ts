@@ -429,6 +429,19 @@ describe('taskToJobRequest', () => {
   it('throws when called for autonomous task', () => {
     expect(() => taskToJobRequest({ description: 'x', iterations: 5 })).toThrow(/iterations > 1/);
   });
+
+  it('throws when supplied config fabricates routesTo=job for a workflow-routed request', () => {
+    const req: CreateTaskRequest = { description: 'x', iterations: 5 };
+    const fabricated = { preset: 'autonomous' as const, routesTo: 'job' as const, review: true, iterations: 5, useWorktree: true };
+    expect(() => taskToJobRequest(req, fabricated)).toThrow(/does not match the request's resolved routing/);
+  });
+
+  it('accepts supplied config when routesTo matches the request', () => {
+    const req: CreateTaskRequest = { description: 'x', preset: 'quick' };
+    const matching = resolveTaskConfig(req);
+    const result = taskToJobRequest(req, matching);
+    expect(result.description).toBe('x');
+  });
 });
 
 // ─── taskToWorkflowRequest ──────────────────────────────────────────────────
@@ -705,6 +718,19 @@ describe('taskToWorkflowRequest', () => {
   it('throws when description is missing (template-only)', () => {
     expect(() => taskToWorkflowRequest({ templateId: 'tpl-1', iterations: 5 }))
       .toThrow(/Workflow tasks require a description/);
+  });
+
+  it('throws when supplied config fabricates routesTo=workflow for a job-routed request', () => {
+    const req: CreateTaskRequest = { description: 'x', iterations: 1 };
+    const fabricated = { preset: 'quick' as const, routesTo: 'workflow' as const, review: false, iterations: 1, useWorktree: false };
+    expect(() => taskToWorkflowRequest(req, fabricated)).toThrow(/does not match the request's resolved routing/);
+  });
+
+  it('accepts supplied config when routesTo matches the request', () => {
+    const req: CreateTaskRequest = { description: 'x', iterations: 5 };
+    const matching = resolveTaskConfig(req);
+    const result = taskToWorkflowRequest(req, matching);
+    expect(result.task).toBe('x');
   });
 });
 
