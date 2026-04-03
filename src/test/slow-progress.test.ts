@@ -201,6 +201,7 @@ describe('StuckJobWatchdog: slow-progress detection', () => {
 
     const { workflowId } = await setupWorkflowWithAgent({
       milestonesPlan: '- [x] M1\n- [ ] M2\n- [ ] M3',
+      agentUpdatedAt: Date.now() - 10 * 60 * 1000,
     });
 
     // Manually trigger just the check function by starting/stopping
@@ -215,6 +216,35 @@ describe('StuckJobWatchdog: slow-progress detection', () => {
 
     // No warnings or blocks
     expect(_logResilienceEvent).not.toHaveBeenCalled();
+  });
+
+  it('seeds implement workflow snapshots on watchdog startup for restart resilience (Fix-C4b)', async () => {
+    const { _getMilestoneSnapshotsForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
+
+    const beforeStart = Date.now();
+    const { workflowId, agentId } = await setupWorkflowWithAgent({
+      milestonesPlan: '- [x] M1\n- [x] M2\n- [ ] M3',
+      agentUpdatedAt: Date.now(),
+    });
+
+    const { startWatchdog, stopWatchdog } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    startWatchdog();
+    stopWatchdog();
+
+    const snapshot = _getMilestoneSnapshotsForTest().get(workflowId);
+    expect(snapshot).toBeDefined();
+    expect(snapshot!.milestonesDone).toBe(2);
+    expect(snapshot!.checkedAt).toBeLessThanOrEqual(beforeStart - 15 * 60 * 1000 + 5000);
+    expect(snapshot!.checkedAt).toBeGreaterThanOrEqual(beforeStart - 15 * 60 * 1000 - 5000);
+    expect(_logResilienceEvent).toHaveBeenCalledWith(
+      'slow_progress_warning',
+      'workflow',
+      workflowId,
+      expect.objectContaining({
+        agent_id: agentId,
+        milestones_done: 2,
+      }),
+    );
   });
 
   it('resets snapshot timer when milestone progress is detected', async () => {
@@ -505,7 +535,7 @@ describe('StuckJobWatchdog: slow-progress detection', () => {
 
     const { workflowId } = await setupWorkflowWithAgent({
       milestonesPlan: '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4',
-      agentUpdatedAt: Date.now(),
+      agentUpdatedAt: Date.now() - 10 * 60 * 1000,
     });
 
     // Step 1: Seed a snapshot (simulates prior watchdog observation)
@@ -537,7 +567,8 @@ describe('StuckJobWatchdog: slow-progress detection', () => {
     const snapshot = _getMilestoneSnapshotsForTest().get(workflowId);
     expect(snapshot).toBeDefined();
     expect(snapshot!.milestonesDone).toBe(3);
-    expect(Date.now() - snapshot!.checkedAt).toBeLessThan(5000);
+    expect(Date.now() - snapshot!.checkedAt).toBeGreaterThanOrEqual(15 * 60 * 1000);
+    expect(Date.now() - snapshot!.checkedAt).toBeLessThan(15 * 60 * 1000 + 5000);
 
     // No warnings or blocks — fresh baseline, not a stall
     expect(_logResilienceEvent).not.toHaveBeenCalled();

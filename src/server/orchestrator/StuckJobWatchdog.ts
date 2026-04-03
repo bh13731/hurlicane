@@ -45,6 +45,10 @@ const SLOW_PROGRESS_ACTIVE_MS = 5 * 60 * 1000;  // agent must be active within 5
 /** Tracks milestone progress snapshots per workflow_id for slow-progress detection. */
 const _milestoneSnapshots = new Map<string, { milestonesDone: number; checkedAt: number }>();
 
+export function _seedMilestoneSnapshot(workflowId: string, milestonesDone: number, checkedAt: number): void {
+  _milestoneSnapshots.set(workflowId, { milestonesDone, checkedAt });
+}
+
 let _timer: NodeJS.Timeout | null = null;
 
 function isPidAlive(pid: number): boolean {
@@ -794,6 +798,20 @@ function cleanupZombieProcesses(): void {
 
 export function startWatchdog(): void {
   console.log('[watchdog] started (interval: 30s)');
+  const seededWorkflows = new Set<string>();
+  for (const agent of queries.listAllRunningAgents()) {
+    const job = queries.getJobById(agent.job_id);
+    if (!job?.workflow_id || job.workflow_phase !== 'implement') continue;
+    if (seededWorkflows.has(job.workflow_id)) continue;
+    seededWorkflows.add(job.workflow_id);
+    if (_milestoneSnapshots.has(job.workflow_id)) continue;
+
+    const planNote = queries.getNote(`workflow/${job.workflow_id}/plan`);
+    if (!planNote?.value) continue;
+
+    const { done } = parseMilestones(planNote.value);
+    _seedMilestoneSnapshot(job.workflow_id, done, Date.now() - SLOW_PROGRESS_WARN_MS);
+  }
   // Run once immediately to catch anything from startup
   try { check(); } catch (err) { console.error('[watchdog] initial check error:', err); captureWithContext(err, { component: 'StuckJobWatchdog' }); }
   _timer = setInterval(() => {

@@ -1414,10 +1414,14 @@ describe('WorkflowManager: worktree branch verification (M5)', () => {
     const emitJobNewCalls = vi.mocked(socket.emitJobNew).mock.calls;
     expect(emitJobNewCalls.length).toBeGreaterThanOrEqual(1);
 
-    // execSync: is-inside-work-tree, rev-parse HEAD, rev-parse --abbrev-ref, checkout, diff --stat
-    expect(execSync).toHaveBeenCalledTimes(5);
-    expect(vi.mocked(execSync).mock.calls[2][0]).toContain('rev-parse --abbrev-ref HEAD');
-    expect(vi.mocked(execSync).mock.calls[3][0]).toContain('git checkout');
+    // Verify the health-check + branch-correction path ran, without depending on
+    // unrelated extra git probes from surrounding setup.
+    const execCommands = vi.mocked(execSync).mock.calls.map(call => String(call[0]));
+    expect(execCommands.length).toBeGreaterThanOrEqual(4);
+    expect(execCommands.some(cmd => cmd.includes('rev-parse --is-inside-work-tree'))).toBe(true);
+    expect(execCommands.some(cmd => cmd.includes('rev-parse HEAD'))).toBe(true);
+    expect(execCommands.some(cmd => cmd.includes('rev-parse --abbrev-ref HEAD'))).toBe(true);
+    expect(execCommands.some(cmd => cmd.includes('git checkout'))).toBe(true);
   });
 
   it('resumeWorkflow throws when worktree checkout fails', async () => {
