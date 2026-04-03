@@ -4,7 +4,23 @@ import { setupTestDb, cleanupTestDb, createSocketMock, insertTestProject, insert
 import { createTestApp } from '../api-helpers.js';
 import type express from 'express';
 
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>();
+  return {
+    ...actual,
+    execFileSync: vi.fn(),
+  };
+});
 vi.mock('../../server/socket/SocketManager.js', () => createSocketMock());
+vi.mock('../../server/orchestrator/AgentRunner.js', () => ({
+  cancelledAgents: new Set<string>(),
+  _resetCompletedJobsForTest: vi.fn(),
+}));
+vi.mock('../../server/orchestrator/FileLockRegistry.js', () => ({
+  getFileLockRegistry: vi.fn(() => ({
+    releaseAll: vi.fn(),
+  })),
+}));
 vi.mock('../../server/orchestrator/WorkflowManager.js', () => ({
   startWorkflow: vi.fn((wf: any) => ({
     id: 'assess-job-id',
@@ -33,6 +49,14 @@ vi.mock('../../server/orchestrator/WorkflowPrompts.js', () => ({
 }));
 
 let app: express.Express;
+
+async function insertAgent(jobId: string, overrides: Record<string, any> = {}) {
+  const { insertAgent: dbInsert, getAgentWithJob } = await import('../../server/db/queries.js');
+  const { randomUUID } = await import('crypto');
+  const id = overrides.id ?? randomUUID();
+  dbInsert({ id, job_id: jobId, status: overrides.status ?? 'running', ...overrides });
+  return getAgentWithJob(id)!;
+}
 
 describe('GET /api/workflows', () => {
   beforeEach(async () => { await setupTestDb(); vi.clearAllMocks(); app = createTestApp(); });
@@ -375,5 +399,71 @@ describe('POST /api/workflows/:id/wrap-up', () => {
     expect(res.body.pr_url).toBeNull();
     expect(res.body.workflow.status).toBe('cancelled');
     expect(vi.mocked(cleanupWorktree)).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels running agents with pid, tmux, and lock cleanup during wrap-up (Fix-C17b)', async () => {
+    const { pushAndCreatePr, getPrCreationOutcome } = await import('../../server/orchestrator/WorkflowManager.js');
+    const { cancelledAgents } = await import('../../server/orchestrator/AgentRunner.js');
+    const { getFileLockRegistry } = await import('../../server/orchestrator/FileLockRegistry.js');
+    const { execFileSync } = await import('child_process');
+    const queries = await import('../../server/db/queries.js');
+    const socket = await import('../../server/socket/SocketManager.js');
+
+    vi.mocked(pushAndCreatePr).mockReturnValue(null);
+    vi.mocked(getPrCreationOutcome).mockReturnValue('no_publishable_commits');
+
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    try {
+      const project = await insertTestProject();
+      const workflow = await insertTestWorkflow({
+        project_id: project.id,
+        status: 'running',
+        current_phase: 'implement',
+        use_worktree: 1,
+      });
+      queries.updateWorkflow(workflow.id, {
+        worktree_path: '/tmp/worktree',
+        worktree_branch: 'workflow/test-branch',
+      });
+
+      const job = await insertTestJob({
+        workflow_id: workflow.id,
+        workflow_phase: 'implement',
+        status: 'running',
+      });
+      const agent = await insertAgent(job.id, {
+        id: 'wrapup-running-agent',
+        status: 'running',
+        pid: 4321,
+      });
+
+      const res = await request(app).post(`/api/workflows/${workflow.id}/wrap-up`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.outcome).toBe('no_publishable_commits');
+      expect(cancelledAgents.has(agent.id)).toBe(true);
+      expect(killSpy).toHaveBeenCalledWith(-4321, 'SIGTERM');
+      expect(vi.mocked(execFileSync)).toHaveBeenCalledWith(
+        'tmux',
+        ['kill-session', '-t', `orchestrator-${agent.id}`],
+        { stdio: 'pipe' },
+      );
+
+      const registry = vi.mocked(getFileLockRegistry).mock.results[0]?.value;
+      expect(registry.releaseAll).toHaveBeenCalledWith(agent.id);
+
+      const updatedAgent = queries.getAgentById(agent.id);
+      const updatedJob = queries.getJobById(job.id);
+      expect(updatedAgent?.status).toBe('cancelled');
+      expect(updatedAgent?.finished_at).toEqual(expect.any(Number));
+      expect(updatedJob?.status).toBe('cancelled');
+
+      expect(socket.emitJobUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        id: job.id,
+        status: 'cancelled',
+      }));
+    } finally {
+      killSpy.mockRestore();
+    }
   });
 });
