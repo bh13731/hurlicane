@@ -110,7 +110,7 @@ function hasCodexAuth(): boolean {
   if (_codexAuthAvailable != null) return _codexAuthAvailable;
   try {
     const auth = JSON.parse(readFileSync(join(process.env.HOME ?? '~', '.codex', 'auth.json'), 'utf8'));
-    _codexAuthAvailable = !!(auth.OPENAI_API_KEY ?? auth.api_key);
+    _codexAuthAvailable = !!(auth.OPENAI_API_KEY ?? auth.api_key ?? auth.tokens?.access_token);
   } catch {
     _codexAuthAvailable = false;
   }

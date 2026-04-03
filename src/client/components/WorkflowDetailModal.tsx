@@ -123,6 +123,8 @@ export function WorkflowDetailModal({ workflow, agents, onClose, onWorkflowUpdat
   const latestWorklog = orderedWorklogs[0] ?? null;
   const relevantJobs = jobs.filter(job => job.status !== 'cancelled');
   const latestJob = relevantJobs[relevantJobs.length - 1] ?? jobs[jobs.length - 1] ?? null;
+  const lastFailedJob = [...jobs].reverse().find(j => j.status === 'failed') ?? null;
+  const lastFailedAgent = lastFailedJob ? agents.find(a => a.job_id === lastFailedJob.id) ?? null : null;
   const totalCost = relevantJobs.reduce((sum, job) => {
     const agent = agents.find(a => a.job_id === job.id);
     return sum + (agent?.cost_usd ?? 0);
@@ -199,6 +201,30 @@ export function WorkflowDetailModal({ workflow, agents, onClose, onWorkflowUpdat
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+          {/* Blocked reason banner */}
+          {workflow.status === 'blocked' && workflow.blocked_reason && (
+            <div style={{
+              background: 'rgba(245, 158, 11, 0.1)',
+              border: '1px solid rgba(245, 158, 11, 0.3)',
+              borderRadius: 8,
+              padding: '12px 16px',
+              marginBottom: 16,
+              fontSize: 13,
+            }}>
+              <div style={{ fontWeight: 600, color: '#f59e0b', marginBottom: 4 }}>Blocked Reason</div>
+              <div style={{ color: '#e5e5e5', lineHeight: 1.5 }}>{workflow.blocked_reason}</div>
+              {lastFailedJob && (
+                <div style={{ marginTop: 8, color: '#999', fontSize: 12 }}>
+                  Last failed job: <span style={{ color: '#ccc' }}>{lastFailedJob.title}</span>
+                  {lastFailedAgent?.error_message && (
+                    <div style={{ marginTop: 4, fontFamily: 'monospace', color: '#f87171', fontSize: 11, whiteSpace: 'pre-wrap', maxHeight: 120, overflow: 'auto' }}>
+                      {lastFailedAgent.error_message.slice(0, 500)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {loading ? (
             <div style={{ color: '#888', textAlign: 'center', padding: 40 }}>Loading...</div>
           ) : (
@@ -535,6 +561,7 @@ function summarizeOutcome(status: Workflow['status'], latestJob: Job | null): { 
         : 'The run is blocked and needs attention before it can continue.',
     };
   }
+  // Note: blocked_reason is shown separately in the blocked banner below
   if (status === 'failed') {
     return {
       title: 'Run Failed',
