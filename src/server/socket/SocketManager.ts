@@ -107,6 +107,7 @@ export function emitDeadlockResolved(details: { cycle_agents: string[]; released
   } catch (err) {
     console.warn('[socket] emitDeadlockResolved error:', err);
   }
+  pushEvent('deadlock:resolved', details);
 }
 
 export function emitLockReleased(lockId: string, filePath: string): void {
