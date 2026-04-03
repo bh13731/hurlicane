@@ -11,6 +11,7 @@ import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildWorkfl
 import { getAvailableModel, getFallbackModel, getAlternateProviderModel, getModelProvider, markModelRateLimited, markProviderRateLimited } from './ModelClassifier.js';
 import { classifyJobFailure, isFallbackEligibleFailure, isSameModelRetryEligible, shouldMarkProviderUnavailable } from './FailureClassifier.js';
 import { nudgeQueue } from './WorkQueueManager.js';
+import { logResilienceEvent } from './ResilienceLogger.js';
 
 // Track jobs we've already processed to prevent double-exit race from triggering
 // duplicate spawns. Same pattern as DebateManager.
@@ -530,7 +531,18 @@ export function reconcileRunningWorkflows(): void {
         || after.current_cycle !== before?.current_cycle
         || queries.getJobsForWorkflow(workflow.id).some(job => ACTIVE.has(job.status))
       );
-      if (!progressed) {
+      if (progressed) {
+        console.log(`[workflow-gap] recovered workflow ${workflow.id.slice(0, 8)}: ${before?.current_phase}/${before?.current_cycle} → ${after!.current_phase}/${after!.current_cycle}`);
+        logResilienceEvent('gap_detector_recovery', 'workflow', workflow.id, {
+          from_phase: before?.current_phase,
+          from_cycle: before?.current_cycle,
+          to_phase: after!.current_phase,
+          to_cycle: after!.current_cycle,
+          to_status: after!.status,
+          trigger_job_id: latestPhaseJob.id,
+          trigger_job_status: latestPhaseJob.status,
+        });
+      } else {
         updateAndEmit(workflow.id, {
           status: 'blocked',
           blocked_reason: `Workflow stuck after ${latestPhaseJob.status} ${workflow.current_phase} job ${latestPhaseJob.id.slice(0, 8)}`,
