@@ -143,6 +143,27 @@ router.post('/:id/wrap-up', (req, res) => {
               if (updatedAgent) socket.emitAgentUpdate(updatedAgent);
             } catch (agentErr) {
               console.warn(`[wrap-up] Failed to cancel agent ${agent.id} in job ${job.id}:`, agentErr);
+              // Best-effort cleanup for the steps that were skipped by the throw.
+              // Each step is isolated so one failure doesn't prevent the rest.
+              try { getFileLockRegistry().releaseAll(agent.id); } catch { /* best effort */ }
+              try { disconnectAgent(agent.id); } catch { /* best effort */ }
+              try {
+                const pendingQ = queries.getPendingQuestion(agent.id);
+                if (pendingQ) {
+                  queries.updateQuestion(pendingQ.id, {
+                    status: 'timeout',
+                    answer: '[TIMEOUT] Workflow wrapped up; agent cancelled.',
+                    answered_at: Date.now(),
+                  });
+                }
+              } catch { /* best effort */ }
+              try {
+                queries.updateAgent(agent.id, { status: 'cancelled', finished_at: Date.now() });
+              } catch {
+                // DB update still failing — remove from cancelledAgents so handleAgentExit
+                // can do its own cleanup when the killed process exits
+                cancelledAgents.delete(agent.id);
+              }
             }
           }
         }

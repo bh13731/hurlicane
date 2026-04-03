@@ -659,13 +659,22 @@ describe('POST /api/workflows/:id/wrap-up', () => {
       const updatedJob2 = queries.getJobById(job2.id);
       expect(updatedJob2?.status).toBe('cancelled');
 
-      // Agent1: runtime protection is in place (cancelledAgents.add at line 116
-      // runs BEFORE the throwing updateAgent at line 127), but DB status stays
-      // 'running' because updateAgent threw before persisting the cancellation.
-      // This DB/runtime inconsistency is expected — handleAgentExit checks
-      // cancelledAgents to avoid respawning, so the runtime set is sufficient.
+      // Agent1: first updateAgent threw, but best-effort cleanup in catch retried
+      // and succeeded (callCount=2), so agent1 is now 'cancelled' in DB
       expect(cancelledAgents.has('c11b-agent-1')).toBe(true);
-      expect(queries.getAgentById('c11b-agent-1')?.status).toBe('running');
+      expect(queries.getAgentById('c11b-agent-1')?.status).toBe('cancelled');
+      expect(queries.getAgentById('c11b-agent-1')?.finished_at).toEqual(expect.any(Number));
+
+      // Agent1: best-effort cleanup released locks and disconnected PTY
+      // getFileLockRegistry is called multiple times; check all returned registries
+      const registryCalls = vi.mocked(getFileLockRegistry).mock.results;
+      const agent1Released = registryCalls.some(
+        (r) => r.type === 'return' && r.value.releaseAll.mock.calls.some(
+          (c: any[]) => c[0] === 'c11b-agent-1',
+        ),
+      );
+      expect(agent1Released).toBe(true);
+      expect(vi.mocked(disconnectAgent)).toHaveBeenCalledWith('c11b-agent-1');
 
       // Second agent was cancelled — not skipped
       const updatedAgent2 = queries.getAgentById(agent2.id);
@@ -673,7 +682,7 @@ describe('POST /api/workflows/:id/wrap-up', () => {
       expect(updatedAgent2?.finished_at).toEqual(expect.any(Number));
       expect(cancelledAgents.has(agent2.id)).toBe(true);
 
-      // Second agent's disconnect was called
+      // Second agent's disconnect was also called
       expect(vi.mocked(disconnectAgent)).toHaveBeenCalledWith(agent2.id);
 
       // Warning logged for the failed first agent cancellation
@@ -681,6 +690,81 @@ describe('POST /api/workflows/:id/wrap-up', () => {
         expect.stringContaining('c11b-agent-1'),
         expect.objectContaining({ message: expect.stringContaining('DB write failed') }),
       );
+    } finally {
+      killSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('removes agent from cancelledAgents when retry DB update also fails, delegating to handleAgentExit (Fix-C25b)', async () => {
+    const { pushAndCreatePr, getPrCreationOutcome } = await import('../../server/orchestrator/WorkflowManager.js');
+    const { cancelledAgents } = await import('../../server/orchestrator/AgentRunner.js');
+    const { getFileLockRegistry } = await import('../../server/orchestrator/FileLockRegistry.js');
+    const { disconnectAgent } = await import('../../server/orchestrator/PtyManager.js');
+    const queries = await import('../../server/db/queries.js');
+
+    vi.mocked(pushAndCreatePr).mockReturnValue(null);
+    vi.mocked(getPrCreationOutcome).mockReturnValue('no_publishable_commits');
+
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const project = await insertTestProject();
+      const workflow = await insertTestWorkflow({
+        project_id: project.id,
+        status: 'running',
+        current_phase: 'implement',
+        use_worktree: 1,
+      });
+      queries.updateWorkflow(workflow.id, {
+        worktree_path: '/tmp/worktree',
+        worktree_branch: 'workflow/test-branch',
+      });
+
+      const job1 = await insertTestJob({
+        workflow_id: workflow.id,
+        workflow_phase: 'implement',
+        status: 'running',
+      });
+      const agent1 = await insertAgent(job1.id, {
+        id: 'c25b-agent-1',
+        status: 'running',
+        pid: 2001,
+      });
+
+      // Make ALL updateAgent calls for agent1 throw — both the primary and retry
+      const originalUpdateAgent = queries.updateAgent.bind(queries);
+      vi.spyOn(queries, 'updateAgent').mockImplementation((id: string, updates: any) => {
+        if (id === 'c25b-agent-1') {
+          throw new Error('DB persistently broken for agent1');
+        }
+        return originalUpdateAgent(id, updates);
+      });
+
+      const res = await request(app).post(`/api/workflows/${workflow.id}/wrap-up`);
+
+      expect(res.status).toBe(200);
+
+      // Agent1: both updateAgent calls failed, so cancelledAgents.delete was called
+      // to let handleAgentExit do cleanup when the killed process exits
+      expect(cancelledAgents.has('c25b-agent-1')).toBe(false);
+
+      // Agent1 still shows 'running' in DB since both DB updates failed
+      expect(queries.getAgentById('c25b-agent-1')?.status).toBe('running');
+
+      // But best-effort cleanup still released locks and disconnected PTY
+      const registryCalls = vi.mocked(getFileLockRegistry).mock.results;
+      const agent1Released = registryCalls.some(
+        (r) => r.type === 'return' && r.value.releaseAll.mock.calls.some(
+          (c: any[]) => c[0] === 'c25b-agent-1',
+        ),
+      );
+      expect(agent1Released).toBe(true);
+      expect(vi.mocked(disconnectAgent)).toHaveBeenCalledWith('c25b-agent-1');
+
+      // Job still cancelled despite agent failure
+      const updatedJob1 = queries.getJobById(job1.id);
+      expect(updatedJob1?.status).toBe('cancelled');
     } finally {
       killSpy.mockRestore();
       warnSpy.mockRestore();
