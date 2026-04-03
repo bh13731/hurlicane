@@ -6,6 +6,19 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+interface PragmaColumnInfo {
+  cid: number;
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: string | null;
+  pk: number;
+}
+
+function getColumnNames(db: DatabaseSync, table: string): string[] {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as PragmaColumnInfo[]).map(r => r.name);
+}
+
 let _db: DatabaseSync | null = null;
 
 export function isDbInitialized(): boolean {
@@ -33,7 +46,7 @@ export function initDb(dbPath: string): DatabaseSync {
   db.exec(schema);
 
   // Additive migrations — safe to run repeatedly
-  const jobCols: string[] = (db.prepare('PRAGMA table_info(jobs)').all() as any[]).map((r: any) => r.name);
+  const jobCols = getColumnNames(db, 'jobs');
   if (!jobCols.includes('model')) {
     db.exec('ALTER TABLE jobs ADD COLUMN model TEXT');
   }
@@ -69,7 +82,7 @@ export function initDb(dbPath: string): DatabaseSync {
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id)');
 
-  const agentCols: string[] = (db.prepare('PRAGMA table_info(agents)').all() as any[]).map((r: any) => r.name);
+  const agentCols = getColumnNames(db, 'agents');
   if (!agentCols.includes('parent_agent_id')) {
     db.exec('ALTER TABLE agents ADD COLUMN parent_agent_id TEXT');
   }
@@ -106,7 +119,7 @@ export function initDb(dbPath: string): DatabaseSync {
     )
   `);
 
-  const tplCols: string[] = (db.prepare('PRAGMA table_info(templates)').all() as any[]).map((r: any) => r.name);
+  const tplCols = getColumnNames(db, 'templates');
   if (!tplCols.includes('work_dir')) {
     db.exec('ALTER TABLE templates ADD COLUMN work_dir TEXT');
   }
@@ -126,7 +139,7 @@ export function initDb(dbPath: string): DatabaseSync {
   `);
 
   // Notes (shared scratchpad across all agents)
-  const notesCols: string[] = (db.prepare('PRAGMA table_info(notes)').all() as any[]).map((r: any) => r.name);
+  const notesCols = getColumnNames(db, 'notes');
   if (notesCols.length === 0) {
     db.exec(`
       CREATE TABLE notes (
@@ -196,7 +209,7 @@ export function initDb(dbPath: string): DatabaseSync {
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_debate ON jobs(debate_id, debate_round)');
 
   // Post-debate action columns
-  const debateCols: string[] = (db.prepare('PRAGMA table_info(debates)').all() as any[]).map((r: any) => r.name);
+  const debateCols = getColumnNames(db, 'debates');
   if (!debateCols.includes('post_action_prompt')) {
     db.exec('ALTER TABLE debates ADD COLUMN post_action_prompt TEXT');
   }
@@ -288,7 +301,7 @@ export function initDb(dbPath: string): DatabaseSync {
   `);
 
   // last_hit_at column on knowledge_base — tracks when entries are actually matched/used
-  const kbCols: string[] = (db.prepare('PRAGMA table_info(knowledge_base)').all() as any[]).map((r: any) => r.name);
+  const kbCols = getColumnNames(db, 'knowledge_base');
   if (!kbCols.includes('last_hit_at')) {
     db.exec('ALTER TABLE knowledge_base ADD COLUMN last_hit_at INTEGER');
   }
@@ -354,7 +367,7 @@ export function initDb(dbPath: string): DatabaseSync {
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_disc_msgs_discussion ON discussion_messages(discussion_id)');
   // Migration: add requires_reply to existing discussion_messages tables
-  const discMsgCols: string[] = (db.prepare('PRAGMA table_info(discussion_messages)').all() as any[]).map((r: any) => r.name);
+  const discMsgCols = getColumnNames(db, 'discussion_messages');
   if (!discMsgCols.includes('requires_reply')) {
     db.exec('ALTER TABLE discussion_messages ADD COLUMN requires_reply INTEGER NOT NULL DEFAULT 1');
   }
@@ -370,7 +383,7 @@ export function initDb(dbPath: string): DatabaseSync {
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status)');
 
-  const proposalCols: string[] = (db.prepare('PRAGMA table_info(proposals)').all() as any[]).map((r: any) => r.name);
+  const proposalCols = getColumnNames(db, 'proposals');
   if (!proposalCols.includes('codex_confirmed')) {
     db.exec('ALTER TABLE proposals ADD COLUMN codex_confirmed INTEGER');
   }
@@ -444,7 +457,7 @@ export function initDb(dbPath: string): DatabaseSync {
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_workflow ON jobs(workflow_id, workflow_cycle)');
 
   // Workflow-level worktree columns (single worktree shared across all phases)
-  const workflowCols = db.prepare('PRAGMA table_info(workflows)').all().map((c: any) => c.name);
+  const workflowCols = getColumnNames(db, 'workflows');
   if (!workflowCols.includes('stop_mode_assess')) {
     db.exec("ALTER TABLE workflows ADD COLUMN stop_mode_assess TEXT NOT NULL DEFAULT 'turns'");
     db.exec('ALTER TABLE workflows ADD COLUMN stop_value_assess REAL');
@@ -527,7 +540,7 @@ export function initDb(dbPath: string): DatabaseSync {
   // Run a quick integrity check on startup to detect corruption early.
   // PRAGMA quick_check is fast (doesn't scan all data pages like integrity_check).
   try {
-    const result = db.prepare('PRAGMA quick_check(1)').get() as any;
+    const result = db.prepare('PRAGMA quick_check(1)').get() as { quick_check: string } | undefined;
     if (result && result.quick_check !== 'ok') {
       console.error(`[db] INTEGRITY WARNING: quick_check returned "${result.quick_check}"`);
     }
