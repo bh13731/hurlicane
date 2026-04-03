@@ -75,7 +75,7 @@ function _onJobCompleted(job: Job): void {
         const recoveryKey = `workflow/${workflow.id}/recovery/${phase}/cycle-${cycle}/model-fallback`;
         if (queries.getNote(recoveryKey)) {
           console.log(`[workflow ${workflow.id}] phase '${phase}' model-fallback already spawned (idempotency key exists) — skipping duplicate`);
-          // Fall through to block — recovery already in progress
+          return; // Recovery already in flight — let it complete
         } else {
           queries.upsertNote(recoveryKey, `fallback=${fallbackModel},from=${currentModel},failure=${failureKind}`, null);
           console.log(`[workflow ${workflow.id}] phase '${job.workflow_phase}' failed on ${currentModel} (${failureKind}) → retrying with ${fallbackModel}`);
@@ -101,6 +101,7 @@ function _onJobCompleted(job: Job): void {
         const cliRetryKey = `workflow/${workflow.id}/recovery/${phase}/cycle-${cycle}/cli-retry-${attempts + 1}`;
         if (queries.getNote(cliRetryKey)) {
           console.log(`[workflow ${workflow.id}] phase '${phase}' cli-retry-${attempts + 1} already spawned (idempotency key exists) — skipping`);
+          return; // Recovery already in flight — let it complete
         } else {
           queries.upsertNote(attemptsKey, String(attempts + 1), null);
           queries.upsertNote(cliRetryKey, `model=${currentModel},failure=${failureKind},attempt=${attempts + 1}`, null);
@@ -116,6 +117,7 @@ function _onJobCompleted(job: Job): void {
         const altProviderKey = `workflow/${workflow.id}/recovery/${phase}/cycle-${cycle}/alt-provider`;
         if (queries.getNote(altProviderKey)) {
           console.log(`[workflow ${workflow.id}] phase '${phase}' alt-provider already spawned (idempotency key exists) — skipping`);
+          return; // Recovery already in flight — let it complete
         } else {
           queries.upsertNote(altProviderKey, `alt=${altModel},from=${currentModel},failure=${failureKind}`, null);
           console.log(`[workflow ${workflow.id}] phase '${phase}' exhausted ${MAX_CLI_RETRIES} retries on ${currentModel} (${failureKind}) → switching provider to ${altModel}`);
