@@ -737,13 +737,23 @@ describe('taskToWorkflowRequest', () => {
     expect(result.task).toBe('x');
   });
 
-  it('uses resolved useWorktree from config', () => {
+  it('respects explicit useWorktree=false from the request', () => {
     const result = taskToWorkflowRequest({
       description: 'x',
       iterations: 10,
       useWorktree: false,
     });
+    // Canonical behavior: useWorktree derives from the request, not a supplied config
     expect(result.useWorktree).toBe(false);
+  });
+
+  it('defaults useWorktree=true when request omits it for workflow tasks', () => {
+    const result = taskToWorkflowRequest({
+      description: 'x',
+      iterations: 10,
+    });
+    // Workflow-routed tasks default to useWorktree=true via resolveTaskConfig
+    expect(result.useWorktree).toBe(true);
   });
 
   it('throws when called for single-pass task', () => {
