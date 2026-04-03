@@ -344,7 +344,7 @@ describe('taskToJobRequest', () => {
     expect(result.projectId).toBe('proj-1');
   });
 
-  it('uses resolved useWorktree from config', () => {
+  it('enables useWorktree for reviewed preset requests', () => {
     const result = taskToJobRequest({ description: 'x', preset: 'reviewed' });
     expect(result.useWorktree).toBe(true);
   });
