@@ -123,8 +123,9 @@ export function taskToJobRequest(req: CreateTaskRequest, config?: ResolvedTaskCo
   if (config && config.routesTo !== canonical.routesTo) {
     throw new Error(`Supplied config.routesTo ('${config.routesTo}') does not match the request's resolved routing ('${canonical.routesTo}') — route selection must come from the request itself`);
   }
-  const cfg = config ?? canonical;
-  if (cfg.routesTo !== 'job') {
+  // Always use canonical config — a stale same-route config must not flip
+  // derived fields like review or useWorktree.
+  if (canonical.routesTo !== 'job') {
     throw new Error('Cannot convert autonomous task (iterations > 1) to a job request');
   }
 
@@ -135,7 +136,7 @@ export function taskToJobRequest(req: CreateTaskRequest, config?: ResolvedTaskCo
     workDir: req.workDir,
     templateId: req.templateId,
     projectId: req.projectId,
-    useWorktree: cfg.useWorktree,
+    useWorktree: canonical.useWorktree,
     stopMode: req.stopMode,
     stopValue: req.stopValue,
     maxTurns: req.maxTurns,
@@ -154,8 +155,9 @@ export function taskToJobRequest(req: CreateTaskRequest, config?: ResolvedTaskCo
     debateMaxRounds: req.debateMaxRounds,
   };
 
-  // Wire up review when enabled
-  if (cfg.review) {
+  // Wire up review when enabled — always uses canonical to prevent stale
+  // config from adding/removing reviewConfig.
+  if (canonical.review) {
     jobReq.reviewConfig = req.reviewConfig ?? buildReviewConfig(req.reviewerModel);
   }
 

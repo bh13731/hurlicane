@@ -442,6 +442,41 @@ describe('taskToJobRequest', () => {
     const result = taskToJobRequest(req, matching);
     expect(result.description).toBe('x');
   });
+
+  it('ignores stale config with review=true when canonical review is false', () => {
+    // Quick preset → canonical review=false; stale config claims review=true
+    const req: CreateTaskRequest = { description: 'x', preset: 'quick' };
+    const stale = { ...resolveTaskConfig(req), review: true };
+    const result = taskToJobRequest(req, stale);
+    // Output must follow canonical (review=false) → no reviewConfig
+    expect(result.reviewConfig).toBeUndefined();
+  });
+
+  it('ignores stale config with review=false when canonical review is true', () => {
+    // Reviewed preset → canonical review=true; stale config claims review=false
+    const req: CreateTaskRequest = { description: 'x', preset: 'reviewed' };
+    const stale = { ...resolveTaskConfig(req), review: false };
+    const result = taskToJobRequest(req, stale);
+    // Output must follow canonical (review=true) → reviewConfig present
+    expect(result.reviewConfig).toBeDefined();
+    expect(result.reviewConfig).toEqual({ models: ['codex'], auto: true });
+  });
+
+  it('ignores stale config with useWorktree=true when canonical useWorktree is false', () => {
+    // Quick preset → canonical useWorktree=false; stale config claims useWorktree=true
+    const req: CreateTaskRequest = { description: 'x', preset: 'quick' };
+    const stale = { ...resolveTaskConfig(req), useWorktree: true };
+    const result = taskToJobRequest(req, stale);
+    expect(result.useWorktree).toBe(false);
+  });
+
+  it('ignores stale config with useWorktree=false when canonical useWorktree is true', () => {
+    // Reviewed preset → canonical useWorktree=true; stale config claims useWorktree=false
+    const req: CreateTaskRequest = { description: 'x', preset: 'reviewed' };
+    const stale = { ...resolveTaskConfig(req), useWorktree: false };
+    const result = taskToJobRequest(req, stale);
+    expect(result.useWorktree).toBe(true);
+  });
 });
 
 // ─── taskToWorkflowRequest ──────────────────────────────────────────────────
