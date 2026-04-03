@@ -238,7 +238,7 @@ If you genuinely cannot find 2 improvements, you must explicitly explain with sp
 `;
 
   const codeReviewSection = isFirstReview ? '' : `
-## Step 2: Code Review (MOST IMPORTANT)
+## Step ${hasInline ? 1 : 2}: Code Review (MOST IMPORTANT)
 
 The implementer just completed cycle ${cycle - 1}. You must review the actual code changes before touching the plan.
 
@@ -277,7 +277,7 @@ ${workflow.task}
 ${workflow.work_dir ?? '(not specified)'}
 
 ${hasInline ? '' : readContextSection}${planReviewSection}${codeReviewSection}
-## Step ${isFirstReview ? (hasInline ? 2 : 3) : 3}: Update the Plan
+## Step ${hasInline ? 2 : 3}: Update the Plan
 
 Rewrite the plan to reflect your review:
 - Keep all checked-off milestones (\`- [x]\`) exactly as-is

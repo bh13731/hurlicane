@@ -130,6 +130,52 @@ describe('buildReviewPrompt adversarial quality bar', () => {
     }
   });
 
+  it('cycle 1 with inline context has sequential step numbers', () => {
+    const wf = makeWorkflow();
+    const ctx: InlineContext = {
+      plan: '# Plan\n\n- [ ] M1: Do something',
+    };
+    const prompt = buildReviewPrompt(wf, 1, ctx);
+
+    const stepHeaders = [...prompt.matchAll(/## Step (\d+):/g)].map(m => Number(m[1]));
+    expect(stepHeaders.length).toBeGreaterThanOrEqual(2);
+    const unique = new Set(stepHeaders);
+    expect(unique.size).toBe(stepHeaders.length);
+    for (let i = 0; i < stepHeaders.length; i++) {
+      expect(stepHeaders[i]).toBe(i + 1);
+    }
+  });
+
+  it('cycle 2+ with inline context has sequential step numbers', () => {
+    const wf = makeWorkflow();
+    const ctx: InlineContext = {
+      plan: '# Plan\n\n- [x] M1\n- [ ] M2: Next thing',
+      worklogs: [{ key: 'workflow/wf-test-001/worklog/cycle-1', value: '## Cycle 1 worklog' }],
+    };
+    const prompt = buildReviewPrompt(wf, 2, ctx);
+
+    const stepHeaders = [...prompt.matchAll(/## Step (\d+):/g)].map(m => Number(m[1]));
+    expect(stepHeaders.length).toBeGreaterThanOrEqual(2);
+    const unique = new Set(stepHeaders);
+    expect(unique.size).toBe(stepHeaders.length);
+    for (let i = 0; i < stepHeaders.length; i++) {
+      expect(stepHeaders[i]).toBe(i + 1);
+    }
+  });
+
+  it('cycle 2+ without inline context has sequential step numbers', () => {
+    const wf = makeWorkflow();
+    const prompt = buildReviewPrompt(wf, 2);
+
+    const stepHeaders = [...prompt.matchAll(/## Step (\d+):/g)].map(m => Number(m[1]));
+    expect(stepHeaders.length).toBeGreaterThanOrEqual(2);
+    const unique = new Set(stepHeaders);
+    expect(unique.size).toBe(stepHeaders.length);
+    for (let i = 0; i < stepHeaders.length; i++) {
+      expect(stepHeaders[i]).toBe(i + 1);
+    }
+  });
+
   it('cycle 2+ (code review) requires at least 2 concrete issues', () => {
     const wf = makeWorkflow();
     const ctx: InlineContext = {
