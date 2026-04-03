@@ -313,7 +313,7 @@ router.post('/:id/reconnect', (req, res) => {
   const job = queries.getJobById(agent.job_id);
   if (!job) { res.status(404).json({ error: 'job not found' }); return; }
 
-  if (!job!.is_interactive) {
+  if (!job.is_interactive) {
     res.status(400).json({ error: 'Only interactive agents can be reconnected' }); return;
   }
 
