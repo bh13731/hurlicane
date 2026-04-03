@@ -621,6 +621,48 @@ describe('taskToWorkflowRequest', () => {
     })).toThrow(/dependsOn is not supported for workflow/);
   });
 
+  it('throws on explicit review=false (contradicts workflow review phase)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      review: false,
+    })).toThrow(/review cannot be disabled for workflow/);
+  });
+
+  it('throws on review=false with autonomous preset', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      preset: 'autonomous',
+      review: false,
+    })).toThrow(/review cannot be disabled for workflow/);
+  });
+
+  it('throws on review=false with quick preset override routing to workflow', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      preset: 'quick',
+      iterations: 3,
+      review: false,
+    })).toThrow(/review cannot be disabled for workflow/);
+  });
+
+  it('allows review=true on workflow tasks', () => {
+    const result = taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      review: true,
+    });
+    expect(result.task).toBe('x');
+  });
+
+  it('allows review=undefined on workflow tasks', () => {
+    const result = taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+    });
+    expect(result.task).toBe('x');
+  });
+
   it('uses resolved useWorktree from config', () => {
     const result = taskToWorkflowRequest({
       description: 'x',

@@ -174,6 +174,11 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
     throw new Error('Workflow tasks require a description (templateId alone is not sufficient)');
   }
 
+  // Workflow engine always includes a review phase — explicit review=false is contradictory
+  if (req.review === false) {
+    throw new Error('review cannot be disabled for workflow tasks (iterations > 1) — the workflow engine always includes a review phase');
+  }
+
   // Fail fast on single-pass stop fields that have no workflow equivalent —
   // callers should not rely on a separate validation step to catch these.
   if (req.stopMode !== undefined) {
