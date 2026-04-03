@@ -437,10 +437,16 @@ describe('taskToJobRequest', () => {
   });
 
   it('accepts supplied config only when it exactly matches the canonical resolved config', () => {
-    const req: CreateTaskRequest = { description: 'x', preset: 'quick' };
+    // Use a reviewed preset so derived fields (reviewConfig, useWorktree) are exercised.
+    const req: CreateTaskRequest = { description: 'reviewed task', preset: 'reviewed' };
     const matching = resolveTaskConfig(req);
-    const result = taskToJobRequest(req, matching);
-    expect(result.description).toBe('x');
+    const withConfig = taskToJobRequest(req, matching);
+    const withoutConfig = taskToJobRequest(req);
+    // Full output equality ensures the matching-config path cannot diverge from canonical.
+    expect(withConfig).toEqual(withoutConfig);
+    // Spot-check that derived fields are actually populated (not both empty).
+    expect(withConfig.useWorktree).toBe(true);
+    expect(withConfig.reviewConfig).toBeDefined();
   });
 
   it('throws on stale config with review=true when canonical review is false', () => {
