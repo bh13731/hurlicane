@@ -787,10 +787,16 @@ describe('taskToWorkflowRequest', () => {
   });
 
   it('accepts supplied config only when it exactly matches the canonical resolved config', () => {
-    const req: CreateTaskRequest = { description: 'x', iterations: 5 };
+    // Use explicit iterations and useWorktree so derived fields (maxCycles, useWorktree) are exercised.
+    const req: CreateTaskRequest = { description: 'autonomous task', iterations: 7, useWorktree: true };
     const matching = resolveTaskConfig(req);
-    const result = taskToWorkflowRequest(req, matching);
-    expect(result.task).toBe('x');
+    const withConfig = taskToWorkflowRequest(req, matching);
+    const withoutConfig = taskToWorkflowRequest(req);
+    // Full output equality ensures the matching-config path cannot diverge from canonical.
+    expect(withConfig).toEqual(withoutConfig);
+    // Spot-check that derived fields are actually populated (not both empty/default).
+    expect(withConfig.maxCycles).toBe(7);
+    expect(withConfig.useWorktree).toBe(true);
   });
 
   it('throws on stale config with inflated iterations', () => {
