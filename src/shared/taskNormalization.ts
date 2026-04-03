@@ -210,6 +210,24 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
     throw new Error('projectId is not supported for workflow tasks (iterations > 1) — workflows always create their own project');
   }
 
+  // Fail fast on original job-only fields that have no workflow equivalent —
+  // mirrors the validator guards so direct callers cannot silently lose these.
+  if (req.dependsOn?.length) {
+    throw new Error('dependsOn is not supported for workflow tasks (iterations > 1)');
+  }
+  if (req.interactive) {
+    throw new Error('interactive mode is not supported for workflow tasks (iterations > 1)');
+  }
+  if (req.debate) {
+    throw new Error('debate is not supported for workflow tasks (iterations > 1)');
+  }
+  if (req.repeatIntervalMs) {
+    throw new Error('repeatIntervalMs is not supported for workflow tasks (iterations > 1)');
+  }
+  if (req.scheduledAt) {
+    throw new Error('scheduledAt is not supported for workflow tasks (iterations > 1)');
+  }
+
   return {
     task: req.description,
     title: req.title,

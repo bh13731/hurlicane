@@ -571,6 +571,56 @@ describe('taskToWorkflowRequest', () => {
     })).toThrow(/projectId is not supported for workflow/);
   });
 
+  it('throws on dependsOn (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      dependsOn: ['job-abc'],
+    })).toThrow(/dependsOn is not supported for workflow/);
+  });
+
+  it('throws on interactive (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      interactive: true,
+    })).toThrow(/interactive mode is not supported for workflow/);
+  });
+
+  it('throws on debate (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      debate: true,
+    })).toThrow(/debate is not supported for workflow/);
+  });
+
+  it('throws on repeatIntervalMs (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      repeatIntervalMs: 60000,
+    })).toThrow(/repeatIntervalMs is not supported for workflow/);
+  });
+
+  it('throws on scheduledAt (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      scheduledAt: Date.now(),
+    })).toThrow(/scheduledAt is not supported for workflow/);
+  });
+
+  it('throws on original job-only fields via preset override routing to workflow', () => {
+    // Quick preset with iterations override should still reject dependsOn
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      preset: 'quick',
+      iterations: 3,
+      dependsOn: ['job-1'],
+    })).toThrow(/dependsOn is not supported for workflow/);
+  });
+
   it('uses resolved useWorktree from config', () => {
     const result = taskToWorkflowRequest({
       description: 'x',
