@@ -4,6 +4,8 @@ import * as socket from '../socket/SocketManager.js';
 import type { Job } from '../../shared/types.js';
 import { claimRecovery } from './RecoveryLedger.js';
 import { nudgeQueue } from './WorkQueueManager.js';
+import { logResilienceEvent } from './ResilienceLogger.js';
+import { classifyJobFailure } from './FailureClassifier.js';
 
 // Exponential backoff parameters
 const BASE_DELAY_MS = 30_000;      // 30s base delay
@@ -28,6 +30,12 @@ export function handleRetry(job: Job, agentId: string): boolean {
   if (job.retry_policy === 'none') return false;
   if (job.retry_count >= job.max_retries) {
     console.log(`[retry] job ${job.id} exhausted all ${job.max_retries} retries`);
+    logResilienceEvent('retry_exhausted', 'job', job.id, {
+      retry_count: job.retry_count,
+      max_retries: job.max_retries,
+      failure_kind: classifyJobFailure(job.id),
+      policy: job.retry_policy,
+    });
     return false;
   }
   if (!claimRecovery(job, 'retry-policy', { maxAttempts: job.max_retries + 1, lockMs: 60_000 })) {
