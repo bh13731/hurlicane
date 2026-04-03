@@ -282,6 +282,16 @@ function _onJobCompleted(job: Job): void {
               queries.upsertNote(zeroProgressKey, '0', null);
             } else if (milestones.done >= preImplDone) {
               // No progress this cycle (genuine zero-progress, not reviewer restructuring)
+              // M8/1C: Before incrementing counter, try re-plan once per cycle
+              const replanKey = `workflow/${workflow.id}/replan-attempted/${updated.current_cycle}`;
+              const replanNote = queries.getNote(replanKey);
+              if (!replanNote) {
+                queries.upsertNote(replanKey, '1', null);
+                console.log(`[workflow ${workflow.id}] zero progress on cycle ${updated.current_cycle} — spawning re-review for plan restructuring`);
+                spawnPhaseJob(queries.getWorkflowById(workflow.id)!, 'review', updated.current_cycle);
+                break;
+              }
+
               const prevCount = parseInt(queries.getNote(zeroProgressKey)?.value ?? '0', 10);
               const newCount = prevCount + 1;
               const MAX_ZERO_PROGRESS = 2;
@@ -980,6 +990,8 @@ export function resumeWorkflow(
   // Clear stale cycle-progress notes so the diminishing returns detector starts fresh
   for (let c = current.current_cycle; c >= 1 && c > current.current_cycle - 3; c--) {
     queries.deleteNote(`workflow/${workflow.id}/cycle-progress/${c}`);
+    // Also clear replan-attempted so resumed cycles get a fresh re-plan budget
+    queries.deleteNote(`workflow/${workflow.id}/replan-attempted/${c}`);
   }
   const updated = queries.getWorkflowById(workflow.id)!;
 
@@ -1231,24 +1243,33 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
     // Socket failure is non-fatal — the DB write already succeeded
     console.warn(`[workflow] updateAndEmit: socket.emitWorkflowUpdate failed for workflow ${id}:`, emitErr);
   }
-  // Blocked is a real error — report to Sentry and write diagnostic
+  // Blocked transition — write diagnostic and optionally report to Sentry.
   // Only fire on actual transitions (not re-processing already-blocked workflows)
   if (fields.status === 'blocked' && previousStatus !== 'blocked') {
     const reason = fields.blocked_reason ?? updated.blocked_reason ?? 'unknown';
-    const err = new Error(`Workflow blocked: ${updated.title} — ${reason}`);
-    err.name = 'WorkflowBlocked';
-    // Gather last failed job + agent error for Sentry context
-    const wfJobs = queries.getJobsForWorkflow(updated.id);
-    const lastFailed = [...wfJobs].reverse().find((j: Job) => j.status === 'failed');
-    let lastFailedError = '';
-    let lastFailedAgentId = '';
-    if (lastFailed) {
-      const failedAgents = queries.getAgentsWithJobByJobId(lastFailed.id);
-      const failedAgent = failedAgents[0];
-      lastFailedError = failedAgent?.error_message ?? '';
-      lastFailedAgentId = failedAgent?.id ?? '';
-    }
-    Sentry.captureException(err, {
+    // Operational blocks are expected workflow states — not Sentry exceptions.
+    // Use an allowlist so new block reasons default to being reported.
+    const OPERATIONAL_BLOCK_PATTERNS = [
+      'Reached max cycles',
+      'no milestone progress',
+      'Diminishing returns',
+    ];
+    const isOperational = OPERATIONAL_BLOCK_PATTERNS.some(p => reason.includes(p));
+    if (!isOperational) {
+      const err = new Error(`Workflow blocked: ${updated.title} — ${reason}`);
+      err.name = 'WorkflowBlocked';
+      // Gather last failed job + agent error for Sentry context
+      const wfJobs = queries.getJobsForWorkflow(updated.id);
+      const lastFailed = [...wfJobs].reverse().find((j: Job) => j.status === 'failed');
+      let lastFailedError = '';
+      let lastFailedAgentId = '';
+      if (lastFailed) {
+        const failedAgents = queries.getAgentsWithJobByJobId(lastFailed.id);
+        const failedAgent = failedAgents[0];
+        lastFailedError = failedAgent?.error_message ?? '';
+        lastFailedAgentId = failedAgent?.id ?? '';
+      }
+      Sentry.captureException(err, {
       tags: {
         component: 'WorkflowManager',
         workflow_id: updated.id,
@@ -1269,14 +1290,19 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
         total_jobs: wfJobs.length,
         failed_jobs: wfJobs.filter((j: Job) => j.status === 'failed').length,
       },
-    });
+      });
+    }
     try { writeBlockedDiagnostic(updated); } catch { /* best effort */ }
   }
 }
 
-const BLOCKED_LOG_DIR = path.join(process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : './data', 'blocked-diagnostics');
+export const BLOCKED_LOG_DIR = path.join(process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : './data', 'blocked-diagnostics');
 
-function writeBlockedDiagnostic(workflow: Workflow): void {
+export function writeBlockedDiagnostic(workflow: Workflow): void {
+  // Skip in test environments and for test workflows created by agents running test suites
+  if (process.env.VITEST || process.env.NODE_ENV === 'test') return;
+  if (workflow.title === 'Test Workflow') return;
+
   mkdirSync(BLOCKED_LOG_DIR, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const filename = `${ts}_${workflow.id.slice(0, 8)}.md`;

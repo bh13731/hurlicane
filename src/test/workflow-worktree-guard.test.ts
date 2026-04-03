@@ -119,6 +119,67 @@ describe('WorkflowManager: spawnPhaseJob worktree safety guard', () => {
     expect(reviewJob).toBeUndefined();
   });
 
+  it('reports error-level blocks to Sentry (worktree guard)', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+    const { Sentry } = await import('../server/instrument.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+      use_worktree: 1,
+    });
+    queries.upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1\n- [ ] M2', null);
+    queries.upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'done',
+    });
+    onJobCompleted(job);
+
+    // Worktree guard block is an error — Sentry should fire
+    expect(Sentry.captureException).toHaveBeenCalled();
+  });
+
+  it('does NOT report operational blocks to Sentry (max cycles)', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+    const { Sentry } = await import('../server/instrument.js');
+
+    const project = await insertTestProject();
+    // Workflow at max_cycles=1, cycle 0, implement phase completing
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 1,
+      max_cycles: 1,
+      use_worktree: 0,
+    });
+    queries.upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+    queries.upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+    onJobCompleted(job);
+
+    // Max-cycles block is operational — Sentry should NOT fire
+    const updated = queries.getWorkflowById(workflow.id);
+    expect(updated!.status).toBe('blocked');
+    expect(updated!.blocked_reason).toContain('max cycles');
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
   it('does NOT block when use_worktree=0 and worktree_path is null', async () => {
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
     const queries = await import('../server/db/queries.js');
