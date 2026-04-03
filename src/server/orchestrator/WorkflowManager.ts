@@ -622,6 +622,14 @@ function repairAttemptsKey(workflowId: string, phase: 'assess' | 'review', cycle
   return `workflow/${workflowId}/repair/${phase}/cycle-${cycle}`;
 }
 
+/** M16/4B: Escalating repair levels — each attempt gets more budget and context. */
+const REPAIR_LEVELS = [
+  { label: 'quick repair', turnsMultiplier: 1.0 },
+  { label: 'diagnostic repair', turnsMultiplier: 1.5 },
+  { label: 'full re-assess repair', turnsMultiplier: 2.0 },
+] as const;
+const MAX_REPAIR_ATTEMPTS = REPAIR_LEVELS.length;
+
 function spawnRepairJob(
   workflow: Workflow,
   phase: 'assess' | 'review',
@@ -630,23 +638,26 @@ function spawnRepairJob(
 ): boolean {
   const attemptsKey = repairAttemptsKey(workflow.id, phase, cycle);
   const existingAttempts = parseInt(queries.getNote(attemptsKey)?.value ?? '0', 10);
-  if (existingAttempts >= 2) return false;
+  if (existingAttempts >= MAX_REPAIR_ATTEMPTS) return false;
 
+  const level = REPAIR_LEVELS[existingAttempts];
   queries.upsertNote(attemptsKey, String(existingAttempts + 1), null);
   const model = phase === 'review' ? workflow.reviewer_model : workflow.implementer_model;
   const stopMode = phase === 'review' ? workflow.stop_mode_review : workflow.stop_mode_assess;
   const stopValue = phase === 'review' ? workflow.stop_value_review : workflow.stop_value_assess;
+  const baseTurns = effectiveMaxTurns(stopMode, stopValue);
+  const maxTurns = Math.ceil(baseTurns * level.turnsMultiplier);
   const prompt = buildWorkflowRepairPrompt(workflow, phase, cycle, missingArtifacts);
   const job = queries.insertJob({
     id: randomUUID(),
-    title: `[Workflow C${cycle}] ${phase.charAt(0).toUpperCase() + phase.slice(1)} repair`,
+    title: `[Workflow C${cycle}] ${phase.charAt(0).toUpperCase() + phase.slice(1)} ${level.label}`,
     description: prompt,
     context: null,
     priority: 0,
     model,
     template_id: workflow.template_id,
     work_dir: workflow.worktree_path ?? workflow.work_dir,
-    max_turns: effectiveMaxTurns(stopMode, stopValue),
+    max_turns: maxTurns,
     stop_mode: stopMode,
     stop_value: stopValue,
     project_id: workflow.project_id,
@@ -663,7 +674,7 @@ function spawnRepairJob(
   }
   nudgeQueue();
   updateAndEmit(workflow.id, { current_phase: phase, current_cycle: cycle, status: 'running' });
-  console.log(`[workflow ${workflow.id}] spawned ${phase} repair job ${job.id.slice(0, 8)} for missing ${missingArtifacts.join(', ')}`);
+  console.log(`[workflow ${workflow.id}] spawned ${phase} ${level.label} (${existingAttempts + 1}/${MAX_REPAIR_ATTEMPTS}, ${maxTurns} turns) for missing ${missingArtifacts.join(', ')}`);
   return true;
 }
 
