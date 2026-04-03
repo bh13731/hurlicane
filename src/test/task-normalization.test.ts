@@ -202,6 +202,35 @@ describe('validateTaskRequest', () => {
     expect(validateTaskRequest({ ...base, scheduledAt: Date.now() })).toMatch(/scheduledAt/);
   });
 
+  it('rejects single-pass stop settings on autonomous tasks', () => {
+    const base: CreateTaskRequest = { description: 'x', iterations: 5 };
+    expect(validateTaskRequest({ ...base, stopMode: 'turns' })).toMatch(/stopMode/);
+    expect(validateTaskRequest({ ...base, stopValue: 25 })).toMatch(/stopValue/);
+    expect(validateTaskRequest({ ...base, maxTurns: 25 })).toMatch(/maxTurns/);
+  });
+
+  it('rejects single-pass stop settings on autonomous preset override combinations', () => {
+    expect(validateTaskRequest({
+      description: 'x',
+      preset: 'autonomous',
+      stopMode: 'budget',
+    })).toMatch(/stopMode/);
+
+    expect(validateTaskRequest({
+      description: 'x',
+      preset: 'quick',
+      iterations: 3,
+      stopValue: 10,
+    })).toMatch(/stopValue/);
+
+    expect(validateTaskRequest({
+      description: 'x',
+      preset: 'reviewed',
+      iterations: 4,
+      maxTurns: 40,
+    })).toMatch(/maxTurns/);
+  });
+
   it('allows job-only options on single-pass tasks', () => {
     expect(validateTaskRequest({
       description: 'x',
@@ -368,6 +397,28 @@ describe('taskToWorkflowRequest', () => {
     expect(result.stopModeImplement).toBe('turns');
     expect(result.stopValueImplement).toBe(80);
     expect(result.completionThreshold).toBe(0.8);
+  });
+
+  it('does not map single-pass stop settings into workflow requests', () => {
+    const result = taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      stopMode: 'turns',
+      stopValue: 99,
+      maxTurns: 99,
+      stopModeImplement: 'budget',
+      stopValueImplement: 5,
+      maxTurnsImplement: 80,
+    });
+    expect(result.stopModeAssess).toBeUndefined();
+    expect(result.stopValueAssess).toBeUndefined();
+    expect(result.maxTurnsAssess).toBeUndefined();
+    expect(result.stopModeReview).toBeUndefined();
+    expect(result.stopValueReview).toBeUndefined();
+    expect(result.maxTurnsReview).toBeUndefined();
+    expect(result.stopModeImplement).toBe('budget');
+    expect(result.stopValueImplement).toBe(5);
+    expect(result.maxTurnsImplement).toBe(80);
   });
 
   it('uses resolved useWorktree from config', () => {

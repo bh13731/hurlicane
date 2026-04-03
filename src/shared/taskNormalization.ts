@@ -93,6 +93,9 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
     if (req.review === false) return 'review cannot be disabled for autonomous tasks (iterations > 1) — the workflow engine always includes a review phase';
     // Workflows require a description — the task field is the workflow's main input
     if (!hasDescription) return 'description is required for autonomous tasks (templateId alone is not sufficient)';
+    if (req.stopMode !== undefined)      return 'stopMode is not supported for autonomous tasks; use stopModeAssess/Review/Implement instead';
+    if (req.stopValue !== undefined)     return 'stopValue is not supported for autonomous tasks; use stopValueAssess/Review/Implement instead';
+    if (req.maxTurns !== undefined)      return 'maxTurns is not supported for autonomous tasks; use maxTurnsAssess/Review/Implement instead';
     if (req.dependsOn?.length)       return 'dependsOn is not supported for autonomous tasks (iterations > 1)';
     if (req.interactive)             return 'interactive mode is not supported for autonomous tasks';
     if (req.debate)                  return 'debate is not supported for autonomous tasks';
