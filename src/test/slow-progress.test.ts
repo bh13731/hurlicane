@@ -363,6 +363,40 @@ describe('StuckJobWatchdog: slow-progress detection', () => {
     expect(_logResilienceEvent).not.toHaveBeenCalled();
   });
 
+  it('does not emit duplicate warning when one already exists (Fix-M5a)', async () => {
+    const { _getMilestoneSnapshotsForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    const queries = await import('../server/db/queries.js');
+    const socket = await import('../server/socket/SocketManager.js');
+
+    const { workflowId, agentId } = await setupWorkflowWithAgent({
+      milestonesPlan: '- [x] M1\n- [ ] M2\n- [ ] M3',
+      agentUpdatedAt: Date.now(), // agent is active
+    });
+
+    // Pre-seed snapshot: no progress for 16 min (past warn threshold)
+    _getMilestoneSnapshotsForTest().set(workflowId, {
+      milestonesDone: 1,
+      checkedAt: Date.now() - 16 * 60 * 1000,
+    });
+
+    // Pre-insert an undismissed slow_progress warning for this agent
+    queries.insertWarning({
+      id: randomUUID(),
+      agent_id: agentId,
+      type: 'slow_progress',
+      message: 'Already warned',
+    });
+
+    const { startWatchdog, stopWatchdog } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    startWatchdog();
+    stopWatchdog();
+
+    // Should NOT have logged another warning (dedup guard)
+    expect(_logResilienceEvent).not.toHaveBeenCalled();
+    // Socket should not emit a duplicate warning
+    expect(socket.emitWarningNew).not.toHaveBeenCalled();
+  });
+
   it('does not warn if agent is inactive (updated_at > 5 min ago)', async () => {
     const { _getMilestoneSnapshotsForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
 

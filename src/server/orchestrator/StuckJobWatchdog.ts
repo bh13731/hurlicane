@@ -650,20 +650,22 @@ function check(): void {
         });
         _milestoneSnapshots.delete(job.workflow_id);
       } else if (stalledMs >= SLOW_PROGRESS_WARN_MS) {
-        // 15 min without progress — emit warning
-        console.warn(`[watchdog] workflow ${job.workflow_id.slice(0, 8)} implement agent active but 0 milestone progress for ${Math.round(stalledMs / 60000)}min — warning`);
-        const warning = queries.insertWarning({
-          id: randomUUID(),
-          agent_id: agent.id,
-          type: 'slow_progress',
-          message: `Implement agent active for ${Math.round(stalledMs / 60000)}min with no milestone progress (${currentDone} done). May be stuck in a loop.`,
-        });
-        try { socket.emitWarningNew(warning); } catch { /* ignore */ }
-        logResilienceEvent('slow_progress_warning', 'workflow', job.workflow_id, {
-          agent_id: agent.id,
-          stalled_ms: stalledMs,
-          milestones_done: currentDone,
-        });
+        // 15 min without progress — emit warning (deduplicated)
+        if (!queries.hasUndismissedWarning(agent.id, 'slow_progress')) {
+          console.warn(`[watchdog] workflow ${job.workflow_id.slice(0, 8)} implement agent active but 0 milestone progress for ${Math.round(stalledMs / 60000)}min — warning`);
+          const warning = queries.insertWarning({
+            id: randomUUID(),
+            agent_id: agent.id,
+            type: 'slow_progress',
+            message: `Implement agent active for ${Math.round(stalledMs / 60000)}min with no milestone progress (${currentDone} done). May be stuck in a loop.`,
+          });
+          try { socket.emitWarningNew(warning); } catch { /* ignore */ }
+          logResilienceEvent('slow_progress_warning', 'workflow', job.workflow_id, {
+            agent_id: agent.id,
+            stalled_ms: stalledMs,
+            milestones_done: currentDone,
+          });
+        }
       }
     }
 
