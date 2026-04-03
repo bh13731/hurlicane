@@ -12,6 +12,7 @@ import { getAvailableModel, getFallbackModel, getAlternateProviderModel, getMode
 import { classifyJobFailure, isFallbackEligibleFailure, isSameModelRetryEligible, shouldMarkProviderUnavailable } from './FailureClassifier.js';
 import { nudgeQueue } from './WorkQueueManager.js';
 import { logResilienceEvent } from './ResilienceLogger.js';
+import { validateTransition } from './StateTransitions.js';
 
 // Track jobs we've already processed to prevent double-exit race from triggering
 // duplicate spawns. Same pattern as DebateManager.
@@ -870,6 +871,10 @@ export function _resetForTest(): void {
 }
 
 function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkflow>[1]): void {
+  if (fields.status) {
+    const current = queries.getWorkflowById(id);
+    validateTransition('workflow', current?.status, fields.status, id);
+  }
   const updated = queries.updateWorkflow(id, fields);
   if (updated) socket.emitWorkflowUpdate(updated);
 }

@@ -1,4 +1,22 @@
 // ─── Domain Types ───────────────────────────────────────────────────────────
+//
+// State machine diagrams for the three main entity types.
+// Transitions are validated at runtime (warn-only) in StateTransitions.ts.
+//
+// Job:      queued → assigned → running → done
+//                         \         \→ failed → queued (retry)
+//                          \→ failed
+//           any non-terminal → cancelled
+//
+// Workflow: running → complete
+//                  \→ blocked → running (resume)
+//                  \→ failed  → running (restart)
+//           any non-terminal → cancelled
+//
+// Debate:   running → consensus
+//                  \→ disagreement
+//                  \→ failed
+//           any non-terminal → cancelled
 
 export type JobStatus = 'queued' | 'assigned' | 'running' | 'done' | 'failed' | 'cancelled';
 export type AgentStatus = 'starting' | 'running' | 'waiting_user' | 'done' | 'failed' | 'cancelled';
