@@ -102,6 +102,24 @@ describe('resolveTaskConfig', () => {
     expect(cfg.useWorktree).toBe(false);
   });
 
+  it('forces review=true for workflow-routed tasks even when explicitly false', () => {
+    const cfg = resolveTaskConfig({ description: 'x', iterations: 5, review: false });
+    expect(cfg.routesTo).toBe('workflow');
+    expect(cfg.review).toBe(true);
+  });
+
+  it('forces review=true for autonomous preset with explicit review=false', () => {
+    const cfg = resolveTaskConfig({ description: 'x', preset: 'autonomous', review: false });
+    expect(cfg.routesTo).toBe('workflow');
+    expect(cfg.review).toBe(true);
+  });
+
+  it('preserves review=false for job-routed tasks', () => {
+    const cfg = resolveTaskConfig({ description: 'x', iterations: 1, review: false });
+    expect(cfg.routesTo).toBe('job');
+    expect(cfg.review).toBe(false);
+  });
+
   it('clamps iterations to [1, 50]', () => {
     expect(resolveTaskConfig({ description: 'x', iterations: 0 }).iterations).toBe(1);
     expect(resolveTaskConfig({ description: 'x', iterations: 100 }).iterations).toBe(50);
@@ -152,6 +170,27 @@ describe('validateTaskRequest', () => {
 
   it('rejects invalid preset', () => {
     expect(validateTaskRequest({ description: 'x', preset: 'invalid' as any })).toMatch(/invalid preset/);
+  });
+
+  it('rejects explicit review=false for workflow-routed tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 5, review: false }))
+      .toMatch(/review cannot be disabled/);
+    expect(validateTaskRequest({ description: 'x', preset: 'autonomous', review: false }))
+      .toMatch(/review cannot be disabled/);
+    // Quick preset with iterations override still routes to workflow
+    expect(validateTaskRequest({ description: 'x', preset: 'quick', iterations: 3, review: false }))
+      .toMatch(/review cannot be disabled/);
+  });
+
+  it('allows review=true or review=undefined for workflow-routed tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 5, review: true })).toBeNull();
+    expect(validateTaskRequest({ description: 'x', iterations: 5 })).toBeNull();
+    expect(validateTaskRequest({ description: 'x', preset: 'autonomous' })).toBeNull();
+  });
+
+  it('allows review=false for job-routed tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 1, review: false })).toBeNull();
+    expect(validateTaskRequest({ description: 'x', preset: 'quick', review: false })).toBeNull();
   });
 
   it('rejects job-only options on autonomous tasks', () => {

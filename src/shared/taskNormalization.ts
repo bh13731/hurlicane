@@ -54,8 +54,9 @@ export function resolveTaskConfig(req: CreateTaskRequest): ResolvedTaskConfig {
   const preset = inferPreset(req);
   const defaults = PRESET_DEFAULTS[preset];
 
-  const review     = req.review     ?? defaults.review;
   const iterations = clampIterations(req.iterations ?? defaults.iterations);
+  // Workflow engine always runs a review phase — force review on for workflow routing
+  const review     = iterations > 1 ? true : (req.review ?? defaults.review);
   const useWorktree = req.useWorktree ?? (iterations > 1 ? true : defaults.useWorktree);
 
   return {
@@ -88,6 +89,8 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
   // Job-only options are invalid for autonomous tasks
   const config = resolveTaskConfig(req);
   if (config.routesTo === 'workflow') {
+    // Workflow engine always includes a review phase — explicit review=false is contradictory
+    if (req.review === false) return 'review cannot be disabled for autonomous tasks (iterations > 1) — the workflow engine always includes a review phase';
     // Workflows require a description — the task field is the workflow's main input
     if (!hasDescription) return 'description is required for autonomous tasks (templateId alone is not sufficient)';
     if (req.dependsOn?.length)       return 'dependsOn is not supported for autonomous tasks (iterations > 1)';
