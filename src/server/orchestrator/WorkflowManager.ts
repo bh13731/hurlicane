@@ -1262,10 +1262,33 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
       labelFlag = ' --label partial';
     }
 
+    // M14/6D: Merge conflict pre-check before PR creation
+    let conflictWarning = '';
+    try {
+      const mergeBase = execSync('git merge-base HEAD origin/HEAD 2>/dev/null || echo ""', {
+        cwd: worktree_path, stdio: 'pipe', timeout: 10000,
+      }).toString().trim();
+      if (mergeBase) {
+        const mergeTree = execSync(`git merge-tree ${mergeBase} origin/HEAD HEAD`, {
+          cwd: worktree_path, stdio: 'pipe', timeout: 10000,
+        }).toString();
+        if (mergeTree.includes('<<<<<<<') || mergeTree.includes('changed in both')) {
+          const conflictFiles = mergeTree
+            .split('\n')
+            .filter(l => l.includes('changed in both'))
+            .map(l => l.replace(/.*changed in both.*'([^']+)'.*/i, '$1'))
+            .filter(l => l !== '');
+          conflictWarning = `\n\n**Warning: Potential merge conflicts detected** with the base branch in: ${conflictFiles.join(', ') || '(unknown files)'}. Manual resolution may be needed.`;
+          console.warn(`[workflow ${workflow.id}] merge conflict pre-check: conflicts in ${conflictFiles.join(', ')}`);
+        }
+      }
+    } catch { /* merge-tree check failed — proceed with PR anyway */ }
+
     // Create PR via gh CLI
     const draftFlag = isDraft ? ' --draft' : '';
+    const finalBody = conflictWarning ? body + conflictWarning : body;
     const prUrl = execSync(
-      `gh pr create --title ${JSON.stringify(title)} --body ${JSON.stringify(body)} --head ${JSON.stringify(worktree_branch)}${draftFlag}${labelFlag}`,
+      `gh pr create --title ${JSON.stringify(title)} --body ${JSON.stringify(finalBody)} --head ${JSON.stringify(worktree_branch)}${draftFlag}${labelFlag}`,
       { cwd: worktree_path, stdio: 'pipe', timeout: 30000 }
     ).toString().trim();
 

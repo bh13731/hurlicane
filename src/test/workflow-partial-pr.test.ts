@@ -162,6 +162,76 @@ describe('pushAndCreatePr: partial label', () => {
     expect(prCreateCall!.cmd).not.toContain('--label');
   });
 
+  it('includes conflict warning in PR body when merge conflicts detected (M14/6D)', async () => {
+    const mockedExecSync = vi.mocked(execSync);
+    let capturedPrBody = '';
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd === 'string' && cmd.includes('rev-parse --abbrev-ref HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      if (typeof cmd === 'string' && cmd.includes('rev-list --count')) {
+        return Buffer.from('3\n');
+      }
+      if (typeof cmd === 'string' && cmd.startsWith('git push')) {
+        return Buffer.from('');
+      }
+      if (typeof cmd === 'string' && cmd.includes('merge-base')) {
+        return Buffer.from('abc123\n');
+      }
+      if (typeof cmd === 'string' && cmd.includes('merge-tree')) {
+        return Buffer.from("changed in both 'src/foo.ts'\n<<<<<<< .our\nours\n=======\ntheirs\n>>>>>>> .their\n");
+      }
+      if (typeof cmd === 'string' && cmd.includes('gh pr create')) {
+        capturedPrBody = cmd;
+        return Buffer.from('https://github.com/test/repo/pull/55\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow();
+
+    const prUrl = pushAndCreatePr(wf, false);
+
+    expect(prUrl).toBe('https://github.com/test/repo/pull/55');
+    // PR body should contain conflict warning
+    expect(capturedPrBody).toContain('merge conflicts detected');
+    expect(capturedPrBody).toContain('src/foo.ts');
+  });
+
+  it('creates PR without conflict warning when no conflicts (M14/6D)', async () => {
+    // Ensure default mock is restored (merge-base returns empty → no conflict check)
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd === 'string' && cmd.includes('rev-parse --abbrev-ref HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      if (typeof cmd === 'string' && cmd.includes('rev-list --count')) {
+        return Buffer.from('3\n');
+      }
+      if (typeof cmd === 'string' && cmd.startsWith('git push')) {
+        return Buffer.from('');
+      }
+      if (typeof cmd === 'string' && cmd.includes('merge-base')) {
+        return Buffer.from('\n'); // empty merge-base → skip conflict check
+      }
+      if (typeof cmd === 'string' && cmd.includes('gh pr create')) {
+        return Buffer.from('https://github.com/test/repo/pull/42\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow();
+
+    const prUrl = pushAndCreatePr(wf, false);
+
+    expect(prUrl).toBe('https://github.com/test/repo/pull/42');
+    const prCreateCall = execSyncCalls.find(c => c.cmd.includes('gh pr create'));
+    expect(prCreateCall!.cmd).not.toContain('merge conflicts detected');
+  });
+
   it('proceeds with PR creation even if label creation fails', async () => {
     // Override execSync to throw on label creation
     const mockedExecSync = vi.mocked(execSync);
