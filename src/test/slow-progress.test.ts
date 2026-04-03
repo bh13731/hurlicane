@@ -397,6 +397,35 @@ describe('StuckJobWatchdog: slow-progress detection', () => {
     expect(socket.emitWarningNew).not.toHaveBeenCalled();
   });
 
+  it('resets snapshot when milestone count decreases (Fix-C3a)', async () => {
+    const { _getMilestoneSnapshotsForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
+
+    const { workflowId } = await setupWorkflowWithAgent({
+      milestonesPlan: '- [x] M1\n- [x] M2\n- [x] M3\n- [ ] M4\n- [ ] M5',
+      agentUpdatedAt: Date.now(), // agent is active
+    });
+
+    // Pre-seed snapshot: 5 milestones done, stalled for 20 min
+    // (simulates reviewer unchecking items or plan consolidation)
+    _getMilestoneSnapshotsForTest().set(workflowId, {
+      milestonesDone: 5,
+      checkedAt: Date.now() - 20 * 60 * 1000,
+    });
+
+    const { startWatchdog, stopWatchdog } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    startWatchdog();
+    stopWatchdog();
+
+    // Snapshot should reset to current count (3 done), NOT trigger warning/block
+    const snapshot = _getMilestoneSnapshotsForTest().get(workflowId);
+    expect(snapshot).toBeDefined();
+    expect(snapshot!.milestonesDone).toBe(3);
+    expect(Date.now() - snapshot!.checkedAt).toBeLessThan(5000);
+
+    // No warnings or blocks — milestone count change means plan is being actively modified
+    expect(_logResilienceEvent).not.toHaveBeenCalled();
+  });
+
   it('does not warn if agent is inactive (updated_at > 5 min ago)', async () => {
     const { _getMilestoneSnapshotsForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
 

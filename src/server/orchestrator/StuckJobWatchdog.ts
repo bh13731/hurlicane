@@ -620,8 +620,8 @@ function check(): void {
         continue;
       }
 
-      // Progress detected — reset snapshot
-      if (currentDone > snapshot.milestonesDone) {
+      // Milestone count changed (progress or plan rewrite) — reset snapshot
+      if (currentDone !== snapshot.milestonesDone) {
         _milestoneSnapshots.set(job.workflow_id, { milestonesDone: currentDone, checkedAt: Date.now() });
         continue;
       }
