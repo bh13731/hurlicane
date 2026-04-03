@@ -261,7 +261,7 @@ export function parseMilestones(planText: string): { total: number; done: number
   return { total: done + unchecked, done };
 }
 
-// ─── Worktree Branch Verification ──────────────────────────────────────────
+// ─── Worktree Health & Branch Verification ─────────────────────────────────
 
 /**
  * Verify a worktree HEAD is on the expected branch. If drifted, attempt checkout.
@@ -284,6 +284,123 @@ export function ensureWorktreeBranch(
     return { ok: true };
   } catch (err: any) {
     return { ok: false, error: err.message ?? String(err) };
+  }
+}
+
+/**
+ * Deep health check for a worktree. Verifies directory, .git, git internals,
+ * and branch — attempting auto-repair when possible.
+ *
+ * Repair strategy:
+ * - Directory missing or .git broken → attempt worktree recreation from mainRepoDir
+ * - git internals broken (rev-parse fails) → force checkout branch
+ * - Branch drift → delegate to ensureWorktreeBranch
+ *
+ * All repair attempts are logged via logResilienceEvent.
+ */
+export function verifyWorktreeHealth(
+  worktreePath: string,
+  expectedBranch: string,
+  mainRepoDir?: string | null,
+): { ok: true } | { ok: false; error: string } {
+  // Check 1: directory exists
+  if (!existsSync(worktreePath)) {
+    logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
+      check: 'directory_missing', action: 'recreate', branch: expectedBranch,
+    });
+    if (!mainRepoDir) {
+      return { ok: false, error: `Worktree directory does not exist: ${worktreePath}` };
+    }
+    return recreateWorktree(worktreePath, expectedBranch, mainRepoDir);
+  }
+
+  // Check 2: .git file/dir is present (worktrees use a .git file pointing to main repo)
+  const gitPath = path.join(worktreePath, '.git');
+  if (!existsSync(gitPath)) {
+    logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
+      check: 'git_missing', action: 'recreate', branch: expectedBranch,
+    });
+    if (!mainRepoDir) {
+      return { ok: false, error: `Worktree .git is missing: ${worktreePath}` };
+    }
+    return recreateWorktree(worktreePath, expectedBranch, mainRepoDir);
+  }
+
+  // Check 3: git rev-parse --is-inside-work-tree
+  try {
+    execSync('git rev-parse --is-inside-work-tree', {
+      cwd: worktreePath, stdio: 'pipe', timeout: 5000,
+    });
+  } catch {
+    logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
+      check: 'not_inside_work_tree', action: 'force_checkout', branch: expectedBranch,
+    });
+    try {
+      execSync(`git checkout -f ${JSON.stringify(expectedBranch)}`, {
+        cwd: worktreePath, stdio: 'pipe', timeout: 10000,
+      });
+    } catch (err: any) {
+      logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
+        check: 'not_inside_work_tree', action: 'force_checkout', outcome: 'failed', error: err.message,
+      });
+      return { ok: false, error: `git not functional in worktree and force checkout failed: ${err.message}` };
+    }
+  }
+
+  // Check 4: HEAD is valid (git rev-parse HEAD)
+  try {
+    execSync('git rev-parse HEAD', {
+      cwd: worktreePath, stdio: 'pipe', timeout: 5000,
+    });
+  } catch {
+    logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
+      check: 'invalid_head', action: 'force_checkout', branch: expectedBranch,
+    });
+    try {
+      execSync(`git checkout -f ${JSON.stringify(expectedBranch)}`, {
+        cwd: worktreePath, stdio: 'pipe', timeout: 10000,
+      });
+    } catch (err: any) {
+      logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
+        check: 'invalid_head', action: 'force_checkout', outcome: 'failed', error: err.message,
+      });
+      return { ok: false, error: `Invalid HEAD and force checkout failed: ${err.message}` };
+    }
+  }
+
+  // Check 5: branch is correct (delegate to ensureWorktreeBranch)
+  return ensureWorktreeBranch(worktreePath, expectedBranch);
+}
+
+/**
+ * Remove and re-create a worktree from the main repo directory.
+ */
+function recreateWorktree(
+  worktreePath: string,
+  branch: string,
+  mainRepoDir: string,
+): { ok: true } | { ok: false; error: string } {
+  try {
+    // Force-remove any stale worktree registration
+    try {
+      execSync(`git worktree remove --force ${JSON.stringify(worktreePath)}`, {
+        cwd: mainRepoDir, stdio: 'pipe', timeout: 15000,
+      });
+    } catch { /* may not be registered — fine */ }
+    execSync('git worktree prune', { cwd: mainRepoDir, stdio: 'pipe', timeout: 10000 });
+    mkdirSync(path.dirname(worktreePath), { recursive: true });
+    execSync(`git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`, {
+      cwd: mainRepoDir, stdio: 'pipe', timeout: 30000,
+    });
+    logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
+      action: 'recreate', outcome: 'success', branch,
+    });
+    return { ok: true };
+  } catch (err: any) {
+    logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
+      action: 'recreate', outcome: 'failed', branch, error: err.message,
+    });
+    return { ok: false, error: `Worktree recreation failed: ${err.message}` };
   }
 }
 
@@ -403,11 +520,11 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
   if (modelOverride) model = modelOverride;
   model = getWorkflowFallbackModel(workflow, phase, model) ?? model;
 
-  // Verify worktree branch hasn't drifted before spawning
+  // Verify worktree health (directory, .git, git internals, branch) before spawning
   if (workflow.worktree_path && workflow.worktree_branch) {
-    const branchCheck = ensureWorktreeBranch(workflow.worktree_path, workflow.worktree_branch);
-    if (!branchCheck.ok) {
-      const reason = `Worktree branch verification failed before ${phase}: ${branchCheck.error}`;
+    const healthCheck = verifyWorktreeHealth(workflow.worktree_path, workflow.worktree_branch, workflow.work_dir);
+    if (!healthCheck.ok) {
+      const reason = `Worktree health check failed before ${phase}: ${healthCheck.error}`;
       console.log(`[workflow ${workflow.id}] ${reason} — marking blocked`);
       updateAndEmit(workflow.id, { status: 'blocked', current_phase: phase, blocked_reason: reason });
       return;
@@ -496,6 +613,24 @@ export function reconcileRunningWorkflows(): void {
   const ACTIVE = new Set(['queued', 'assigned', 'running']);
   for (const workflow of queries.listWorkflows()) {
     if (workflow.status !== 'running') continue;
+
+    // Startup worktree integrity check — verify worktrees are healthy before
+    // allowing any running workflow to continue.
+    if (workflow.worktree_path && workflow.worktree_branch) {
+      const healthCheck = verifyWorktreeHealth(workflow.worktree_path, workflow.worktree_branch, workflow.work_dir);
+      if (!healthCheck.ok) {
+        const reason = `Startup worktree health check failed: ${healthCheck.error}`;
+        console.warn(`[workflow ${workflow.id}] ${reason} — marking blocked`);
+        logResilienceEvent('worktree_startup_check', 'workflow', workflow.id, {
+          worktree_path: workflow.worktree_path,
+          branch: workflow.worktree_branch,
+          error: healthCheck.error,
+          outcome: 'blocked',
+        });
+        updateAndEmit(workflow.id, { status: 'blocked', blocked_reason: reason });
+        continue;
+      }
+    }
 
     const jobs = queries.getJobsForWorkflow(workflow.id);
     const hasActiveJob = jobs.some(job => ACTIVE.has(job.status));
@@ -650,11 +785,11 @@ export function resumeWorkflow(
   // Re-fetch to get current worktree fields (caller's object may be stale)
   const current = queries.getWorkflowById(workflow.id)!;
 
-  // Verify worktree branch BEFORE changing status — if this fails, workflow stays 'blocked'
+  // Verify worktree health BEFORE changing status — if this fails, workflow stays 'blocked'
   if (current.worktree_path && current.worktree_branch) {
-    const branchCheck = ensureWorktreeBranch(current.worktree_path, current.worktree_branch);
-    if (!branchCheck.ok) {
-      throw new Error(`Worktree branch verification failed before resuming: ${branchCheck.error}`);
+    const healthCheck = verifyWorktreeHealth(current.worktree_path, current.worktree_branch, current.work_dir);
+    if (!healthCheck.ok) {
+      throw new Error(`Worktree health check failed before resuming: ${healthCheck.error}`);
     }
   }
 
