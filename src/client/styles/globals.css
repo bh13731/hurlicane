@@ -1,3 +1,6 @@
+@import './tokens.css';
+@import './reset.css';
+
 :root {
   /* Backgrounds */
   --bg-primary: #0d1117;

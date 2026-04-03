@@ -1,0 +1,314 @@
+/* ─── Agent Card ───────────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.15s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.card:hover {
+  background: var(--bg-elevated);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
+}
+
+.selected {
+  background: #1c2d3e;
+  box-shadow: inset 0 0 0 2px var(--accent-bright);
+}
+
+.selected:hover {
+  background: #1e3248;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.agentId {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  opacity: 0.7;
+}
+
+.parentLinkBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--accent);
+  padding: 0 4px;
+  border-radius: 3px;
+  line-height: 1;
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: opacity 0.1s;
+}
+
+.parentLinkBtn:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.flagBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 3px;
+  transition: color 0.1s;
+  flex-shrink: 0;
+}
+
+.flagBtn:hover {
+  color: var(--status-waiting);
+}
+
+.flagBtnActive {
+  color: var(--status-waiting);
+}
+
+.interactiveToggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 3px;
+  transition: color 0.1s;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.interactiveToggle:hover {
+  color: var(--text-normal);
+}
+
+.interactiveToggleActive {
+  color: #3b82f6;
+}
+
+.requeueBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 3px;
+  transition: color 0.1s;
+  flex-shrink: 0;
+}
+
+.requeueBtn:hover {
+  color: var(--accent);
+}
+
+.archiveBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-dim);
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 3px;
+  transition: color 0.1s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.archiveBtn:hover {
+  color: var(--accent);
+}
+
+.statusBadge {
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-family: var(--font-mono);
+}
+
+.statusStarting { background: var(--status-running-bg); color: var(--status-running); }
+.statusRunning  { background: var(--status-running-bg); color: var(--status-running); }
+.statusRunningIdle { background: var(--status-idle-bg); color: var(--status-idle); }
+.statusWaitingUser { background: var(--status-waiting-bg); color: var(--status-waiting); }
+.statusDone     { background: var(--status-done-bg); color: var(--status-done); }
+.statusFailed    { background: var(--status-failed-bg); color: var(--status-failed); }
+.statusCancelled { background: var(--status-failed-bg); color: var(--status-failed); }
+
+.jobTitle {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+
+.statusMsg {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template {
+  font-size: 10px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+
+.debateBadge {
+  font-size: 10px;
+  color: #d2a8ff;
+  background: rgba(210, 168, 255, 0.1);
+  border: 1px solid rgba(210, 168, 255, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-top: 4px;
+  display: inline-block;
+  font-family: var(--font-mono);
+}
+
+.retryBadge {
+  font-size: 10px;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-top: 4px;
+  display: inline-block;
+  font-family: var(--font-mono);
+}
+
+.warningBadge {
+  font-size: 10px;
+  color: #eab308;
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin-top: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.warningBadge:hover {
+  background: rgba(234, 179, 8, 0.2);
+}
+
+.warningIcon {
+  font-weight: 700;
+  font-size: 11px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #eab308;
+  color: #000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.locks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.lockBadge {
+  font-size: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.1s, border-color 0.1s;
+  cursor: default;
+}
+
+.lockBadge:hover {
+  background: var(--bg-interactive);
+  border-color: var(--text-dim);
+}
+
+.questionPreview {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--status-waiting-bg);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--status-waiting);
+  display: flex;
+  gap: 6px;
+}
+
+.questionIcon {
+  flex-shrink: 0;
+  font-weight: bold;
+}
+
+/* ─── Footer (timing + cost) ──────────────────────────────────────────────── */
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  gap: 8px;
+}
+
+.elapsedLive {
+  color: var(--status-running);
+}
+
+.cost {
+  opacity: 0.8;
+}

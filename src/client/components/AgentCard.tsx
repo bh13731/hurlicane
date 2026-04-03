@@ -1,5 +1,6 @@
 import React from 'react';
 import type { AgentWithJob } from '@shared/types';
+import styles from './AgentCard.module.css';
 
 interface AgentCardProps {
   agent: AgentWithJob;
@@ -73,6 +74,15 @@ function getBorderColor(agent: AgentWithJob, isPtyIdle?: boolean): string {
   }
 }
 
+const STATUS_CLASS_MAP: Record<string, string> = {
+  starting: styles.statusStarting,
+  running: styles.statusRunning,
+  waiting_user: styles.statusWaitingUser,
+  done: styles.statusDone,
+  failed: styles.statusFailed,
+  cancelled: styles.statusCancelled,
+};
+
 function getStatusLabel(agent: AgentWithJob, isPtyIdle?: boolean): React.ReactNode {
   switch (agent.status) {
     case 'starting': return 'Starting...';
@@ -134,34 +144,38 @@ function AgentCardInner({ agent, onClick, onSelectParent, onArchiveJob, onIntera
     }
   }
 
+  const statusClass = (isPtyIdle && agent.status === 'running')
+    ? styles.statusRunningIdle
+    : (STATUS_CLASS_MAP[agent.status] || '');
+
   return (
     <div
-      className={`agent-card${isSelected ? ' agent-card-selected' : ''}`}
+      className={`${styles.card}${isSelected ? ` ${styles.selected}` : ''}`}
       style={borderColor !== 'transparent' ? { borderLeftColor: borderColor, borderLeftWidth: 3 } : undefined}
       onClick={() => onClick(agent)}
     >
-      <div className="agent-card-header">
-        <span className="agent-id">Agent {agent.id.slice(0, 6)}</span>
+      <div className={styles.header}>
+        <span className={styles.agentId}>Agent {agent.id.slice(0, 6)}</span>
         {agent.parent_agent_id && onSelectParent && (
           <button
-            className="parent-link-btn"
+            className={styles.parentLinkBtn}
             onClick={handleGoToParent}
             title={`Go to parent agent ${agent.parent_agent_id.slice(0, 6)}`}
           >
-            ↑ parent
+            &uarr; parent
           </button>
         )}
         <button
-          className={`flag-btn${agent.job.flagged ? ' flag-btn-active' : ''}`}
+          className={`${styles.flagBtn}${agent.job.flagged ? ` ${styles.flagBtnActive}` : ''}`}
           onClick={handleFlag}
           title={agent.job.flagged ? 'Remove flag' : 'Flag for review'}
           aria-label={agent.job.flagged ? 'Remove flag' : 'Flag for review'}
           aria-pressed={!!agent.job.flagged}
         >
-          ⚑
+          &#x2691;
         </button>
         <label
-          className={`interactive-toggle${agent.job.is_interactive ? ' interactive-toggle-active' : ''}`}
+          className={`${styles.interactiveToggle}${agent.job.is_interactive ? ` ${styles.interactiveToggleActive}` : ''}`}
           title={agent.job.is_interactive ? 'Interactive (click to disable)' : 'Make interactive'}
           onClick={e => e.stopPropagation()}
         >
@@ -171,11 +185,11 @@ function AgentCardInner({ agent, onClick, onSelectParent, onArchiveJob, onIntera
             onChange={handleInteractiveChange}
             style={{ display: 'none' }}
           />
-          ⌨
+          &#x2328;
         </label>
         {onArchiveJob && ['done', 'failed', 'cancelled'].includes(agent.job?.status) && (
           <button
-            className="archive-btn"
+            className={styles.archiveBtn}
             onClick={e => { e.stopPropagation(); onArchiveJob(); }}
             title="Archive job"
             aria-label="Archive job"
@@ -185,65 +199,65 @@ function AgentCardInner({ agent, onClick, onSelectParent, onArchiveJob, onIntera
         )}
         {['starting', 'running', 'waiting_user'].includes(agent.status) && (
           <button
-            className="requeue-btn"
+            className={styles.requeueBtn}
             onClick={handleRequeue}
             title="Kill agent and requeue job"
           >
-            ↺
+            &#x21ba;
           </button>
         )}
-        <span className={`agent-status-badge status-${agent.status}${isPtyIdle && agent.status === 'running' ? ' status-pty-idle' : ''}`}>
+        <span className={`${styles.statusBadge} ${statusClass}`}>
           {agent.status}
         </span>
       </div>
-      <div className="agent-job-title">{agent.job.title}</div>
-      <div className="agent-status-msg">{getStatusLabel(agent, isPtyIdle)}</div>
+      <div className={styles.jobTitle}>{agent.job.title}</div>
+      <div className={styles.statusMsg}>{getStatusLabel(agent, isPtyIdle)}</div>
       {templateName && (
-        <div className="agent-template" title={templateName}>
+        <div className={styles.template} title={templateName}>
           {templateName}
         </div>
       )}
       {agent.job.model && (
-        <div className="agent-model" title={agent.job.model}>
+        <div className={styles.model} title={agent.job.model}>
           {agent.job.model.replace('claude-', '')}
         </div>
       )}
 
       {agent.job.debate_id && (
-        <div className="agent-debate-badge" title={`Debate round ${agent.job.debate_round}, ${agent.job.debate_role} side`}>
+        <div className={styles.debateBadge} title={`Debate round ${agent.job.debate_round}, ${agent.job.debate_role} side`}>
           R{agent.job.debate_round} {agent.job.debate_role === 'claude' ? 'Claude' : 'Codex'}
         </div>
       )}
 
       {agent.job.original_job_id && (
-        <div className="agent-retry-badge" title={`Retry ${agent.job.retry_count}/${agent.job.max_retries}`}>
+        <div className={styles.retryBadge} title={`Retry ${agent.job.retry_count}/${agent.job.max_retries}`}>
           Retry {agent.job.retry_count}/{agent.job.max_retries}
         </div>
       )}
 
       {agent.warnings && agent.warnings.length > 0 && (
-        <div className="agent-warning-badge" onClick={handleDismissWarnings} title="Click to dismiss warnings">
-          <span className="warning-icon">!</span>
+        <div className={styles.warningBadge} onClick={handleDismissWarnings} title="Click to dismiss warnings">
+          <span className={styles.warningIcon}>!</span>
           {agent.warnings.map(w => w.message).join('; ')}
         </div>
       )}
 
       {agent.active_locks.length > 0 && (
-        <div className="agent-locks">
+        <div className={styles.locks}>
           {agent.active_locks.slice(0, 3).map(lock => (
-            <span key={lock.id} className="lock-badge" title={lock.reason ?? ''}>
+            <span key={lock.id} className={styles.lockBadge} title={lock.reason ?? ''}>
               {lock.file_path.split('/').pop()}
             </span>
           ))}
           {agent.active_locks.length > 3 && (
-            <span className="lock-badge">+{agent.active_locks.length - 3}</span>
+            <span className={styles.lockBadge}>+{agent.active_locks.length - 3}</span>
           )}
         </div>
       )}
 
       {isWaiting && agent.pending_question && (
-        <div className="agent-question-preview">
-          <span className="question-icon">?</span>
+        <div className={styles.questionPreview}>
+          <span className={styles.questionIcon}>?</span>
           {agent.pending_question.question.slice(0, 80)}
           {agent.pending_question.question.length > 80 ? '...' : ''}
         </div>
@@ -268,12 +282,12 @@ function AgentCardInner({ agent, onClick, onSelectParent, onArchiveJob, onIntera
         const isApproxCost = !(isFinished && agent.cost_usd != null);
 
         return (
-          <div className="agent-card-footer">
-            <span className={`agent-card-elapsed ${isRunning ? 'agent-card-elapsed-live' : ''}`}>
+          <div className={styles.footer}>
+            <span className={isRunning ? styles.elapsedLive : undefined}>
               {formatElapsed(elapsedMs)}
             </span>
             {cost != null && cost > 0 && (
-              <span className="agent-card-cost">
+              <span className={styles.cost}>
                 {formatCost(cost, isApproxCost)}
               </span>
             )}
