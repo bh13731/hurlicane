@@ -70,8 +70,8 @@ vi.mock('../server/orchestrator/DebateManager.js', () => ({
 const _actualParseMilestones = vi.fn((text: string) => {
   let done = 0, unchecked = 0;
   for (const line of text.split('\n')) {
-    if (/^\s*-\s*\[x\]/i.test(line)) done++;
-    else if (/^\s*-\s*\[ \]/.test(line)) unchecked++;
+    if (/^[\t ]*[-*][\t ]+\[[xX]\]/.test(line)) done++;
+    else if (/^[\t ]*[-*][\t ]+\[\s?\]/.test(line)) unchecked++;
   }
   return { total: done + unchecked, done };
 });
