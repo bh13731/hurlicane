@@ -519,10 +519,10 @@ function spawnRepairJob(
 
   try {
     socket.emitJobNew(job);
-    nudgeQueue();
   } catch (emitErr) {
-    console.warn(`[workflow ${workflow.id}] socket.emitJobNew or nudgeQueue failed for repair job ${job.id.slice(0, 8)}:`, emitErr);
+    console.warn(`[workflow ${workflow.id}] socket.emitJobNew failed for repair job ${job.id.slice(0, 8)}:`, emitErr);
   }
+  nudgeQueue();
   updateAndEmit(workflow.id, { current_phase: phase, current_cycle: cycle, status: 'running' });
   console.log(`[workflow ${workflow.id}] spawned ${phase} repair job ${job.id.slice(0, 8)} for missing ${missingArtifacts.join(', ')}`);
   return true;
@@ -636,11 +636,11 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
 
   try {
     socket.emitJobNew(job);
-    nudgeQueue();
   } catch (emitErr) {
-    // Socket/queue notification failure is non-fatal — the queue's 2s poll will find the job
-    console.warn(`[workflow ${workflow.id}] socket.emitJobNew or nudgeQueue failed for job ${job.id.slice(0, 8)}:`, emitErr);
+    // Socket notification failure is non-fatal — the queue's 2s poll will find the job
+    console.warn(`[workflow ${workflow.id}] socket.emitJobNew failed for job ${job.id.slice(0, 8)}:`, emitErr);
   }
+  nudgeQueue();
 
   // Update workflow state — must always run even if socket emit failed
   updateAndEmit(workflow.id, {
@@ -838,11 +838,11 @@ export function startWorkflow(workflow: Workflow): Job | null {
 
   try {
     socket.emitJobNew(job);
-    nudgeQueue();
   } catch (emitErr) {
-    // Socket/queue notification failure is non-fatal — the queue's 2s poll will find the job
-    console.warn(`[workflow ${activeWorkflow.id}] socket.emitJobNew or nudgeQueue failed for job ${job.id.slice(0, 8)}:`, emitErr);
+    // Socket notification failure is non-fatal — the queue's 2s poll will find the job
+    console.warn(`[workflow ${activeWorkflow.id}] socket.emitJobNew failed for job ${job.id.slice(0, 8)}:`, emitErr);
   }
+  nudgeQueue();
   updateAndEmit(activeWorkflow.id, { current_phase: 'assess' as WorkflowPhase, current_cycle: 0 });
   console.log(`[workflow ${activeWorkflow.id}] started — assess job ${job.id.slice(0, 8)}`);
   return job;
@@ -956,11 +956,11 @@ export function resumeWorkflow(
 
   try {
     socket.emitJobNew(job);
-    nudgeQueue();
   } catch (emitErr) {
-    // Socket/queue notification failure is non-fatal — the queue's 2s poll will find the job
-    console.warn(`[workflow ${workflow.id}] socket.emitJobNew or nudgeQueue failed for job ${job.id.slice(0, 8)}:`, emitErr);
+    // Socket notification failure is non-fatal — the queue's 2s poll will find the job
+    console.warn(`[workflow ${workflow.id}] socket.emitJobNew failed for job ${job.id.slice(0, 8)}:`, emitErr);
   }
+  nudgeQueue();
   console.log(`[workflow ${workflow.id}] resumed — ${phase} job ${job.id.slice(0, 8)} (cycle ${cycle})`);
   return job;
 }
