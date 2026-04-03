@@ -224,6 +224,19 @@ export function buildReviewPrompt(workflow: Workflow, cycle: number, inlineConte
 3. Read all worklog entries: \`list_notes("${worklogPrefix}")\` then read each one.
 `;
 
+  const planReviewSection = !isFirstReview ? '' : `
+## Step 1: Review Quality Bar
+
+Before updating the plan, you must critically evaluate it. Identify **at least 2 concrete improvements** — for example:
+- Missing edge cases or error scenarios not covered by any milestone
+- Vague or untestable acceptance criteria that need sharpening
+- Wrong ordering or missing dependencies between milestones
+- Missing milestones for testing, documentation, or cleanup
+- Milestones that are too large to complete in a single implementation cycle
+
+If you genuinely cannot find 2 improvements, you must explicitly explain with specific evidence why the plan is already exceptional — citing how each milestone has clear acceptance criteria, correct ordering, appropriate scope, and complete coverage of the task. "Plan looks good" is never sufficient.
+`;
+
   const codeReviewSection = isFirstReview ? '' : `
 ## Step 2: Code Review (MOST IMPORTANT)
 
@@ -243,8 +256,9 @@ The implementer just completed cycle ${cycle - 1}. You must review the actual co
    - Code style and consistency with the surrounding codebase
    - Security: injection, unvalidated inputs, secrets in code
    - Performance: N+1 queries, unnecessary re-renders, blocking operations
-4. **For every issue found**, add a new unchecked milestone to the plan:
+4. **You must find at least 2 concrete issues** with the implementation. Look for correctness bugs, missing edge cases, insufficient test coverage, error handling gaps, or deviations from the milestone's acceptance criteria. For every issue found, add a new unchecked milestone to the plan:
    \`- [ ] **Fix: <short title>** — <specific description of what needs to change and why>\`
+   If you genuinely cannot find 2 issues, you must explicitly explain with specific evidence why the implementation is exceptional — citing exact code, test coverage, and how every acceptance criterion is met. "Looks good" is never sufficient.
 
 These fix milestones will be implemented in the next cycle. Be specific — vague feedback like "improve error handling" is not actionable.
 `;
@@ -262,7 +276,7 @@ ${workflow.task}
 ## Working Directory
 ${workflow.work_dir ?? '(not specified)'}
 
-${hasInline ? '' : readContextSection}${codeReviewSection}
+${hasInline ? '' : readContextSection}${planReviewSection}${codeReviewSection}
 ## Step ${isFirstReview ? 2 : 3}: Update the Plan
 
 Rewrite the plan to reflect your review:

@@ -12,7 +12,6 @@ import {
   setupTestDb,
   cleanupTestDb,
   createSocketMock,
-  insertTestWorkflow,
 } from './helpers.js';
 
 // Track all execSync calls for assertion

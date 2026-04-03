@@ -85,6 +85,60 @@ describe('buildReviewPrompt with inline context', () => {
   });
 });
 
+// ─── buildReviewPrompt adversarial quality bar ─────────────────────────────
+
+describe('buildReviewPrompt adversarial quality bar', () => {
+  it('cycle 1 (plan review) requires at least 2 improvements', () => {
+    const wf = makeWorkflow();
+    const ctx: InlineContext = {
+      plan: '# Plan\n\n- [ ] M1: Do something',
+    };
+
+    const prompt = buildReviewPrompt(wf, 1, ctx);
+
+    // Should have the quality bar section
+    expect(prompt).toContain('Review Quality Bar');
+    expect(prompt).toContain('at least 2 concrete improvements');
+    expect(prompt).toContain('"Plan looks good" is never sufficient');
+
+    // Should NOT have code review section (no code yet in cycle 1)
+    expect(prompt).not.toContain('Code Review (MOST IMPORTANT)');
+  });
+
+  it('cycle 1 without inline context also includes quality bar', () => {
+    const wf = makeWorkflow();
+    const prompt = buildReviewPrompt(wf, 1);
+
+    expect(prompt).toContain('Review Quality Bar');
+    expect(prompt).toContain('at least 2 concrete improvements');
+  });
+
+  it('cycle 2+ (code review) requires at least 2 concrete issues', () => {
+    const wf = makeWorkflow();
+    const ctx: InlineContext = {
+      plan: '# Plan\n\n- [x] M1\n- [ ] M2: Next thing',
+      worklogs: [{ key: 'workflow/wf-test-001/worklog/cycle-1', value: '## Cycle 1 worklog' }],
+    };
+
+    const prompt = buildReviewPrompt(wf, 2, ctx);
+
+    // Should have adversarial code review language
+    expect(prompt).toContain('You must find at least 2 concrete issues');
+    expect(prompt).toContain('"Looks good" is never sufficient');
+
+    // Should NOT have plan review quality bar (that's cycle 1 only)
+    expect(prompt).not.toContain('Review Quality Bar');
+  });
+
+  it('cycle 2+ without inline context also includes adversarial language', () => {
+    const wf = makeWorkflow();
+    const prompt = buildReviewPrompt(wf, 2);
+
+    expect(prompt).toContain('You must find at least 2 concrete issues');
+    expect(prompt).toContain('Code Review (MOST IMPORTANT)');
+  });
+});
+
 // ─── buildImplementPrompt with inline context ───────────────────────────────
 
 describe('buildImplementPrompt with inline context', () => {
