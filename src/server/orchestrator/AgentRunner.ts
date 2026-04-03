@@ -18,44 +18,9 @@ import { claimRecovery, clearRecoveryState } from './RecoveryLedger.js';
 import { createPrForJob, pushBranchForFailedJob } from './PrCreator.js';
 import type { Job, ClaudeStreamEvent, CodexStreamEvent } from '../../shared/types.js';
 import { isCodexModel, codexModelName, effectiveMaxTurns } from '../../shared/types.js';
-import { buildEyePrompt, isEyeJob } from './EyeConfig.js';
+import { buildEyePrompt, isEyeJob, computeAdaptiveEyeInterval } from './EyeConfig.js';
 import { ensureCodexTrusted } from './PtyManager.js';
 import { buildNiceSpawn, isNiceAvailable } from './ProcessPriority.js';
-
-// ─── Adaptive Eye Interval ──────────────────────────────────────────────────
-const EYE_MIN_INTERVAL_MS = 120_000;   // 2 minutes
-const EYE_MID_INTERVAL_MS = 300_000;   // 5 minutes
-const EYE_MAX_INTERVAL_MS = 600_000;   // 10 minutes
-const EYE_IDLE_THRESHOLD_MID = 3;      // idle cycles before stepping up to 5min
-const EYE_IDLE_THRESHOLD_MAX = 6;      // idle cycles before stepping up to 10min
-
-/**
- * Compute the next Eye repeat interval based on consecutive idle cycles.
- * An "idle" cycle is one where no wake events were pending when the prompt was built.
- * When events are present, reset to minimum interval.
- */
-function computeAdaptiveEyeInterval(currentInterval: number): number {
-  const eventCountNote = queries.getNote('setting:eye:lastCycleEventCount');
-  const eventCount = eventCountNote?.value ? parseInt(eventCountNote.value, 10) : 0;
-
-  const idleNote = queries.getNote('setting:eye:idleCycles');
-  let idleCycles = idleNote?.value ? parseInt(idleNote.value, 10) : 0;
-
-  if (eventCount > 0) {
-    // Had events — reset to minimum
-    idleCycles = 0;
-    queries.upsertNote('setting:eye:idleCycles', '0', null);
-    return EYE_MIN_INTERVAL_MS;
-  }
-
-  // No events — increment idle counter
-  idleCycles++;
-  queries.upsertNote('setting:eye:idleCycles', String(idleCycles), null);
-
-  if (idleCycles >= EYE_IDLE_THRESHOLD_MAX) return EYE_MAX_INTERVAL_MS;
-  if (idleCycles >= EYE_IDLE_THRESHOLD_MID) return EYE_MID_INTERVAL_MS;
-  return EYE_MIN_INTERVAL_MS;
-}
 
 const CLAUDE = process.env.CLAUDE_BIN ?? 'claude';
 const CODEX = process.env.CODEX_BIN ?? 'codex';

@@ -22,6 +22,13 @@ import { queryLinearHandler, queryLinearSchema, queryLogsHandler, queryLogsSchem
 import { z } from 'zod';
 import * as queries from '../db/queries.js';
 
+interface JsonRpcRequest {
+  jsonrpc: string;
+  method: string;
+  id?: string | number | null;
+  params?: unknown;
+}
+
 // agentId → { sessionId → transport }
 const agentTransports: Map<string, Map<string, StreamableHTTPServerTransport>> = new Map();
 
@@ -167,7 +174,7 @@ export function createMcpApp(): express.Application {
         // so the agent's next tool call succeeds without any client-side reinitialize.
         if (!sessionId) {
           console.warn(`[mcp] no session ID: agent ${agentId} — returning error`);
-          res.status(200).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Session not found — please re-initialize' }, id: (req.body as any)?.id ?? null });
+          res.status(200).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Session not found — please re-initialize' }, id: (req.body as JsonRpcRequest)?.id ?? null });
           return;
         }
 
@@ -189,7 +196,9 @@ export function createMcpApp(): express.Application {
         // before the restart. The SDK's validateSession only checks that _initialized
         // is true and that the request's mcp-session-id matches sessionId, both of
         // which will now be true.
-        const inner = (transport as any)._webStandardTransport as { sessionId: string; _initialized: boolean };
+        // @ts-expect-error accessing SDK private _webStandardTransport for session recovery
+        const inner = (transport as unknown as { _webStandardTransport: { sessionId: string; _initialized: boolean } })._webStandardTransport;
+        if (!inner || typeof inner.sessionId !== 'string') throw new Error('MCP SDK internal API changed — _webStandardTransport not found');
         inner.sessionId = sessionId;
         inner._initialized = true;
         transportMap.set(sessionId, transport);
@@ -252,21 +261,21 @@ export function createMcpApp(): express.Application {
  */
 type ToolTextResponse = { content: Array<{ type: 'text'; text: string }> };
 
-function safeTool(
+function safeTool<T>(
   toolName: string,
   agentId: string,
-  handler: (input: any) => Promise<ToolTextResponse>,
-): (input: any) => Promise<ToolTextResponse> {
-  return async (input: any) => {
+  handler: (input: T) => Promise<ToolTextResponse>,
+): (input: T) => Promise<ToolTextResponse> {
+  return async (input: T) => {
     try {
       return await handler(input);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(`[mcp] tool ${toolName} error (agent ${agentId}):`, err);
       Sentry.captureException(err, { tags: { component: 'mcp', tool: toolName, agentId } });
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ error: `Internal error in ${toolName}: ${err.message ?? 'unknown'}` }),
+          text: JSON.stringify({ error: `Internal error in ${toolName}: ${err instanceof Error ? err.message : String(err)}` }),
         }],
       };
     }
