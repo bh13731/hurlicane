@@ -71,8 +71,11 @@ export function resolveTaskConfig(req: CreateTaskRequest): ResolvedTaskConfig {
 
 /** Validate a CreateTaskRequest.  Returns an error string or null if valid. */
 export function validateTaskRequest(req: CreateTaskRequest): string | null {
-  if (!req.description?.trim()) {
-    return 'description is required';
+  const hasDescription = !!req.description?.trim();
+  const hasTemplate = !!req.templateId;
+
+  if (!hasDescription && !hasTemplate) {
+    return 'description is required (or provide a templateId)';
   }
   if (req.iterations !== undefined) {
     if (!Number.isInteger(req.iterations) || req.iterations < 1 || req.iterations > 50) {
@@ -85,6 +88,8 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
   // Job-only options are invalid for autonomous tasks
   const config = resolveTaskConfig(req);
   if (config.routesTo === 'workflow') {
+    // Workflows require a description — the task field is the workflow's main input
+    if (!hasDescription) return 'description is required for autonomous tasks (templateId alone is not sufficient)';
     if (req.dependsOn?.length)       return 'dependsOn is not supported for autonomous tasks (iterations > 1)';
     if (req.interactive)             return 'interactive mode is not supported for autonomous tasks';
     if (req.debate)                  return 'debate is not supported for autonomous tasks';
@@ -107,7 +112,7 @@ export function taskToJobRequest(req: CreateTaskRequest, config?: ResolvedTaskCo
   }
 
   const jobReq: CreateJobRequest = {
-    description: req.description,
+    description: req.description ?? '',
     title: req.title,
     model: req.model,
     workDir: req.workDir,
@@ -150,6 +155,10 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
   const cfg = config ?? resolveTaskConfig(req);
   if (cfg.routesTo !== 'workflow') {
     throw new Error('Cannot convert single-pass task (iterations = 1) to a workflow request');
+  }
+
+  if (!req.description?.trim()) {
+    throw new Error('Workflow tasks require a description (templateId alone is not sufficient)');
   }
 
   return {

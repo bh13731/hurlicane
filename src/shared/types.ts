@@ -583,7 +583,7 @@ export type TaskPreset = 'quick' | 'reviewed' | 'autonomous';
  */
 export interface CreateTaskRequest {
   // ── Core ──────────────────────────────────────────────────────────────────
-  description: string;
+  description?: string;                // optional when templateId is provided (job-routed only)
   title?: string;
   preset?: TaskPreset;               // hint — values can be overridden individually
 

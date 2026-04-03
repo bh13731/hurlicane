@@ -122,10 +122,26 @@ describe('resolveTaskConfig', () => {
 // ─── validateTaskRequest ────────────────────────────────────────────────────
 
 describe('validateTaskRequest', () => {
-  it('requires description', () => {
+  it('requires description or templateId', () => {
+    expect(validateTaskRequest({})).toMatch(/description is required/);
     expect(validateTaskRequest({ description: '' })).toMatch(/description is required/);
     expect(validateTaskRequest({ description: '  ' })).toMatch(/description is required/);
     expect(validateTaskRequest({ description: 'do something' })).toBeNull();
+  });
+
+  it('allows template-only tasks (no description) for job-routed tasks', () => {
+    expect(validateTaskRequest({ templateId: 'tpl-1' })).toBeNull();
+    expect(validateTaskRequest({ description: '', templateId: 'tpl-1' })).toBeNull();
+    expect(validateTaskRequest({ description: '  ', templateId: 'tpl-1' })).toBeNull();
+    expect(validateTaskRequest({ templateId: 'tpl-1', preset: 'quick' })).toBeNull();
+    expect(validateTaskRequest({ templateId: 'tpl-1', preset: 'reviewed' })).toBeNull();
+  });
+
+  it('rejects template-only tasks for workflow-routed tasks (autonomous)', () => {
+    expect(validateTaskRequest({ templateId: 'tpl-1', iterations: 5 }))
+      .toMatch(/description is required for autonomous/);
+    expect(validateTaskRequest({ templateId: 'tpl-1', preset: 'autonomous' }))
+      .toMatch(/description is required for autonomous/);
   });
 
   it('rejects out-of-range iterations', () => {
@@ -246,6 +262,19 @@ describe('taskToJobRequest', () => {
     expect(result.reviewConfig).toBeUndefined();
   });
 
+  it('handles template-only tasks (empty description)', () => {
+    const result = taskToJobRequest({ templateId: 'tpl-1' });
+    expect(result.description).toBe('');
+    expect(result.templateId).toBe('tpl-1');
+  });
+
+  it('handles template-only task with review enabled', () => {
+    const result = taskToJobRequest({ templateId: 'tpl-1', review: true });
+    expect(result.description).toBe('');
+    expect(result.templateId).toBe('tpl-1');
+    expect(result.reviewConfig).toEqual({ models: ['codex'], auto: true });
+  });
+
   it('throws when called for autonomous task', () => {
     expect(() => taskToJobRequest({ description: 'x', iterations: 5 })).toThrow(/iterations > 1/);
   });
@@ -314,6 +343,11 @@ describe('taskToWorkflowRequest', () => {
   it('throws when called for single-pass task', () => {
     expect(() => taskToWorkflowRequest({ description: 'x', iterations: 1 })).toThrow(/iterations = 1/);
   });
+
+  it('throws when description is missing (template-only)', () => {
+    expect(() => taskToWorkflowRequest({ templateId: 'tpl-1', iterations: 5 }))
+      .toThrow(/Workflow tasks require a description/);
+  });
 });
 
 // ─── Round-trip: preset → resolve → convert determinism ─────────────────────
@@ -346,6 +380,16 @@ describe('round-trip determinism', () => {
     expect(wf.task).toBe('big task');
     expect(wf.maxCycles).toBe(10);
     expect(wf.useWorktree).toBe(true);
+  });
+
+  it('template-only task routes to job with empty description', () => {
+    const req: CreateTaskRequest = { templateId: 'tpl-1' };
+    expect(validateTaskRequest(req)).toBeNull();
+    const cfg = resolveTaskConfig(req);
+    expect(cfg.routesTo).toBe('job');
+    const job = taskToJobRequest(req, cfg);
+    expect(job.description).toBe('');
+    expect(job.templateId).toBe('tpl-1');
   });
 
   it('same input always produces the same output', () => {
