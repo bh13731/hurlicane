@@ -493,6 +493,63 @@ describe('taskToWorkflowRequest', () => {
     })).toThrow(/stopMode is not supported for workflow/);
   });
 
+  it('throws on priority (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      priority: 10,
+    })).toThrow(/priority is not supported for workflow/);
+  });
+
+  it('throws on retryPolicy (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      retryPolicy: 'analyze',
+    })).toThrow(/retryPolicy is not supported for workflow/);
+  });
+
+  it('throws on maxRetries (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      maxRetries: 3,
+    })).toThrow(/maxRetries is not supported for workflow/);
+  });
+
+  it('throws on completionChecks (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      completionChecks: ['lint', 'test'],
+    })).toThrow(/completionChecks is not supported for workflow/);
+  });
+
+  it('allows empty completionChecks array on workflow tasks', () => {
+    const result = taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      completionChecks: [],
+    });
+    expect(result.task).toBe('x');
+  });
+
+  it('throws on context (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      context: { env: 'prod' },
+    })).toThrow(/context is not supported for workflow/);
+  });
+
+  it('throws on reviewConfig (job-only field unsupported for workflows)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      reviewConfig: { models: ['codex'], auto: true },
+    })).toThrow(/reviewConfig is not supported for workflow/);
+  });
+
   it('uses resolved useWorktree from config', () => {
     const result = taskToWorkflowRequest({
       description: 'x',

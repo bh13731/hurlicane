@@ -185,6 +185,27 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
     throw new Error('maxTurns is not supported for workflow tasks; use maxTurnsAssess/Review/Implement instead');
   }
 
+  // Fail fast on job-only fields that have no workflow equivalent —
+  // callers should not rely on a separate validation step to catch these.
+  if (req.priority !== undefined) {
+    throw new Error('priority is not supported for workflow tasks (iterations > 1)');
+  }
+  if (req.retryPolicy !== undefined) {
+    throw new Error('retryPolicy is not supported for workflow tasks (iterations > 1)');
+  }
+  if (req.maxRetries !== undefined) {
+    throw new Error('maxRetries is not supported for workflow tasks (iterations > 1)');
+  }
+  if (req.completionChecks?.length) {
+    throw new Error('completionChecks is not supported for workflow tasks (iterations > 1)');
+  }
+  if (req.context !== undefined) {
+    throw new Error('context is not supported for workflow tasks (iterations > 1)');
+  }
+  if (req.reviewConfig !== undefined) {
+    throw new Error('reviewConfig is not supported for workflow tasks (iterations > 1); reviewer model is set via reviewerModel');
+  }
+
   return {
     task: req.description,
     title: req.title,
