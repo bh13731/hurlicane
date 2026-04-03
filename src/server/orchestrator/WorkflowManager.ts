@@ -519,8 +519,9 @@ function spawnRepairJob(
 
   try {
     socket.emitJobNew(job);
+    nudgeQueue();
   } catch (emitErr) {
-    console.warn(`[workflow ${workflow.id}] socket.emitJobNew failed for repair job ${job.id.slice(0, 8)}:`, emitErr);
+    console.warn(`[workflow ${workflow.id}] socket.emitJobNew or nudgeQueue failed for repair job ${job.id.slice(0, 8)}:`, emitErr);
   }
   updateAndEmit(workflow.id, { current_phase: phase, current_cycle: cycle, status: 'running' });
   console.log(`[workflow ${workflow.id}] spawned ${phase} repair job ${job.id.slice(0, 8)} for missing ${missingArtifacts.join(', ')}`);
@@ -835,8 +836,13 @@ export function startWorkflow(workflow: Workflow): Job | null {
     workflow_phase: 'assess',
   });
 
-  socket.emitJobNew(job);
-  nudgeQueue();
+  try {
+    socket.emitJobNew(job);
+    nudgeQueue();
+  } catch (emitErr) {
+    // Socket/queue notification failure is non-fatal — the queue's 2s poll will find the job
+    console.warn(`[workflow ${activeWorkflow.id}] socket.emitJobNew or nudgeQueue failed for job ${job.id.slice(0, 8)}:`, emitErr);
+  }
   updateAndEmit(activeWorkflow.id, { current_phase: 'assess' as WorkflowPhase, current_cycle: 0 });
   console.log(`[workflow ${activeWorkflow.id}] started — assess job ${job.id.slice(0, 8)}`);
   return job;
@@ -944,8 +950,13 @@ export function resumeWorkflow(
     workflow_phase: phase as WorkflowPhase,
   });
 
-  socket.emitJobNew(job);
-  nudgeQueue();
+  try {
+    socket.emitJobNew(job);
+    nudgeQueue();
+  } catch (emitErr) {
+    // Socket/queue notification failure is non-fatal — the queue's 2s poll will find the job
+    console.warn(`[workflow ${workflow.id}] socket.emitJobNew or nudgeQueue failed for job ${job.id.slice(0, 8)}:`, emitErr);
+  }
   console.log(`[workflow ${workflow.id}] resumed — ${phase} job ${job.id.slice(0, 8)} (cycle ${cycle})`);
   return job;
 }
@@ -1102,5 +1113,14 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
     validateTransition('workflow', current?.status, fields.status, id);
   }
   const updated = queries.updateWorkflow(id, fields);
-  if (updated) socket.emitWorkflowUpdate(updated);
+  if (!updated) {
+    console.warn(`[workflow] updateAndEmit: workflow ${id} not found — DB update returned null`);
+    return;
+  }
+  try {
+    socket.emitWorkflowUpdate(updated);
+  } catch (emitErr) {
+    // Socket failure is non-fatal — the DB write already succeeded
+    console.warn(`[workflow] updateAndEmit: socket.emitWorkflowUpdate failed for workflow ${id}:`, emitErr);
+  }
 }
