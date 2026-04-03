@@ -235,4 +235,60 @@ describe('WorkflowManager: diminishing returns detector', () => {
     const cpNote = getNote(`workflow/${workflow.id}/cycle-progress/4`);
     expect(cpNote?.value).toBe('0');
   });
+
+  it('resumeWorkflow clears stale cycle-progress notes so diminishing returns does not re-trigger', async () => {
+    const { resumeWorkflow, onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById, getNote } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    // Workflow was blocked by diminishing returns at cycle 5
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'blocked',
+      current_phase: 'implement',
+      current_cycle: 5,
+      max_cycles: 10,
+      milestones_total: 10,
+      milestones_done: 4,
+    });
+
+    // Stale cycle-progress notes that caused the block (all zero → avg 0.00)
+    upsertNote(`workflow/${workflow.id}/cycle-progress/3`, '0', null);
+    upsertNote(`workflow/${workflow.id}/cycle-progress/4`, '0', null);
+    upsertNote(`workflow/${workflow.id}/cycle-progress/5`, '0', null);
+    upsertNote(`workflow/${workflow.id}/zero-progress-count`, '2', null);
+    // Plan and contract needed for prompt building
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [x] M3\n- [x] M4\n- [ ] M5\n- [ ] M6\n- [ ] M7\n- [ ] M8\n- [ ] M9\n- [ ] M10', null);
+    upsertNote(`workflow/${workflow.id}/contract`, 'test contract', null);
+
+    // Resume the workflow
+    resumeWorkflow(workflow);
+
+    // Verify cycle-progress notes were deleted
+    expect(getNote(`workflow/${workflow.id}/cycle-progress/3`)).toBeNull();
+    expect(getNote(`workflow/${workflow.id}/cycle-progress/4`)).toBeNull();
+    expect(getNote(`workflow/${workflow.id}/cycle-progress/5`)).toBeNull();
+
+    // Now simulate a new implement cycle (cycle 5 re-run) with zero progress
+    const resumed = getWorkflowById(workflow.id)!;
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/5`, '4', null);
+
+    const job = await insertTestJob({
+      workflow_id: resumed.id,
+      workflow_cycle: 5,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    onJobCompleted(job);
+
+    const afterImpl = getWorkflowById(workflow.id)!;
+    // Should NOT be blocked by diminishing returns — only 1 cycle of history after resume
+    // It should increment zero-progress count to 1, but NOT trigger diminishing returns
+    expect(afterImpl.blocked_reason ?? '').not.toContain('Diminishing returns');
+    // Zero-progress count should be 1 (not high enough to block yet either)
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('1');
+  });
 });
