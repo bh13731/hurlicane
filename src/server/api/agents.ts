@@ -224,6 +224,16 @@ router.post('/:id/cancel', (req, res) => {
   getFileLockRegistry().releaseAll(agent.id);
   disconnectAgent(agent.id);
 
+  // Timeout any pending question so the MCP ask_user call doesn't hang
+  const pendingQ = queries.getPendingQuestion(agent.id);
+  if (pendingQ) {
+    queries.updateQuestion(pendingQ.id, {
+      status: 'timeout',
+      answer: '[TIMEOUT] Agent cancelled via API.',
+      answered_at: Date.now(),
+    });
+  }
+
   const updated = queries.getAgentWithJob(agent.id)!;
   socket.emitAgentUpdate(updated);
   const updatedJob = queries.getJobById(agent.job_id);
@@ -271,6 +281,16 @@ router.post('/:id/requeue', (req, res) => {
   queries.updateJobStatus(agent.job_id, 'queued');
   getFileLockRegistry().releaseAll(agent.id);
   disconnectAgent(agent.id);
+
+  // Timeout any pending question so the MCP ask_user call doesn't hang
+  const pendingQ = queries.getPendingQuestion(agent.id);
+  if (pendingQ) {
+    queries.updateQuestion(pendingQ.id, {
+      status: 'timeout',
+      answer: '[TIMEOUT] Agent requeued via API.',
+      answered_at: Date.now(),
+    });
+  }
 
   const updated = queries.getAgentWithJob(agent.id)!;
   socket.emitAgentUpdate(updated);

@@ -262,6 +262,51 @@ describe('POST /api/agents/:id/cancel', () => {
     expect(registry.releaseAll).toHaveBeenCalledWith(agent.id);
     expect(vi.mocked(disconnectAgent)).toHaveBeenCalledWith(agent.id);
   });
+
+  it('times out pending question when cancelling a waiting_user agent (Fix-C24a)', async () => {
+    const { disconnectAgent } = await import('../../server/orchestrator/PtyManager.js');
+    const { getFileLockRegistry } = await import('../../server/orchestrator/FileLockRegistry.js');
+    const { insertQuestion, getPendingQuestion, getQuestionById } = await import('../../server/db/queries.js');
+    const { randomUUID } = await import('crypto');
+    const socketMod = await import('../../server/socket/SocketManager.js');
+
+    const job = await insertTestJob({ status: 'running' });
+    const agent = await insertAgent(job.id, { status: 'waiting_user' });
+
+    // Insert a pending question for this agent
+    const questionId = randomUUID();
+    insertQuestion({
+      id: questionId,
+      agent_id: agent.id,
+      question: 'What should I do next?',
+      answer: null,
+      status: 'pending',
+      asked_at: Date.now(),
+      answered_at: null,
+      timeout_ms: 300000,
+    });
+
+    // Verify question is pending before cancel
+    expect(getPendingQuestion(agent.id)).not.toBeNull();
+
+    const res = await request(app).post(`/api/agents/${agent.id}/cancel`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('cancelled');
+
+    // Verify question was timed out
+    const updatedQ = getQuestionById(questionId);
+    expect(updatedQ!.status).toBe('timeout');
+    expect(updatedQ!.answer).toBe('[TIMEOUT] Agent cancelled via API.');
+    expect(updatedQ!.answered_at).toBeGreaterThan(0);
+
+    // Verify standard cleanup still happened
+    const registry = vi.mocked(getFileLockRegistry).mock.results[0]?.value;
+    expect(registry.releaseAll).toHaveBeenCalledWith(agent.id);
+    expect(vi.mocked(disconnectAgent)).toHaveBeenCalledWith(agent.id);
+    expect(vi.mocked(socketMod.emitAgentUpdate)).toHaveBeenCalled();
+    expect(vi.mocked(socketMod.emitJobUpdate)).toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/agents/:id/requeue', () => {
@@ -280,6 +325,51 @@ describe('POST /api/agents/:id/requeue', () => {
     const registry = vi.mocked(getFileLockRegistry).mock.results[0]?.value;
     expect(registry.releaseAll).toHaveBeenCalledWith(agent.id);
     expect(vi.mocked(disconnectAgent)).toHaveBeenCalledWith(agent.id);
+  });
+
+  it('times out pending question when requeueing a waiting_user agent (Fix-C24a)', async () => {
+    const { disconnectAgent } = await import('../../server/orchestrator/PtyManager.js');
+    const { getFileLockRegistry } = await import('../../server/orchestrator/FileLockRegistry.js');
+    const { insertQuestion, getPendingQuestion, getQuestionById } = await import('../../server/db/queries.js');
+    const { randomUUID } = await import('crypto');
+    const socketMod = await import('../../server/socket/SocketManager.js');
+
+    const job = await insertTestJob({ status: 'running' });
+    const agent = await insertAgent(job.id, { status: 'waiting_user' });
+
+    // Insert a pending question for this agent
+    const questionId = randomUUID();
+    insertQuestion({
+      id: questionId,
+      agent_id: agent.id,
+      question: 'What should I do next?',
+      answer: null,
+      status: 'pending',
+      asked_at: Date.now(),
+      answered_at: null,
+      timeout_ms: 300000,
+    });
+
+    // Verify question is pending before requeue
+    expect(getPendingQuestion(agent.id)).not.toBeNull();
+
+    const res = await request(app).post(`/api/agents/${agent.id}/requeue`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('cancelled');
+
+    // Verify question was timed out with requeue-specific message
+    const updatedQ = getQuestionById(questionId);
+    expect(updatedQ!.status).toBe('timeout');
+    expect(updatedQ!.answer).toBe('[TIMEOUT] Agent requeued via API.');
+    expect(updatedQ!.answered_at).toBeGreaterThan(0);
+
+    // Verify standard cleanup still happened
+    const registry = vi.mocked(getFileLockRegistry).mock.results[0]?.value;
+    expect(registry.releaseAll).toHaveBeenCalledWith(agent.id);
+    expect(vi.mocked(disconnectAgent)).toHaveBeenCalledWith(agent.id);
+    expect(vi.mocked(socketMod.emitAgentUpdate)).toHaveBeenCalled();
+    expect(vi.mocked(socketMod.emitJobUpdate)).toHaveBeenCalled();
   });
 });
 
