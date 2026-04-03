@@ -461,8 +461,14 @@ describe('StuckJobWatchdog: slow-progress detection', () => {
       expect.objectContaining({
         reason: 'plan_note_missing',
         stale_milestones_done: 1,
+        stale_checked_at: expect.any(Number),
       }),
     );
+
+    // Verify stale_checked_at is a valid recent timestamp (Fix-C6a)
+    const eventData = _logResilienceEvent.mock.calls[0][3];
+    expect(eventData.stale_checked_at).toBeLessThanOrEqual(Date.now());
+    expect(eventData.stale_checked_at).toBeGreaterThan(Date.now() - 25 * 60 * 1000);
 
     // No warnings or blocks should be emitted
     expect(socket.emitWarningNew).not.toHaveBeenCalled();
