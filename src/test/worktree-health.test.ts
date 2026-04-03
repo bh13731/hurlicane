@@ -161,7 +161,7 @@ describe('verifyWorktreeHealth', () => {
     expect(result).toEqual({ ok: false, error: 'Worktree directory does not exist: /tmp/wt' });
     expect(logResilienceEventMock).toHaveBeenCalledWith(
       'worktree_repair', 'worktree', '/tmp/wt',
-      expect.objectContaining({ check: 'directory_missing' }),
+      expect.objectContaining({ check: 'directory_missing', action: 'no_repair_possible' }),
     );
   });
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 import { captureWithContext } from '../instrument.js';
 import * as queries from '../db/queries.js';
@@ -384,24 +384,30 @@ export function verifyWorktreeHealth(
 ): { ok: true } | { ok: false; error: string } {
   // Check 1: directory exists
   if (!existsSync(worktreePath)) {
+    if (!mainRepoDir) {
+      logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
+        check: 'directory_missing', action: 'no_repair_possible', branch: expectedBranch,
+      });
+      return { ok: false, error: `Worktree directory does not exist: ${worktreePath}` };
+    }
     logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
       check: 'directory_missing', action: 'recreate', branch: expectedBranch,
     });
-    if (!mainRepoDir) {
-      return { ok: false, error: `Worktree directory does not exist: ${worktreePath}` };
-    }
     return recreateWorktree(worktreePath, expectedBranch, mainRepoDir);
   }
 
   // Check 2: .git file/dir is present (worktrees use a .git file pointing to main repo)
   const gitPath = path.join(worktreePath, '.git');
   if (!existsSync(gitPath)) {
+    if (!mainRepoDir) {
+      logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
+        check: 'git_missing', action: 'no_repair_possible', branch: expectedBranch,
+      });
+      return { ok: false, error: `Worktree .git is missing: ${worktreePath}` };
+    }
     logResilienceEvent('worktree_repair', 'worktree', worktreePath, {
       check: 'git_missing', action: 'recreate', branch: expectedBranch,
     });
-    if (!mainRepoDir) {
-      return { ok: false, error: `Worktree .git is missing: ${worktreePath}` };
-    }
     return recreateWorktree(worktreePath, expectedBranch, mainRepoDir);
   }
 
@@ -1133,4 +1139,91 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
     // Socket failure is non-fatal — the DB write already succeeded
     console.warn(`[workflow] updateAndEmit: socket.emitWorkflowUpdate failed for workflow ${id}:`, emitErr);
   }
+  // Write diagnostic file when a workflow becomes blocked
+  if (fields.status === 'blocked') {
+    try { writeBlockedDiagnostic(updated); } catch { /* best effort */ }
+  }
+}
+
+const BLOCKED_LOG_DIR = path.join(process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : './data', 'blocked-diagnostics');
+
+function writeBlockedDiagnostic(workflow: Workflow): void {
+  mkdirSync(BLOCKED_LOG_DIR, { recursive: true });
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const filename = `${ts}_${workflow.id.slice(0, 8)}.md`;
+
+  // Gather context
+  const jobs = queries.getJobsForWorkflow(workflow.id);
+  const recentJobs = jobs.slice(-10); // last 10 jobs
+  const failedJobs = jobs.filter((j: Job) => j.status === 'failed');
+  const recentFailed = failedJobs.slice(-5);
+
+  // Get the last agent error for each recent failed job
+  const failedDetails = recentFailed.map((j: Job) => {
+    const agents = queries.getAgentsWithJobByJobId(j.id);
+    const agent = agents[0];
+    return {
+      job_id: j.id.slice(0, 8),
+      title: j.title,
+      phase: j.workflow_phase,
+      model: j.model,
+      error: agent?.error_message ?? 'no agent error',
+      exit_code: agent?.exit_code,
+      turns: agent?.num_turns,
+    };
+  });
+
+  // Get plan and worklog notes
+  let planSnippet = '';
+  try {
+    const plan = queries.getNote(`workflow/${workflow.id}/plan`);
+    if (plan) planSnippet = plan.value.slice(0, 2000);
+  } catch { /* ignore */ }
+
+  const md = `# Workflow Blocked Diagnostic
+
+## Summary
+- **Title:** ${workflow.title}
+- **ID:** ${workflow.id}
+- **Blocked at:** ${new Date().toISOString()}
+- **Reason:** ${workflow.blocked_reason ?? 'unknown'}
+- **Phase:** ${workflow.current_phase}
+- **Cycle:** ${workflow.current_cycle}/${workflow.max_cycles}
+- **Milestones:** ${workflow.milestones_done}/${workflow.milestones_total}
+- **Implementer model:** ${workflow.implementer_model}
+- **Reviewer model:** ${workflow.reviewer_model}
+- **Worktree:** ${workflow.worktree_path ?? 'none'} (branch: ${workflow.worktree_branch ?? 'none'})
+
+## Job History (last 10)
+| ID | Phase | Status | Title |
+|----|-------|--------|-------|
+${recentJobs.map((j: Job) => `| ${j.id.slice(0, 8)} | ${j.workflow_phase ?? '-'} | ${j.status} | ${j.title} |`).join('\n')}
+
+## Failed Jobs (last 5 with details)
+${failedDetails.length === 0 ? 'No failed jobs.' : failedDetails.map(f => `### ${f.title}
+- **Job ID:** ${f.job_id}
+- **Phase:** ${f.phase}
+- **Model:** ${f.model}
+- **Exit code:** ${f.exit_code ?? 'n/a'}
+- **Turns used:** ${f.turns ?? 'n/a'}
+- **Error:**
+\`\`\`
+${f.error}
+\`\`\`
+`).join('\n')}
+
+## Total Job Stats
+- Total: ${jobs.length}
+- Done: ${jobs.filter((j: Job) => j.status === 'done').length}
+- Failed: ${failedJobs.length}
+- Cancelled: ${jobs.filter((j: Job) => j.status === 'cancelled').length}
+
+## Plan (truncated)
+\`\`\`
+${planSnippet || '(no plan note found)'}
+\`\`\`
+`;
+
+  writeFileSync(path.join(BLOCKED_LOG_DIR, filename), md, 'utf8');
+  console.log(`[workflow] wrote blocked diagnostic: ${filename}`);
 }
