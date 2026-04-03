@@ -331,6 +331,10 @@ describe('WorkflowManager: diminishing returns detector', () => {
     const updated = getWorkflowById(workflow.id)!;
     expect(updated.status).not.toBe('blocked');
     expect(updated.current_cycle).toBe(6);
+
+    // Zero-progress counter should NOT have incremented (reviewer restructuring, not genuine zero-progress)
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value ?? '0').toBe('0');
   });
 
   it('does NOT trigger when rolling 3-cycle average is exactly 0.33 (strict < 0.3)', async () => {

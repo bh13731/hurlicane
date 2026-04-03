@@ -260,8 +260,8 @@ function _onJobCompleted(job: Job): void {
             const delta = Math.max(0, milestones.done - preImplDone);
             queries.upsertNote(`workflow/${workflow.id}/cycle-progress/${updated.current_cycle}`, String(delta), null);
 
-            if (milestones.done <= preImplDone) {
-              // No progress this cycle
+            if (delta === 0 && milestones.done >= preImplDone) {
+              // No progress this cycle (genuine zero-progress, not reviewer restructuring)
               const prevCount = parseInt(queries.getNote(zeroProgressKey)?.value ?? '0', 10);
               const newCount = prevCount + 1;
               const MAX_ZERO_PROGRESS = 2;
