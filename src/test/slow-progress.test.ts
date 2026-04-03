@@ -497,6 +497,50 @@ describe('StuckJobWatchdog: slow-progress detection', () => {
     expect(_getMilestoneSnapshotsForTest().has(workflowId)).toBe(false);
   });
 
+  it('creates fresh baseline after plan note reappears (Fix-C5b)', async () => {
+    const { _getMilestoneSnapshotsForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    const queries = await import('../server/db/queries.js');
+
+    const { workflowId } = await setupWorkflowWithAgent({
+      milestonesPlan: '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4',
+      agentUpdatedAt: Date.now(),
+    });
+
+    // Step 1: Seed a snapshot (simulates prior watchdog observation)
+    _getMilestoneSnapshotsForTest().set(workflowId, {
+      milestonesDone: 2,
+      checkedAt: Date.now() - 20 * 60 * 1000, // 20 min stale
+    });
+
+    // Step 2: Delete the plan note → watchdog clears snapshot
+    queries.deleteNote(`workflow/${workflowId}/plan`);
+
+    const { startWatchdog, stopWatchdog } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    startWatchdog();
+    stopWatchdog();
+
+    // Snapshot should be cleared (verified by Fix-C3b, but confirm here)
+    expect(_getMilestoneSnapshotsForTest().has(workflowId)).toBe(false);
+    expect(_logResilienceEvent).toHaveBeenCalledOnce(); // snapshot_cleared event
+
+    // Step 3: Restore the plan note (with 3 milestones done now — simulates progress during repair)
+    queries.upsertNote(`workflow/${workflowId}/plan`, '- [x] M1\n- [x] M2\n- [x] M3\n- [ ] M4', null);
+    vi.clearAllMocks();
+
+    // Step 4: Run watchdog again → should create fresh baseline
+    startWatchdog();
+    stopWatchdog();
+
+    // New snapshot should exist with correct milestone count and fresh timestamp
+    const snapshot = _getMilestoneSnapshotsForTest().get(workflowId);
+    expect(snapshot).toBeDefined();
+    expect(snapshot!.milestonesDone).toBe(3);
+    expect(Date.now() - snapshot!.checkedAt).toBeLessThan(5000);
+
+    // No warnings or blocks — fresh baseline, not a stall
+    expect(_logResilienceEvent).not.toHaveBeenCalled();
+  });
+
   it('does not warn if agent is inactive (updated_at > 5 min ago)', async () => {
     const { _getMilestoneSnapshotsForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
 
