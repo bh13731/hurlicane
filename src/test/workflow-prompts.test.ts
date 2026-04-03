@@ -113,6 +113,23 @@ describe('buildReviewPrompt adversarial quality bar', () => {
     expect(prompt).toContain('at least 2 concrete improvements');
   });
 
+  it('cycle 1 without inline context has no duplicate step numbers', () => {
+    const wf = makeWorkflow();
+    const prompt = buildReviewPrompt(wf, 1);
+
+    // Extract all "## Step N:" headings
+    const stepHeaders = [...prompt.matchAll(/## Step (\d+):/g)].map(m => Number(m[1]));
+    // Should have at least 2 steps (Read Context + Review Quality Bar + Update Plan)
+    expect(stepHeaders.length).toBeGreaterThanOrEqual(2);
+    // No duplicates
+    const unique = new Set(stepHeaders);
+    expect(unique.size).toBe(stepHeaders.length);
+    // Steps should be sequential starting from 1
+    for (let i = 0; i < stepHeaders.length; i++) {
+      expect(stepHeaders[i]).toBe(i + 1);
+    }
+  });
+
   it('cycle 2+ (code review) requires at least 2 concrete issues', () => {
     const wf = makeWorkflow();
     const ctx: InlineContext = {

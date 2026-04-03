@@ -225,7 +225,7 @@ export function buildReviewPrompt(workflow: Workflow, cycle: number, inlineConte
 `;
 
   const planReviewSection = !isFirstReview ? '' : `
-## Step 1: Review Quality Bar
+## Step ${hasInline ? 1 : 2}: Review Quality Bar
 
 Before updating the plan, you must critically evaluate it. Identify **at least 2 concrete improvements** — for example:
 - Missing edge cases or error scenarios not covered by any milestone
@@ -277,7 +277,7 @@ ${workflow.task}
 ${workflow.work_dir ?? '(not specified)'}
 
 ${hasInline ? '' : readContextSection}${planReviewSection}${codeReviewSection}
-## Step ${isFirstReview ? 2 : 3}: Update the Plan
+## Step ${isFirstReview ? (hasInline ? 2 : 3) : 3}: Update the Plan
 
 Rewrite the plan to reflect your review:
 - Keep all checked-off milestones (\`- [x]\`) exactly as-is
