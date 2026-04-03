@@ -1331,6 +1331,24 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
   }
 }
 
+export type WorkflowPrCreationOutcome = 'created' | 'failed_with_publishable_commits' | 'no_publishable_commits';
+
+export function getPrCreationOutcome(workflow: Workflow, prUrl: string | null): WorkflowPrCreationOutcome {
+  if (prUrl) return 'created';
+  if (!workflow.worktree_path || !workflow.work_dir) return 'no_publishable_commits';
+
+  let hasPublishableCommits = false;
+  try {
+    const count = execSync(
+      'git rev-list --count HEAD ^origin/HEAD 2>/dev/null || git rev-list --count HEAD',
+      { cwd: workflow.worktree_path, stdio: 'pipe', timeout: 10000 }
+    ).toString().trim();
+    hasPublishableCommits = parseInt(count, 10) > 0;
+  } catch { /* can't check — treat as no publishable commits */ }
+
+  return hasPublishableCommits ? 'failed_with_publishable_commits' : 'no_publishable_commits';
+}
+
 /**
  * Called when a workflow completes successfully.
  * Pushes the worktree branch, opens a GitHub PR, then removes the local worktree.
@@ -1344,31 +1362,19 @@ export function finalizeWorkflow(workflow: Workflow): void {
   if (!workflow.worktree_path || !workflow.work_dir) return;
 
   const prUrl = pushAndCreatePr(workflow, false);
+  const prOutcome = getPrCreationOutcome(workflow, prUrl);
 
-  if (prUrl) {
+  if (prOutcome === 'created') {
     // PR created successfully — safe to remove worktree
     _removeWorktree(workflow);
+  } else if (prOutcome === 'failed_with_publishable_commits') {
+    console.warn(`[workflow ${workflow.id}] PR creation failed — worktree preserved at ${workflow.worktree_path} for retry`);
+    updateAndEmit(workflow.id, {
+      status: 'blocked',
+      blocked_reason: `PR creation failed — worktree preserved for retry at ${workflow.worktree_path}`,
+    });
   } else {
-    // pushAndCreatePr returned null — either no commits or PR creation failed.
-    // Check if the worktree has publishable commits worth preserving.
-    let hasPublishableCommits = false;
-    try {
-      const count = execSync(
-        'git rev-list --count HEAD ^origin/HEAD 2>/dev/null || git rev-list --count HEAD',
-        { cwd: workflow.worktree_path, stdio: 'pipe', timeout: 10000 }
-      ).toString().trim();
-      hasPublishableCommits = parseInt(count, 10) > 0;
-    } catch { /* can't check — safe to remove */ }
-
-    if (hasPublishableCommits) {
-      console.warn(`[workflow ${workflow.id}] PR creation failed — worktree preserved at ${workflow.worktree_path} for retry`);
-      updateAndEmit(workflow.id, {
-        status: 'blocked',
-        blocked_reason: `PR creation failed — worktree preserved for retry at ${workflow.worktree_path}`,
-      });
-    } else {
-      _removeWorktree(workflow);
-    }
+    _removeWorktree(workflow);
   }
 }
 

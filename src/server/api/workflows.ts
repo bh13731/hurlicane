@@ -1,7 +1,10 @@
 import { Router } from 'express';
+import { execFileSync } from 'child_process';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import { resumeWorkflow, cleanupWorktree } from '../orchestrator/WorkflowManager.js';
+import { resumeWorkflow, cleanupWorktree, pushAndCreatePr, getPrCreationOutcome } from '../orchestrator/WorkflowManager.js';
+import { cancelledAgents } from '../orchestrator/AgentRunner.js';
+import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import { createAutonomousAgentRun } from '../orchestrator/AutonomousAgentRunManager.js';
 import type { CreateAutonomousAgentRunRequest, WorkflowPhase } from '../../shared/types.js';
 
@@ -87,6 +90,86 @@ router.post('/:id/cancel', (req, res) => {
   if (updated) cleanupWorktree(updated);
 
   res.json(updated);
+});
+
+// POST /api/workflows/:id/wrap-up — stop work and create a draft PR with whatever's done
+router.post('/:id/wrap-up', (req, res) => {
+  const workflow = queries.getWorkflowById(req.params.id);
+  if (!workflow) { res.status(404).json({ error: 'not found' }); return; }
+  if (workflow.status !== 'running' && workflow.status !== 'blocked') {
+    res.status(400).json({ error: `Workflow is ${workflow.status}, cannot wrap up` });
+    return;
+  }
+
+  // Kill any running agents and cancel pending jobs
+  const jobs = queries.getJobsForWorkflow(workflow.id);
+  for (const job of jobs) {
+    if (job.status === 'running' || job.status === 'assigned') {
+      const agents = queries.getAgentsWithJobByJobId(job.id);
+      for (const agent of agents) {
+        if (agent.status === 'running' || agent.status === 'starting') {
+          cancelledAgents.add(agent.id);
+          if (agent.pid) {
+            try { process.kill(-agent.pid, 'SIGTERM'); } catch { /* already gone */ }
+          }
+          try { execFileSync('tmux', ['kill-session', '-t', `orchestrator-${agent.id}`], { stdio: 'pipe' }); } catch { /* ok */ }
+          queries.updateAgent(agent.id, { status: 'cancelled', finished_at: Date.now() });
+          getFileLockRegistry().releaseAll(agent.id);
+        }
+      }
+      queries.updateJobStatus(job.id, 'cancelled');
+      const updatedJob = queries.getJobById(job.id);
+      if (updatedJob) socket.emitJobUpdate(updatedJob);
+    } else if (job.status === 'queued') {
+      queries.updateJobStatus(job.id, 'cancelled');
+      const updatedJob = queries.getJobById(job.id);
+      if (updatedJob) socket.emitJobUpdate(updatedJob);
+    }
+  }
+
+  // Create draft PR with partial work
+  let prUrl: string | null = null;
+  if (workflow.worktree_path && workflow.work_dir) {
+    prUrl = pushAndCreatePr(workflow, true);
+  }
+  const prOutcome = getPrCreationOutcome(workflow, prUrl);
+
+  if (prOutcome === 'created') {
+    queries.updateWorkflow(workflow.id, {
+      status: 'complete',
+      current_phase: 'idle' as WorkflowPhase,
+      pr_url: prUrl,
+      blocked_reason: null,
+    });
+    const finalWorkflow = queries.getWorkflowById(workflow.id);
+    if (finalWorkflow) socket.emitWorkflowUpdate(finalWorkflow);
+    if (finalWorkflow) cleanupWorktree(finalWorkflow);
+    res.json({ workflow: finalWorkflow, pr_url: prUrl, outcome: 'draft_pr_created' });
+    return;
+  }
+
+  if (prOutcome === 'failed_with_publishable_commits') {
+    queries.updateWorkflow(workflow.id, {
+      status: 'blocked',
+      current_phase: 'idle' as WorkflowPhase,
+      blocked_reason: `Draft PR creation failed — worktree preserved for retry at ${workflow.worktree_path}`,
+    });
+    const finalWorkflow = queries.getWorkflowById(workflow.id);
+    if (finalWorkflow) socket.emitWorkflowUpdate(finalWorkflow);
+    res.status(409).json({ workflow: finalWorkflow, pr_url: null, outcome: 'draft_pr_failed_preserved' });
+    return;
+  }
+
+  queries.updateWorkflow(workflow.id, {
+    status: 'cancelled',
+    current_phase: 'idle' as WorkflowPhase,
+    blocked_reason: null,
+    pr_url: null,
+  });
+  const finalWorkflow = queries.getWorkflowById(workflow.id);
+  if (finalWorkflow) socket.emitWorkflowUpdate(finalWorkflow);
+  if (finalWorkflow) cleanupWorktree(finalWorkflow);
+  res.json({ workflow: finalWorkflow, pr_url: null, outcome: 'no_publishable_commits' });
 });
 
 // POST /api/workflows/:id/resume — resume a blocked or stuck workflow

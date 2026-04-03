@@ -20,6 +20,8 @@ vi.mock('../../server/orchestrator/WorkflowManager.js', () => ({
     status: 'queued',
     workflow_id: wf.id,
   })),
+  pushAndCreatePr: vi.fn(() => null),
+  getPrCreationOutcome: vi.fn(() => 'no_publishable_commits'),
   cleanupWorktree: vi.fn(),
   parseMilestones: vi.fn(() => ({ total: 0, done: 0 })),
   _resetForTest: vi.fn(),
@@ -263,5 +265,90 @@ describe('POST /api/workflows/:id/resume', () => {
   it('returns 404 for unknown workflow', async () => {
     const res = await request(app).post('/api/workflows/nonexistent/resume');
     expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/workflows/:id/wrap-up', () => {
+  beforeEach(async () => { await setupTestDb(); vi.clearAllMocks(); app = createTestApp(); });
+  afterEach(async () => { await cleanupTestDb(); });
+
+  it('completes and cleans up when a draft PR is created', async () => {
+    const { pushAndCreatePr, getPrCreationOutcome, cleanupWorktree } = await import('../../server/orchestrator/WorkflowManager.js');
+    vi.mocked(pushAndCreatePr).mockReturnValue('https://github.com/test/repo/pull/42');
+    vi.mocked(getPrCreationOutcome).mockReturnValue('created');
+
+    const project = await insertTestProject();
+    const wf = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      use_worktree: 1,
+    });
+    const { updateWorkflow } = await import('../../server/db/queries.js');
+    updateWorkflow(wf.id, {
+      worktree_path: '/tmp/worktree',
+      worktree_branch: 'workflow/test-branch',
+    });
+
+    const res = await request(app).post(`/api/workflows/${wf.id}/wrap-up`);
+    expect(res.status).toBe(200);
+    expect(res.body.outcome).toBe('draft_pr_created');
+    expect(res.body.pr_url).toBe('https://github.com/test/repo/pull/42');
+    expect(res.body.workflow.status).toBe('complete');
+    expect(vi.mocked(cleanupWorktree)).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the worktree and blocks the workflow when draft PR creation fails with publishable commits', async () => {
+    const { pushAndCreatePr, getPrCreationOutcome, cleanupWorktree } = await import('../../server/orchestrator/WorkflowManager.js');
+    vi.mocked(pushAndCreatePr).mockReturnValue(null);
+    vi.mocked(getPrCreationOutcome).mockReturnValue('failed_with_publishable_commits');
+
+    const project = await insertTestProject();
+    const wf = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      use_worktree: 1,
+    });
+    const { updateWorkflow } = await import('../../server/db/queries.js');
+    updateWorkflow(wf.id, {
+      worktree_path: '/tmp/worktree',
+      worktree_branch: 'workflow/test-branch',
+    });
+
+    const res = await request(app).post(`/api/workflows/${wf.id}/wrap-up`);
+    expect(res.status).toBe(409);
+    expect(res.body.outcome).toBe('draft_pr_failed_preserved');
+    expect(res.body.pr_url).toBeNull();
+    expect(res.body.workflow.status).toBe('blocked');
+    expect(res.body.workflow.blocked_reason).toContain('Draft PR creation failed');
+    expect(res.body.workflow.blocked_reason).toContain('/tmp/worktree');
+    expect(vi.mocked(cleanupWorktree)).not.toHaveBeenCalled();
+  });
+
+  it('cancels wrap-up explicitly when there are no publishable commits', async () => {
+    const { pushAndCreatePr, getPrCreationOutcome, cleanupWorktree } = await import('../../server/orchestrator/WorkflowManager.js');
+    vi.mocked(pushAndCreatePr).mockReturnValue(null);
+    vi.mocked(getPrCreationOutcome).mockReturnValue('no_publishable_commits');
+
+    const project = await insertTestProject();
+    const wf = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      use_worktree: 1,
+    });
+    const { updateWorkflow } = await import('../../server/db/queries.js');
+    updateWorkflow(wf.id, {
+      worktree_path: '/tmp/worktree',
+      worktree_branch: 'workflow/test-branch',
+    });
+
+    const res = await request(app).post(`/api/workflows/${wf.id}/wrap-up`);
+    expect(res.status).toBe(200);
+    expect(res.body.outcome).toBe('no_publishable_commits');
+    expect(res.body.pr_url).toBeNull();
+    expect(res.body.workflow.status).toBe('cancelled');
+    expect(vi.mocked(cleanupWorktree)).toHaveBeenCalledTimes(1);
   });
 });
