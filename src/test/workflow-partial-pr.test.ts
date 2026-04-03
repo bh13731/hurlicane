@@ -269,3 +269,87 @@ describe('pushAndCreatePr: partial label', () => {
     expect(prCreateCall!.cmd).toContain('--label partial');
   });
 });
+
+describe('finalizeWorkflow: worktree preservation on PR failure', () => {
+  beforeEach(async () => {
+    execSyncCalls.length = 0;
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+    vi.restoreAllMocks();
+  });
+
+  it('does NOT remove worktree when pushAndCreatePr fails but commits exist', async () => {
+    const mockedExecSync = vi.mocked(execSync);
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd === 'string') {
+        // ensureWorktreeBranch
+        if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+        // commit count check (has commits)
+        if (cmd.includes('rev-list --count')) return Buffer.from('5\n');
+        // git push succeeds
+        if (cmd.startsWith('git push')) return Buffer.from('');
+        // gh pr create FAILS
+        if (cmd.includes('gh pr create')) throw new Error('gh: Could not create PR');
+      }
+      return Buffer.from('');
+    });
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow();
+
+    finalizeWorkflow(wf);
+
+    // Worktree removal should NOT have been called
+    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    expect(removeCall).toBeUndefined();
+  });
+
+  it('removes worktree when pushAndCreatePr succeeds', async () => {
+    const mockedExecSync = vi.mocked(execSync);
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd === 'string') {
+        if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+        if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
+        if (cmd.startsWith('git push')) return Buffer.from('');
+        if (cmd.includes('gh pr create')) return Buffer.from('https://github.com/test/repo/pull/42\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow();
+
+    finalizeWorkflow(wf);
+
+    // Worktree removal SHOULD have been called
+    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    expect(removeCall).toBeDefined();
+  });
+
+  it('removes worktree when no publishable commits exist', async () => {
+    const mockedExecSync = vi.mocked(execSync);
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd === 'string') {
+        if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+        // No commits
+        if (cmd.includes('rev-list --count')) return Buffer.from('0\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow();
+
+    finalizeWorkflow(wf);
+
+    // Worktree removal SHOULD have been called (no commits to preserve)
+    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    expect(removeCall).toBeDefined();
+  });
+});

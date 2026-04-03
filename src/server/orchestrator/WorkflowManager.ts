@@ -1315,6 +1315,8 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
 /**
  * Called when a workflow completes successfully.
  * Pushes the worktree branch, opens a GitHub PR, then removes the local worktree.
+ * If PR creation fails but the branch has publishable commits, the worktree is
+ * preserved so the PR can be retried manually or on resume.
  */
 export function finalizeWorkflow(workflow: Workflow): void {
   // M13/6B: Release file claims on workflow completion
@@ -1322,10 +1324,28 @@ export function finalizeWorkflow(workflow: Workflow): void {
 
   if (!workflow.worktree_path || !workflow.work_dir) return;
 
-  try {
-    pushAndCreatePr(workflow, false);
-  } finally {
+  const prUrl = pushAndCreatePr(workflow, false);
+
+  if (prUrl) {
+    // PR created successfully — safe to remove worktree
     _removeWorktree(workflow);
+  } else {
+    // pushAndCreatePr returned null — either no commits or PR creation failed.
+    // Check if the worktree has publishable commits worth preserving.
+    let hasPublishableCommits = false;
+    try {
+      const count = execSync(
+        'git rev-list --count HEAD ^origin/HEAD 2>/dev/null || git rev-list --count HEAD',
+        { cwd: workflow.worktree_path, stdio: 'pipe', timeout: 10000 }
+      ).toString().trim();
+      hasPublishableCommits = parseInt(count, 10) > 0;
+    } catch { /* can't check — safe to remove */ }
+
+    if (hasPublishableCommits) {
+      console.warn(`[workflow ${workflow.id}] PR creation failed — worktree preserved at ${workflow.worktree_path} for retry`);
+    } else {
+      _removeWorktree(workflow);
+    }
   }
 }
 
