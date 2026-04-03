@@ -21,7 +21,7 @@ const JOB_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
 
 const WORKFLOW_TRANSITIONS: Record<WorkflowStatus, readonly WorkflowStatus[]> = {
   running:   ['complete', 'blocked', 'failed', 'cancelled'],
-  complete:  [],
+  complete:  ['blocked'],            // PR creation failure after completion
   blocked:   ['running', 'cancelled'],  // resume unblocks
   failed:    ['running'],               // manual restart
   cancelled: [],

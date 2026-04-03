@@ -1343,6 +1343,10 @@ export function finalizeWorkflow(workflow: Workflow): void {
 
     if (hasPublishableCommits) {
       console.warn(`[workflow ${workflow.id}] PR creation failed — worktree preserved at ${workflow.worktree_path} for retry`);
+      updateAndEmit(workflow.id, {
+        status: 'blocked',
+        blocked_reason: `PR creation failed — worktree preserved for retry at ${workflow.worktree_path}`,
+      });
     } else {
       _removeWorktree(workflow);
     }

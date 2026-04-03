@@ -75,6 +75,7 @@ vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
 
 import type { Workflow } from '../shared/types.js';
 import { execSync } from 'child_process';
+import { insertTestWorkflow } from './helpers.js';
 
 function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
   return {
@@ -351,5 +352,107 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
     // Worktree removal SHOULD have been called (no commits to preserve)
     const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
     expect(removeCall).toBeDefined();
+  });
+});
+
+describe('finalizeWorkflow: blocked status on PR failure', () => {
+  beforeEach(async () => {
+    execSyncCalls.length = 0;
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+    vi.restoreAllMocks();
+  });
+
+  it('transitions workflow from complete to blocked when PR creation fails with publishable commits', async () => {
+    const mockedExecSync = vi.mocked(execSync);
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd === 'string') {
+        if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+        if (cmd.includes('rev-list --count')) return Buffer.from('5\n');
+        if (cmd.startsWith('git push')) return Buffer.from('');
+        if (cmd.includes('gh pr create')) throw new Error('gh: Could not create PR');
+      }
+      return Buffer.from('');
+    });
+
+    // Insert workflow into DB in 'complete' status (mimics line 259 in onJobCompleted)
+    const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
+    const dbWf = await insertTestWorkflow({
+      id: 'wf-pr-fail-blocked',
+      status: 'complete',
+      use_worktree: 1,
+      milestones_done: 10,
+      milestones_total: 10,
+    });
+    updateWorkflow(dbWf.id, {
+      worktree_path: '/tmp/wt',
+      worktree_branch: 'workflow/test-branch',
+    });
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({
+      id: 'wf-pr-fail-blocked',
+      status: 'complete',
+      milestones_done: 10,
+      milestones_total: 10,
+    });
+
+    finalizeWorkflow(wf);
+
+    // Workflow should now be blocked with a descriptive reason
+    const updated = getWorkflowById('wf-pr-fail-blocked');
+    expect(updated!.status).toBe('blocked');
+    expect(updated!.blocked_reason).toContain('PR creation failed');
+    expect(updated!.blocked_reason).toContain('/tmp/wt');
+
+    // Worktree should NOT have been removed (preserved for retry)
+    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    expect(removeCall).toBeUndefined();
+  });
+
+  it('does NOT set blocked when PR succeeds', async () => {
+    const mockedExecSync = vi.mocked(execSync);
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd === 'string') {
+        if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+        if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
+        if (cmd.startsWith('git push')) return Buffer.from('');
+        if (cmd.includes('gh pr create')) return Buffer.from('https://github.com/test/repo/pull/42\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
+    const dbWf = await insertTestWorkflow({
+      id: 'wf-pr-success',
+      status: 'complete',
+      use_worktree: 1,
+      milestones_done: 5,
+      milestones_total: 5,
+    });
+    updateWorkflow(dbWf.id, {
+      worktree_path: '/tmp/wt',
+      worktree_branch: 'workflow/test-branch',
+    });
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({
+      id: 'wf-pr-success',
+      status: 'complete',
+      milestones_done: 5,
+      milestones_total: 5,
+    });
+
+    finalizeWorkflow(wf);
+
+    // Workflow should stay complete (not blocked)
+    const updated = getWorkflowById('wf-pr-success');
+    expect(updated!.status).toBe('complete');
+    expect(updated!.blocked_reason).toBeFalsy();
   });
 });
