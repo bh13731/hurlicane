@@ -202,6 +202,16 @@ describe('validateTaskRequest', () => {
     expect(validateTaskRequest({ ...base, scheduledAt: Date.now() })).toMatch(/scheduledAt/);
   });
 
+  it('rejects repeatIntervalMs: 0 on autonomous tasks (falsey numeric bypass)', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 3, repeatIntervalMs: 0 }))
+      .toMatch(/repeatIntervalMs is not supported/);
+  });
+
+  it('rejects scheduledAt: 0 on autonomous tasks (falsey numeric bypass)', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 3, scheduledAt: 0 }))
+      .toMatch(/scheduledAt is not supported/);
+  });
+
   it('rejects single-pass stop settings on autonomous tasks', () => {
     const base: CreateTaskRequest = { description: 'x', iterations: 5 };
     expect(validateTaskRequest({ ...base, stopMode: 'turns' })).toMatch(/stopMode/);
@@ -603,11 +613,27 @@ describe('taskToWorkflowRequest', () => {
     })).toThrow(/repeatIntervalMs is not supported for workflow/);
   });
 
+  it('throws on repeatIntervalMs: 0 (falsey numeric bypass)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      repeatIntervalMs: 0,
+    })).toThrow(/repeatIntervalMs is not supported for workflow/);
+  });
+
   it('throws on scheduledAt (job-only field unsupported for workflows)', () => {
     expect(() => taskToWorkflowRequest({
       description: 'x',
       iterations: 3,
       scheduledAt: Date.now(),
+    })).toThrow(/scheduledAt is not supported for workflow/);
+  });
+
+  it('throws on scheduledAt: 0 (falsey numeric bypass)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      scheduledAt: 0,
     })).toThrow(/scheduledAt is not supported for workflow/);
   });
 

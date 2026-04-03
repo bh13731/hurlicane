@@ -99,8 +99,8 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
     if (req.dependsOn?.length)       return 'dependsOn is not supported for autonomous tasks (iterations > 1)';
     if (req.interactive)             return 'interactive mode is not supported for autonomous tasks';
     if (req.debate)                  return 'debate is not supported for autonomous tasks';
-    if (req.repeatIntervalMs)        return 'repeatIntervalMs is not supported for autonomous tasks';
-    if (req.scheduledAt)             return 'scheduledAt is not supported for autonomous tasks';
+    if (req.repeatIntervalMs !== undefined) return 'repeatIntervalMs is not supported for autonomous tasks';
+    if (req.scheduledAt !== undefined)      return 'scheduledAt is not supported for autonomous tasks';
     if (req.priority !== undefined)  return 'priority is not supported for autonomous tasks (iterations > 1)';
     if (req.retryPolicy !== undefined) return 'retryPolicy is not supported for autonomous tasks (iterations > 1)';
     if (req.maxRetries !== undefined) return 'maxRetries is not supported for autonomous tasks (iterations > 1)';
@@ -226,10 +226,10 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
   if (req.debate) {
     throw new Error('debate is not supported for workflow tasks (iterations > 1)');
   }
-  if (req.repeatIntervalMs) {
+  if (req.repeatIntervalMs !== undefined) {
     throw new Error('repeatIntervalMs is not supported for workflow tasks (iterations > 1)');
   }
-  if (req.scheduledAt) {
+  if (req.scheduledAt !== undefined) {
     throw new Error('scheduledAt is not supported for workflow tasks (iterations > 1)');
   }
 
