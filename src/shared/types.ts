@@ -556,7 +556,9 @@ export interface CreateWorkflowRequest {
   stopValueImplement?: number;
   templateId?: string;
   useWorktree?: boolean;
-  projectId?: string;
+  // NOTE: projectId intentionally omitted — createAutonomousAgentRun() always
+  // creates a new project.  The unified CreateTaskRequest supports projectId
+  // for job-routed tasks only; workflow-routed tasks reject it at validation.
   completionThreshold?: number;
 }
 

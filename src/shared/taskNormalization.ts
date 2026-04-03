@@ -107,6 +107,7 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
     if (req.completionChecks?.length) return 'completionChecks is not supported for autonomous tasks (iterations > 1)';
     if (req.context !== undefined)   return 'context is not supported for autonomous tasks (iterations > 1)';
     if (req.reviewConfig !== undefined) return 'reviewConfig is not supported for autonomous tasks (iterations > 1); reviewer model is set via reviewerModel';
+    if (req.projectId !== undefined)   return 'projectId is not supported for autonomous tasks (iterations > 1) — workflows always create their own project';
   }
   return null;
 }
@@ -205,6 +206,9 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
   if (req.reviewConfig !== undefined) {
     throw new Error('reviewConfig is not supported for workflow tasks (iterations > 1); reviewer model is set via reviewerModel');
   }
+  if (req.projectId !== undefined) {
+    throw new Error('projectId is not supported for workflow tasks (iterations > 1) — workflows always create their own project');
+  }
 
   return {
     task: req.description,
@@ -215,7 +219,6 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
     maxCycles: cfg.iterations,
     useWorktree: cfg.useWorktree,
     templateId: req.templateId,
-    projectId: req.projectId,
     completionThreshold: req.completionThreshold,
     // Per-phase stopping conditions
     maxTurnsAssess: req.maxTurnsAssess,

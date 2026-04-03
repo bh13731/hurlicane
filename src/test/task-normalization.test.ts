@@ -266,6 +266,19 @@ describe('validateTaskRequest', () => {
       .toMatch(/reviewConfig is not supported/);
   });
 
+  it('rejects projectId on autonomous tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 5, projectId: 'proj-1' }))
+      .toMatch(/projectId is not supported/);
+    expect(validateTaskRequest({ description: 'x', preset: 'autonomous', projectId: 'proj-1' }))
+      .toMatch(/projectId is not supported/);
+  });
+
+  it('allows projectId on job-routed tasks', () => {
+    expect(validateTaskRequest({ description: 'x', iterations: 1, projectId: 'proj-1' })).toBeNull();
+    expect(validateTaskRequest({ description: 'x', preset: 'quick', projectId: 'proj-1' })).toBeNull();
+    expect(validateTaskRequest({ description: 'x', preset: 'reviewed', projectId: 'proj-1' })).toBeNull();
+  });
+
   it('rejects remaining job-only fields on preset override combinations routing to workflow', () => {
     // Quick preset with iterations override
     expect(validateTaskRequest({ description: 'x', preset: 'quick', iterations: 3, priority: 5 }))
@@ -420,7 +433,6 @@ describe('taskToWorkflowRequest', () => {
       iterations: 5,
       workDir: '/repo',
       templateId: 'tpl-1',
-      projectId: 'proj-1',
     });
     expect(result.task).toBe('Refactor module');
     expect(result.title).toBe('Refactor');
@@ -429,7 +441,8 @@ describe('taskToWorkflowRequest', () => {
     expect(result.maxCycles).toBe(5);
     expect(result.workDir).toBe('/repo');
     expect(result.templateId).toBe('tpl-1');
-    expect(result.projectId).toBe('proj-1');
+    // projectId is intentionally not supported — workflows always create their own project
+    expect((result as any).projectId).toBeUndefined();
   });
 
   it('maps per-phase stop conditions', () => {
@@ -548,6 +561,14 @@ describe('taskToWorkflowRequest', () => {
       iterations: 3,
       reviewConfig: { models: ['codex'], auto: true },
     })).toThrow(/reviewConfig is not supported for workflow/);
+  });
+
+  it('throws on projectId (workflows always create their own project)', () => {
+    expect(() => taskToWorkflowRequest({
+      description: 'x',
+      iterations: 3,
+      projectId: 'proj-1',
+    })).toThrow(/projectId is not supported for workflow/);
   });
 
   it('uses resolved useWorktree from config', () => {
