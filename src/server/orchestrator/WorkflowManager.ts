@@ -1258,11 +1258,7 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
   // Count commits on the branch that aren't on the remote default branch
   let hasCommits = false;
   try {
-    const n = execSync(
-      'git rev-list --count HEAD ^origin/HEAD 2>/dev/null || git rev-list --count HEAD',
-      { cwd: worktree_path, stdio: 'pipe', timeout: 10000 }
-    ).toString().trim();
-    hasCommits = parseInt(n, 10) > 0;
+    hasCommits = countBranchCommits(worktree_path) > 0;
   } catch (err) {
     // Safe default: assume commits exist so we attempt the push rather than silently
     // skipping PR creation on transient git errors (index.lock, timeout, etc.).
@@ -1339,17 +1335,64 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
 
 export type WorkflowPrCreationOutcome = 'created' | 'failed_with_publishable_commits' | 'no_publishable_commits';
 
+function getRemoteDefaultBranch(cwd: string): string | null {
+  try {
+    const ref = execSync('git symbolic-ref refs/remotes/origin/HEAD', {
+      cwd,
+      stdio: 'pipe',
+      timeout: 5000,
+    }).toString().trim();
+    if (!ref.startsWith('refs/remotes/origin/')) return null;
+    return ref.slice('refs/remotes/origin/'.length);
+  } catch (err) {
+    if (isMissingRemoteRefError(err)) return null;
+    throw err;
+  }
+}
+
+function isMissingRemoteRefError(err: unknown): boolean {
+  const message = String((err as { message?: string } | null)?.message ?? err ?? '');
+  return message.includes('not a symbolic ref')
+    || message.includes('bad revision')
+    || message.includes('unknown revision')
+    || message.includes('ambiguous argument');
+}
+
+function countCommitsAgainstBaseRef(cwd: string, baseRef: string): number | null {
+  try {
+    const count = execSync(
+      `git rev-list --count HEAD ${JSON.stringify(`^${baseRef}`)}`,
+      { cwd, stdio: 'pipe', timeout: 10000 }
+    ).toString().trim();
+    const parsed = parseInt(count, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch (err) {
+    if (isMissingRemoteRefError(err)) return null;
+    throw err;
+  }
+}
+
+export function countBranchCommits(cwd: string): number {
+  const candidateBaseRefs = new Set<string>();
+  const defaultBranch = getRemoteDefaultBranch(cwd);
+  if (defaultBranch) candidateBaseRefs.add(`origin/${defaultBranch}`);
+  candidateBaseRefs.add('origin/HEAD');
+
+  for (const baseRef of candidateBaseRefs) {
+    const count = countCommitsAgainstBaseRef(cwd, baseRef);
+    if (count !== null) return count;
+  }
+
+  return 0;
+}
+
 export function getPrCreationOutcome(workflow: Workflow, prUrl: string | null): WorkflowPrCreationOutcome {
   if (prUrl) return 'created';
   if (!workflow.worktree_path || !workflow.work_dir) return 'no_publishable_commits';
 
   let hasPublishableCommits = false;
   try {
-    const count = execSync(
-      'git rev-list --count HEAD ^origin/HEAD 2>/dev/null || git rev-list --count HEAD',
-      { cwd: workflow.worktree_path, stdio: 'pipe', timeout: 10000 }
-    ).toString().trim();
-    hasPublishableCommits = parseInt(count, 10) > 0;
+    hasPublishableCommits = countBranchCommits(workflow.worktree_path) > 0;
   } catch (err: any) {
     console.warn(`[workflow ${workflow.id}] getPrCreationOutcome: git error — preserving worktree as safe default:`, err?.message);
     return 'failed_with_publishable_commits';
@@ -1367,7 +1410,6 @@ export function getPrCreationOutcome(workflow: Workflow, prUrl: string | null): 
 export function finalizeWorkflow(workflow: Workflow): void {
   // M13/6B: Release file claims on workflow completion
   queries.releaseWorkflowClaims(workflow.id);
-
   if (!workflow.worktree_path || !workflow.work_dir) return;
 
   const prUrl = pushAndCreatePr(workflow, false);

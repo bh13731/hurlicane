@@ -576,3 +576,104 @@ describe('pushAndCreatePr: rev-list error handling (Fix-C8a)', () => {
     expect(pushCall).toBeUndefined();
   });
 });
+
+describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
+  beforeEach(async () => {
+    execSyncCalls.length = 0;
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+    vi.restoreAllMocks();
+  });
+
+  it('returns 0 when origin default-branch metadata and origin/HEAD are both missing', async () => {
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+        throw new Error('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref');
+      }
+      if (cmd.includes('git rev-list --count HEAD')) {
+        throw new Error('fatal: bad revision');
+      }
+      return Buffer.from('');
+    });
+
+    const { countBranchCommits } = await import('../server/orchestrator/WorkflowManager.js');
+
+    expect(countBranchCommits('/tmp/wt')).toBe(0);
+    expect(execSyncCalls.map(c => c.cmd)).toEqual([
+      'git symbolic-ref refs/remotes/origin/HEAD',
+      'git rev-list --count HEAD "^origin/HEAD"',
+    ]);
+  });
+
+  it('returns 0 when origin/main is missing and origin/HEAD is also unavailable', async () => {
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+        return Buffer.from('refs/remotes/origin/main\n');
+      }
+      if (cmd === 'git rev-list --count HEAD "^origin/main"') {
+        throw new Error('fatal: bad revision ^origin/main');
+      }
+      if (cmd === 'git rev-list --count HEAD "^origin/HEAD"') {
+        throw new Error('fatal: bad revision ^origin/HEAD');
+      }
+      return Buffer.from('');
+    });
+
+    const { countBranchCommits } = await import('../server/orchestrator/WorkflowManager.js');
+
+    expect(countBranchCommits('/tmp/wt')).toBe(0);
+    expect(execSyncCalls.map(c => c.cmd)).toEqual([
+      'git symbolic-ref refs/remotes/origin/HEAD',
+      'git rev-list --count HEAD "^origin/main"',
+      'git rev-list --count HEAD "^origin/HEAD"',
+    ]);
+  });
+
+  it('returns the branch-specific commit count when origin default branch is available', async () => {
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+        return Buffer.from('refs/remotes/origin/main\n');
+      }
+      if (cmd === 'git rev-list --count HEAD "^origin/main"') {
+        return Buffer.from('2\n');
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    const { countBranchCommits } = await import('../server/orchestrator/WorkflowManager.js');
+
+    expect(countBranchCommits('/tmp/wt')).toBe(2);
+    expect(execSyncCalls.map(c => c.cmd)).toEqual([
+      'git symbolic-ref refs/remotes/origin/HEAD',
+      'git rev-list --count HEAD "^origin/main"',
+    ]);
+  });
+
+  it('causes getPrCreationOutcome to treat missing remote metadata as no publishable commits', async () => {
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+        throw new Error('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref');
+      }
+      if (cmd === 'git rev-list --count HEAD "^origin/HEAD"') {
+        throw new Error('fatal: bad revision ^origin/HEAD');
+      }
+      return Buffer.from('');
+    });
+
+    const { getPrCreationOutcome } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({ worktree_path: '/tmp/wt', work_dir: '/tmp/test' });
+
+    expect(getPrCreationOutcome(wf, null)).toBe('no_publishable_commits');
+  });
+});
