@@ -20,6 +20,7 @@ export const createAutonomousAgentRunSchema = z.object({
   stopValueImplement: z.number().optional().describe('Implement stopping value'),
   templateId: z.string().optional().describe('Optional template to apply'),
   useWorktree: z.boolean().optional().describe('Whether to create a shared git worktree for the run'),
+  completionThreshold: z.number().optional().describe('Fraction of milestones (0.1-1.0) required to consider the workflow complete. Default 1.0 (all milestones). When threshold < 1.0 and met, creates a full (non-draft) PR.'),
 });
 
 export async function createAutonomousAgentRunHandler(

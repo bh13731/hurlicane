@@ -130,6 +130,7 @@ export interface Workflow {
   worktree_branch: string | null;
   blocked_reason: string | null;
   pr_url: string | null;
+  completion_threshold: number;
   created_at: number;
   updated_at: number;
 }
@@ -556,6 +557,7 @@ export interface CreateWorkflowRequest {
   templateId?: string;
   useWorktree?: boolean;
   projectId?: string;
+  completionThreshold?: number;
 }
 
 export interface CreateWorkflowResponse {

@@ -56,6 +56,7 @@ export function createAutonomousAgentRun(
     worktree_branch: null,
     blocked_reason: null,
     pr_url: null,
+    completion_threshold: Math.min(Math.max(body.completionThreshold ?? 1.0, 0.1), 1.0),
     created_at: now,
     updated_at: now,
   };

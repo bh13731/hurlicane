@@ -216,8 +216,8 @@ function _onJobCompleted(job: Job): void {
           milestones_done: milestones.done,
         });
         const updated = queries.getWorkflowById(workflow.id)!;
-        if (milestones.total > 0 && milestones.done >= milestones.total) {
-          console.log(`[workflow ${workflow.id}] all milestones complete after review — marking complete`);
+        if (milestones.total > 0 && meetsCompletionThreshold(milestones, updated.completion_threshold)) {
+          console.log(`[workflow ${workflow.id}] milestones meet completion threshold (${milestones.done}/${milestones.total}, threshold ${updated.completion_threshold}) after review — marking complete`);
           updateAndEmit(workflow.id, { status: 'complete', current_phase: 'idle' as WorkflowPhase });
           finalizeWorkflow(queries.getWorkflowById(workflow.id)!);
         } else {
@@ -242,8 +242,8 @@ function _onJobCompleted(job: Job): void {
         });
         const updated = queries.getWorkflowById(workflow.id)!;
 
-        if (milestones.total > 0 && milestones.done >= milestones.total) {
-          console.log(`[workflow ${workflow.id}] all ${milestones.total} milestones complete — marking complete`);
+        if (milestones.total > 0 && meetsCompletionThreshold(milestones, updated.completion_threshold)) {
+          console.log(`[workflow ${workflow.id}] milestones meet completion threshold (${milestones.done}/${milestones.total}, threshold ${updated.completion_threshold}) — marking complete`);
           updateAndEmit(workflow.id, { status: 'complete', current_phase: 'idle' as WorkflowPhase });
           finalizeWorkflow(queries.getWorkflowById(workflow.id)!);
         } else if (updated.current_cycle >= updated.max_cycles) {
@@ -361,6 +361,15 @@ export function parseMilestones(planText: string): { total: number; done: number
     else if (CHECKBOX_UNCHECKED.test(line)) unchecked++;
   }
   return { total: done + unchecked, done };
+}
+
+/** Check if milestone progress meets the completion threshold (0.0-1.0). */
+export function meetsCompletionThreshold(
+  milestones: { total: number; done: number },
+  threshold: number,
+): boolean {
+  if (milestones.total === 0) return false;
+  return milestones.done / milestones.total >= threshold;
 }
 
 // ─── Plan Recovery from Agent Output (M7/4C) ─────────────────────────────────

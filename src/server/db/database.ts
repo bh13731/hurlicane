@@ -482,6 +482,9 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!workflowCols.includes('blocked_reason')) {
     db.exec('ALTER TABLE workflows ADD COLUMN blocked_reason TEXT');
   }
+  if (!workflowCols.includes('completion_threshold')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN completion_threshold REAL NOT NULL DEFAULT 1.0');
+  }
 
   // ── jobs.pr_url migration ──────────────────────────────────────────────────
   if (!jobCols.includes('pr_url')) {
