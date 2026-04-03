@@ -375,9 +375,15 @@ class FileLockRegistry {
         // so this agent can release its held locks and retry.
         const cycle = this.detectDeadlock(agentId);
         if (cycle) {
-          if (await this.tryAutoResolveDeadlock(cycle)) {
-            // Lock was released — retry acquire on next iteration
-            continue;
+          try {
+            if (await this.tryAutoResolveDeadlock(cycle)) {
+              // Lock was released — retry acquire on next iteration
+              continue;
+            }
+          } catch (err) {
+            console.error(`[file-lock] tryAutoResolveDeadlock failed:`, err);
+            // Fall through to deadlock_detected — don't let internal errors
+            // propagate as unhandled exceptions from acquire().
           }
           return {
             success: false,

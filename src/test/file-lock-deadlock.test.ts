@@ -157,6 +157,35 @@ describe('FileLockRegistry - automatic deadlock recovery', () => {
     expect(registry.getDeadlockResolutionCount()).toBe(0);
   });
 
+  it('returns deadlock_detected when tryAutoResolveDeadlock throws', async () => {
+    const { getFileLockRegistry } = await import('../server/orchestrator/FileLockRegistry.js');
+
+    // Agent A holds /f1, Agent B holds /f2
+    await insertAgentWithLock('agent-a', '/f1');
+    await new Promise(r => setTimeout(r, 5));
+    await insertAgentWithLock('agent-b', '/f2');
+
+    // Make the dynamic import of McpServer fail — this simulates the
+    // scenario where tryAutoResolveDeadlock throws an internal error.
+    mockHasActiveTransport.mockImplementation(() => {
+      throw new Error('McpServer import failed');
+    });
+
+    const registry = getFileLockRegistry();
+
+    const resultA = registry.acquire('agent-a', ['/f2'], null, 60_000, 1_000);
+    const resultB = registry.acquire('agent-b', ['/f1'], null, 60_000, 1_000);
+
+    const [a, b] = await Promise.all([resultA, resultB]);
+
+    // At least one agent should get deadlock_detected (not an unhandled exception)
+    const deadlocked = [a, b].filter(r => r.deadlock_detected);
+    expect(deadlocked.length).toBeGreaterThanOrEqual(1);
+
+    // No auto-resolution should have happened
+    expect(registry.getDeadlockResolutionCount()).toBe(0);
+  });
+
   it('does not auto-resolve when holder has recent activity', async () => {
     const { getFileLockRegistry } = await import('../server/orchestrator/FileLockRegistry.js');
 
