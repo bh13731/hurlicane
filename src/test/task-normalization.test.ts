@@ -433,7 +433,7 @@ describe('taskToJobRequest', () => {
   it('throws when supplied config fabricates routesTo=job for a workflow-routed request', () => {
     const req: CreateTaskRequest = { description: 'x', iterations: 5 };
     const fabricated = { preset: 'autonomous' as const, routesTo: 'job' as const, review: true, iterations: 5, useWorktree: true };
-    expect(() => taskToJobRequest(req, fabricated)).toThrow(/does not match the request's resolved routing/);
+    expect(() => taskToJobRequest(req, fabricated)).toThrow(/routesTo: supplied 'job' vs canonical 'workflow'/);
   });
 
   it('accepts supplied config when routesTo matches the request', () => {
@@ -443,39 +443,48 @@ describe('taskToJobRequest', () => {
     expect(result.description).toBe('x');
   });
 
-  it('ignores stale config with review=true when canonical review is false', () => {
-    // Quick preset → canonical review=false; stale config claims review=true
+  it('throws on stale config with review=true when canonical review is false', () => {
     const req: CreateTaskRequest = { description: 'x', preset: 'quick' };
     const stale = { ...resolveTaskConfig(req), review: true };
-    const result = taskToJobRequest(req, stale);
-    // Output must follow canonical (review=false) → no reviewConfig
-    expect(result.reviewConfig).toBeUndefined();
+    expect(() => taskToJobRequest(req, stale)).toThrow(/review: supplied true vs canonical false/);
   });
 
-  it('ignores stale config with review=false when canonical review is true', () => {
-    // Reviewed preset → canonical review=true; stale config claims review=false
+  it('throws on stale config with review=false when canonical review is true', () => {
     const req: CreateTaskRequest = { description: 'x', preset: 'reviewed' };
     const stale = { ...resolveTaskConfig(req), review: false };
-    const result = taskToJobRequest(req, stale);
-    // Output must follow canonical (review=true) → reviewConfig present
-    expect(result.reviewConfig).toBeDefined();
-    expect(result.reviewConfig).toEqual({ models: ['codex'], auto: true });
+    expect(() => taskToJobRequest(req, stale)).toThrow(/review: supplied false vs canonical true/);
   });
 
-  it('ignores stale config with useWorktree=true when canonical useWorktree is false', () => {
-    // Quick preset → canonical useWorktree=false; stale config claims useWorktree=true
+  it('throws on stale config with useWorktree=true when canonical useWorktree is false', () => {
     const req: CreateTaskRequest = { description: 'x', preset: 'quick' };
     const stale = { ...resolveTaskConfig(req), useWorktree: true };
-    const result = taskToJobRequest(req, stale);
-    expect(result.useWorktree).toBe(false);
+    expect(() => taskToJobRequest(req, stale)).toThrow(/useWorktree: supplied true vs canonical false/);
   });
 
-  it('ignores stale config with useWorktree=false when canonical useWorktree is true', () => {
-    // Reviewed preset → canonical useWorktree=true; stale config claims useWorktree=false
+  it('throws on stale config with useWorktree=false when canonical useWorktree is true', () => {
     const req: CreateTaskRequest = { description: 'x', preset: 'reviewed' };
     const stale = { ...resolveTaskConfig(req), useWorktree: false };
-    const result = taskToJobRequest(req, stale);
-    expect(result.useWorktree).toBe(true);
+    expect(() => taskToJobRequest(req, stale)).toThrow(/useWorktree: supplied false vs canonical true/);
+  });
+
+  it('throws on stale config with mismatched preset', () => {
+    // Request infers quick (default), stale config claims reviewed
+    const req: CreateTaskRequest = { description: 'x' };
+    const stale = { ...resolveTaskConfig(req), preset: 'reviewed' as const };
+    expect(() => taskToJobRequest(req, stale)).toThrow(/preset: supplied 'reviewed' vs canonical 'quick'/);
+  });
+
+  it('throws on stale config with mismatched iterations', () => {
+    // Job-routed requests always have iterations=1; stale config claims 5
+    const req: CreateTaskRequest = { description: 'x', preset: 'quick' };
+    const stale = { ...resolveTaskConfig(req), iterations: 5 };
+    expect(() => taskToJobRequest(req, stale)).toThrow(/iterations: supplied 5 vs canonical 1/);
+  });
+
+  it('reports all mismatched fields in a single error', () => {
+    const req: CreateTaskRequest = { description: 'x', preset: 'quick' };
+    const stale = { ...resolveTaskConfig(req), review: true, useWorktree: true };
+    expect(() => taskToJobRequest(req, stale)).toThrow(/review:.*useWorktree:/);
   });
 });
 
