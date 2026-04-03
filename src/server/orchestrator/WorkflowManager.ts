@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import path from 'path';
-import { Sentry } from '../instrument.js';
+import { captureWithContext } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import type { Job, Workflow, WorkflowPhase, StopMode } from '../../shared/types.js';
@@ -41,7 +41,7 @@ export function onJobCompleted(job: Job, { force = false }: { force?: boolean } 
     _onJobCompleted(job);
   } catch (err) {
     console.error(`[workflow] error handling job completion for job ${job.id} (workflow=${job.workflow_id}, phase=${job.workflow_phase}, cycle=${job.workflow_cycle}):`, err);
-    Sentry.captureException(err, { tags: { workflow_id: job.workflow_id ?? undefined, phase: job.workflow_phase ?? undefined, cycle: job.workflow_cycle != null ? String(job.workflow_cycle) : undefined } });
+    captureWithContext(err, { job_id: job.id, workflow_id: job.workflow_id ?? undefined, component: 'WorkflowManager' });
   }
 }
 
@@ -118,125 +118,149 @@ function _onJobCompleted(job: Job): void {
   // Phase-specific transitions
   switch (job.workflow_phase) {
     case 'assess': {
-      // After assess: validate plan was written, then move to review
-      const contractNote = queries.getNote(`workflow/${workflow.id}/contract`);
-      const missingArtifacts = [
-        !planNote?.value ? 'plan' : null,
-        !contractNote?.value ? 'contract' : null,
-      ].filter(Boolean) as string[];
-      if (missingArtifacts.length > 0) {
-        if (spawnRepairJob(workflow, 'assess', job.workflow_cycle ?? 0, missingArtifacts)) return;
-        const assessReason = `Assess phase completed but missing ${missingArtifacts.join(', ')}`;
-        console.log(`[workflow ${workflow.id}] ${assessReason} — marking blocked`);
+      try {
+        // After assess: validate plan was written, then move to review
+        const contractNote = queries.getNote(`workflow/${workflow.id}/contract`);
+        const missingArtifacts = [
+          !planNote?.value ? 'plan' : null,
+          !contractNote?.value ? 'contract' : null,
+        ].filter(Boolean) as string[];
+        if (missingArtifacts.length > 0) {
+          if (spawnRepairJob(workflow, 'assess', job.workflow_cycle ?? 0, missingArtifacts)) return;
+          const assessReason = `Assess phase completed but missing ${missingArtifacts.join(', ')}`;
+          console.log(`[workflow ${workflow.id}] ${assessReason} — marking blocked`);
+          updateAndEmit(workflow.id, {
+            status: 'blocked',
+            current_phase: 'assess' as WorkflowPhase,
+            blocked_reason: assessReason,
+          });
+          return;
+        }
+        // Plan and contract exist, but check that the plan has actual milestones.
+        // A 0-milestone plan causes wasted review→implement cycles until max_cycles.
+        if (milestones.total === 0) {
+          if (spawnRepairJob(workflow, 'assess', job.workflow_cycle ?? 0, ['plan'])) return;
+          const zeroReason = 'Assess phase produced a plan with no milestones';
+          console.log(`[workflow ${workflow.id}] ${zeroReason} — marking blocked`);
+          updateAndEmit(workflow.id, {
+            status: 'blocked',
+            current_phase: 'assess' as WorkflowPhase,
+            blocked_reason: zeroReason,
+          });
+          return;
+        }
         updateAndEmit(workflow.id, {
-          status: 'blocked',
-          current_phase: 'assess' as WorkflowPhase,
-          blocked_reason: assessReason,
+          milestones_total: milestones.total,
+          milestones_done: milestones.done,
+          current_cycle: 1,
         });
+        spawnPhaseJob(queries.getWorkflowById(workflow.id)!, 'review', 1);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[workflow ${workflow.id}] error in assess handler (cycle ${job.workflow_cycle}):`, err);
+        captureWithContext(err, { job_id: job.id, workflow_id: workflow.id, component: 'WorkflowManager' });
+        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'assess' as WorkflowPhase, blocked_reason: `Internal error in assess handler: ${errMsg}` });
         return;
       }
-      // Plan and contract exist, but check that the plan has actual milestones.
-      // A 0-milestone plan causes wasted review→implement cycles until max_cycles.
-      if (milestones.total === 0) {
-        if (spawnRepairJob(workflow, 'assess', job.workflow_cycle ?? 0, ['plan'])) return;
-        const zeroReason = 'Assess phase produced a plan with no milestones';
-        console.log(`[workflow ${workflow.id}] ${zeroReason} — marking blocked`);
-        updateAndEmit(workflow.id, {
-          status: 'blocked',
-          current_phase: 'assess' as WorkflowPhase,
-          blocked_reason: zeroReason,
-        });
-        return;
-      }
-      updateAndEmit(workflow.id, {
-        milestones_total: milestones.total,
-        milestones_done: milestones.done,
-        current_cycle: 1,
-      });
-      spawnPhaseJob(queries.getWorkflowById(workflow.id)!, 'review', 1);
       break;
     }
 
     case 'review': {
-      if (!planNote?.value) {
-        if (spawnRepairJob(workflow, 'review', job.workflow_cycle ?? workflow.current_cycle, ['plan'])) return;
-        const reviewReason = 'Review phase completed but plan note was deleted or empty';
-        console.log(`[workflow ${workflow.id}] ${reviewReason} — marking blocked`);
-        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'review' as WorkflowPhase, blocked_reason: reviewReason });
+      try {
+        if (!planNote?.value) {
+          if (spawnRepairJob(workflow, 'review', job.workflow_cycle ?? workflow.current_cycle, ['plan'])) return;
+          const reviewReason = 'Review phase completed but plan note was deleted or empty';
+          console.log(`[workflow ${workflow.id}] ${reviewReason} — marking blocked`);
+          updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'review' as WorkflowPhase, blocked_reason: reviewReason });
+          return;
+        }
+        // After review: update milestones (reviewer may have added/removed), then implement
+        updateAndEmit(workflow.id, {
+          milestones_total: milestones.total,
+          milestones_done: milestones.done,
+        });
+        const updated = queries.getWorkflowById(workflow.id)!;
+        if (milestones.total > 0 && milestones.done >= milestones.total) {
+          console.log(`[workflow ${workflow.id}] all milestones complete after review — marking complete`);
+          updateAndEmit(workflow.id, { status: 'complete', current_phase: 'idle' as WorkflowPhase });
+          finalizeWorkflow(queries.getWorkflowById(workflow.id)!);
+        } else {
+          spawnPhaseJob(updated, 'implement', updated.current_cycle);
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[workflow ${workflow.id}] error in review handler (cycle ${job.workflow_cycle}):`, err);
+        captureWithContext(err, { job_id: job.id, workflow_id: workflow.id, component: 'WorkflowManager' });
+        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'review' as WorkflowPhase, blocked_reason: `Internal error in review handler: ${errMsg}` });
         return;
-      }
-      // After review: update milestones (reviewer may have added/removed), then implement
-      updateAndEmit(workflow.id, {
-        milestones_total: milestones.total,
-        milestones_done: milestones.done,
-      });
-      const updated = queries.getWorkflowById(workflow.id)!;
-      if (milestones.total > 0 && milestones.done >= milestones.total) {
-        console.log(`[workflow ${workflow.id}] all milestones complete after review — marking complete`);
-        updateAndEmit(workflow.id, { status: 'complete', current_phase: 'idle' as WorkflowPhase });
-        finalizeWorkflow(queries.getWorkflowById(workflow.id)!);
-      } else {
-        spawnPhaseJob(updated, 'implement', updated.current_cycle);
       }
       break;
     }
 
     case 'implement': {
-      // After implement: update milestones, check if done or advance to next cycle
-      updateAndEmit(workflow.id, {
-        milestones_total: milestones.total,
-        milestones_done: milestones.done,
-      });
-      const updated = queries.getWorkflowById(workflow.id)!;
+      try {
+        // After implement: update milestones, check if done or advance to next cycle
+        updateAndEmit(workflow.id, {
+          milestones_total: milestones.total,
+          milestones_done: milestones.done,
+        });
+        const updated = queries.getWorkflowById(workflow.id)!;
 
-      if (milestones.total > 0 && milestones.done >= milestones.total) {
-        console.log(`[workflow ${workflow.id}] all ${milestones.total} milestones complete — marking complete`);
-        updateAndEmit(workflow.id, { status: 'complete', current_phase: 'idle' as WorkflowPhase });
-        finalizeWorkflow(queries.getWorkflowById(workflow.id)!);
-      } else if (updated.current_cycle >= updated.max_cycles) {
-        // Max cycles reached but milestones remain — block instead of completing.
-        // Marking as "complete" with unchecked milestones is misleading and prevents
-        // the user from resuming. Block so they can increase max_cycles and continue.
-        console.log(`[workflow ${workflow.id}] reached max cycles (${updated.max_cycles}) with ${milestones.done}/${milestones.total} milestones — marking blocked (not complete)`);
-        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'idle' as WorkflowPhase, blocked_reason: `Reached max cycles (${updated.max_cycles}) with ${milestones.done}/${milestones.total} milestones complete` });
-        // Create a draft PR for partial work so it's not lost
-        if (milestones.done > 0) {
-          const latestWf = queries.getWorkflowById(workflow.id)!;
-          pushAndCreatePr(latestWf, true);
-        }
-      } else {
-        // Zero-progress detection: if milestones_done didn't increase during this implement
-        // cycle, track consecutive zero-progress cycles and block after 2 to avoid burning
-        // max_cycles on an agent that can't make progress.
-        const preImplKey = `workflow/${workflow.id}/pre-implement-milestones/${updated.current_cycle}`;
-        const preImplNote = queries.getNote(preImplKey);
-        const zeroProgressKey = `workflow/${workflow.id}/zero-progress-count`;
-
-        if (preImplNote) {
-          const preImplDone = parseInt(preImplNote.value, 10);
-          if (milestones.done <= preImplDone) {
-            // No progress this cycle
-            const prevCount = parseInt(queries.getNote(zeroProgressKey)?.value ?? '0', 10);
-            const newCount = prevCount + 1;
-            const MAX_ZERO_PROGRESS = 2;
-            if (newCount >= MAX_ZERO_PROGRESS) {
-              const zpReason = `${newCount} consecutive implement cycles with no milestone progress (${milestones.done}/${milestones.total} complete)`;
-              console.log(`[workflow ${workflow.id}] ${zpReason} — marking blocked`);
-              updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'implement' as WorkflowPhase, blocked_reason: zpReason });
-              break;
-            }
-            queries.upsertNote(zeroProgressKey, String(newCount), null);
-            console.log(`[workflow ${workflow.id}] zero-progress implement cycle ${newCount}/${MAX_ZERO_PROGRESS} (${milestones.done}/${milestones.total})`);
-          } else {
-            // Progress was made — reset counter
-            queries.upsertNote(zeroProgressKey, '0', null);
+        if (milestones.total > 0 && milestones.done >= milestones.total) {
+          console.log(`[workflow ${workflow.id}] all ${milestones.total} milestones complete — marking complete`);
+          updateAndEmit(workflow.id, { status: 'complete', current_phase: 'idle' as WorkflowPhase });
+          finalizeWorkflow(queries.getWorkflowById(workflow.id)!);
+        } else if (updated.current_cycle >= updated.max_cycles) {
+          // Max cycles reached but milestones remain — block instead of completing.
+          // Marking as "complete" with unchecked milestones is misleading and prevents
+          // the user from resuming. Block so they can increase max_cycles and continue.
+          console.log(`[workflow ${workflow.id}] reached max cycles (${updated.max_cycles}) with ${milestones.done}/${milestones.total} milestones — marking blocked (not complete)`);
+          updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'idle' as WorkflowPhase, blocked_reason: `Reached max cycles (${updated.max_cycles}) with ${milestones.done}/${milestones.total} milestones complete` });
+          // Create a draft PR for partial work so it's not lost
+          if (milestones.done > 0) {
+            const latestWf = queries.getWorkflowById(workflow.id)!;
+            pushAndCreatePr(latestWf, true);
           }
-        }
+        } else {
+          // Zero-progress detection: if milestones_done didn't increase during this implement
+          // cycle, track consecutive zero-progress cycles and block after 2 to avoid burning
+          // max_cycles on an agent that can't make progress.
+          const preImplKey = `workflow/${workflow.id}/pre-implement-milestones/${updated.current_cycle}`;
+          const preImplNote = queries.getNote(preImplKey);
+          const zeroProgressKey = `workflow/${workflow.id}/zero-progress-count`;
 
-        // Advance to next cycle's review phase
-        const nextCycle = updated.current_cycle + 1;
-        updateAndEmit(workflow.id, { current_cycle: nextCycle });
-        spawnPhaseJob(queries.getWorkflowById(workflow.id)!, 'review', nextCycle);
+          if (preImplNote) {
+            const preImplDone = parseInt(preImplNote.value, 10);
+            if (milestones.done <= preImplDone) {
+              // No progress this cycle
+              const prevCount = parseInt(queries.getNote(zeroProgressKey)?.value ?? '0', 10);
+              const newCount = prevCount + 1;
+              const MAX_ZERO_PROGRESS = 2;
+              if (newCount >= MAX_ZERO_PROGRESS) {
+                const zpReason = `${newCount} consecutive implement cycles with no milestone progress (${milestones.done}/${milestones.total} complete)`;
+                console.log(`[workflow ${workflow.id}] ${zpReason} — marking blocked`);
+                updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'implement' as WorkflowPhase, blocked_reason: zpReason });
+                break;
+              }
+              queries.upsertNote(zeroProgressKey, String(newCount), null);
+              console.log(`[workflow ${workflow.id}] zero-progress implement cycle ${newCount}/${MAX_ZERO_PROGRESS} (${milestones.done}/${milestones.total})`);
+            } else {
+              // Progress was made — reset counter
+              queries.upsertNote(zeroProgressKey, '0', null);
+            }
+          }
+
+          // Advance to next cycle's review phase
+          const nextCycle = updated.current_cycle + 1;
+          updateAndEmit(workflow.id, { current_cycle: nextCycle });
+          spawnPhaseJob(queries.getWorkflowById(workflow.id)!, 'review', nextCycle);
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[workflow ${workflow.id}] error in implement handler (cycle ${job.workflow_cycle}):`, err);
+        captureWithContext(err, { job_id: job.id, workflow_id: workflow.id, component: 'WorkflowManager' });
+        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'implement' as WorkflowPhase, blocked_reason: `Internal error in implement handler: ${errMsg}` });
+        return;
       }
       break;
     }
