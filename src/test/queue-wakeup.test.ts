@@ -25,6 +25,7 @@ vi.mock('../server/socket/SocketManager.js', () => createSocketMock());
 vi.mock('../server/orchestrator/AgentRunner.js', () => ({
   runAgent: vi.fn(),
   getLogPath: vi.fn(() => '/tmp/test-log'),
+  _resetCompletedJobsForTest: vi.fn(),
 }));
 
 // Mock PtyManager (prevent real tmux sessions)

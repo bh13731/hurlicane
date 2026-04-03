@@ -14,6 +14,12 @@ export async function finishJobHandler(
   const agentWithJob = queries.getAgentWithJob(agentId);
   if (!agentWithJob) return JSON.stringify({ error: 'Agent not found' });
 
+  // Idempotency: if agent is already in a terminal state, skip processing
+  const TERMINAL = ['done', 'failed', 'cancelled'];
+  if (agentWithJob.agent?.status && TERMINAL.includes(agentWithJob.agent.status)) {
+    return JSON.stringify({ ok: true, message: 'Already completed.' });
+  }
+
   const { job } = agentWithJob;
 
   // Store result as a synthetic result event so getAgentResultText can find it

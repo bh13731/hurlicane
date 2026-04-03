@@ -172,6 +172,14 @@ const _tailers = new Map<string, { watcher?: fs.FSWatcher; interval: NodeJS.Time
 // Agents that were explicitly cancelled — handleAgentExit checks this to avoid overwriting 'cancelled' status
 export const cancelledAgents = new Set<string>();
 
+// Track agents whose handleJobCompletion has already run to prevent double-processing
+// (e.g. race between finishJobHandler and handleAgentExit). Same pattern as WorkflowManager._processedJobs.
+const _completedJobs = new Set<string>();
+
+export function _resetCompletedJobsForTest(): void {
+  _completedJobs.clear();
+}
+
 export function getLogPath(agentId: string): string {
   return path.join(LOGS_DIR, `${agentId}.ndjson`);
 }
@@ -583,6 +591,19 @@ export async function handleJobCompletion(
   job: Job,
   status: 'done' | 'failed',
 ): Promise<void> {
+  // Dedup guard: prevent double-processing if both finishJobHandler and handleAgentExit fire
+  if (_completedJobs.has(agentId)) {
+    console.log(`[agent ${agentId}] handleJobCompletion already processed, skipping duplicate`);
+    return;
+  }
+  _completedJobs.add(agentId);
+  // Cap the set to prevent unbounded growth — keep the newer half when exceeding 500
+  if (_completedJobs.size > 500) {
+    const entries = Array.from(_completedJobs);
+    _completedJobs.clear();
+    for (const id of entries.slice(entries.length >> 1)) _completedJobs.add(id);
+  }
+
   // Clean up git checkpoint tag created before dispatch
   const workDir = job.work_dir ?? process.cwd();
   try {

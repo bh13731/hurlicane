@@ -8,6 +8,7 @@ vi.mock('../../server/socket/SocketManager.js', () => createSocketMock());
 vi.mock('../../server/orchestrator/AgentRunner.js', () => ({
   runAgent: vi.fn(),
   cancelledAgents: new Set(),
+  _resetCompletedJobsForTest: vi.fn(),
 }));
 vi.mock('../../server/orchestrator/PtyManager.js', () => ({
   disconnectAgent: vi.fn(),

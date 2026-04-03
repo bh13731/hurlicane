@@ -18,6 +18,7 @@ vi.mock('../server/orchestrator/AgentRunner.js', () => ({
   reattachAgent: vi.fn(),
   getLogPath: vi.fn(() => '/dev/null'),
   cancelledAgents: new Set(),
+  _resetCompletedJobsForTest: vi.fn(),
 }));
 
 vi.mock('../server/orchestrator/PtyManager.js', () => ({
