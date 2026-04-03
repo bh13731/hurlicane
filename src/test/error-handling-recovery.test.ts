@@ -243,6 +243,7 @@ describe('WorkflowManager: socket error isolation', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await cleanupTestDb();
   });
 
