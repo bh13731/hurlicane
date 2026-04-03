@@ -5,7 +5,7 @@ import * as socket from '../socket/SocketManager.js';
 import { resumeWorkflow, cleanupWorktree, pushAndCreatePr, getPrCreationOutcome } from '../orchestrator/WorkflowManager.js';
 import { cancelledAgents } from '../orchestrator/AgentRunner.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
-import { isTmuxSessionAlive, saveSnapshot } from '../orchestrator/PtyManager.js';
+import { disconnectAgent, isTmuxSessionAlive, saveSnapshot } from '../orchestrator/PtyManager.js';
 import { createAutonomousAgentRun } from '../orchestrator/AutonomousAgentRunManager.js';
 import type { CreateAutonomousAgentRunRequest, WorkflowPhase } from '../../shared/types.js';
 
@@ -123,6 +123,7 @@ router.post('/:id/wrap-up', (req, res) => {
           try { execFileSync('tmux', ['kill-session', '-t', `orchestrator-${agent.id}`], { stdio: 'pipe' }); } catch { /* ok */ }
           queries.updateAgent(agent.id, { status: 'cancelled', finished_at: Date.now() });
           getFileLockRegistry().releaseAll(agent.id);
+          disconnectAgent(agent.id);
 
           // Timeout any pending question so the MCP ask_user call doesn't hang
           const pendingQ = queries.getPendingQuestion(agent.id);

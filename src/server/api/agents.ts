@@ -222,6 +222,7 @@ router.post('/:id/cancel', (req, res) => {
   queries.updateAgent(agent.id, { status: 'cancelled', finished_at: Date.now() });
   queries.updateJobStatus(agent.job_id, 'cancelled');
   getFileLockRegistry().releaseAll(agent.id);
+  disconnectAgent(agent.id);
 
   const updated = queries.getAgentWithJob(agent.id)!;
   socket.emitAgentUpdate(updated);
@@ -269,6 +270,7 @@ router.post('/:id/requeue', (req, res) => {
   queries.updateAgent(agent.id, { status: 'cancelled', finished_at: Date.now() });
   queries.updateJobStatus(agent.job_id, 'queued');
   getFileLockRegistry().releaseAll(agent.id);
+  disconnectAgent(agent.id);
 
   const updated = queries.getAgentWithJob(agent.id)!;
   socket.emitAgentUpdate(updated);

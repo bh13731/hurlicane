@@ -177,8 +177,6 @@ describe('buildReviewPrompt adversarial quality bar', () => {
       expect(stepHeaders[i]).toBe(i + 1);
     }
   });
-
-
   it('cycle 2+ (code review) requires at least 2 concrete issues', () => {
     const wf = makeWorkflow();
     const ctx: InlineContext = {

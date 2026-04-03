@@ -17,6 +17,7 @@ vi.mock('../../server/orchestrator/PtyManager.js', () => ({
   getSnapshot: vi.fn(() => null),
   attachPty: vi.fn(),
   isTmuxSessionAlive: vi.fn(() => false),
+  saveSnapshot: vi.fn(),
   startInteractiveAgent: vi.fn(),
 }));
 vi.mock('../../server/orchestrator/FileLockRegistry.js', () => ({
@@ -241,6 +242,44 @@ describe('POST /api/agents/:id/dismiss-warnings', () => {
   it('returns 404 for unknown agent', async () => {
     const res = await request(app).post('/api/agents/nonexistent/dismiss-warnings');
     expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/agents/:id/cancel', () => {
+  beforeEach(async () => { await setupTestDb(); vi.clearAllMocks(); app = createTestApp(); });
+  afterEach(async () => { await cleanupTestDb(); });
+
+  it('disconnects PTY state after cancelling a running agent (Fix-C20b)', async () => {
+    const { disconnectAgent } = await import('../../server/orchestrator/PtyManager.js');
+    const { getFileLockRegistry } = await import('../../server/orchestrator/FileLockRegistry.js');
+    const job = await insertTestJob({ status: 'running' });
+    const agent = await insertAgent(job.id, { status: 'running' });
+
+    const res = await request(app).post(`/api/agents/${agent.id}/cancel`);
+
+    expect(res.status).toBe(200);
+    const registry = vi.mocked(getFileLockRegistry).mock.results[0]?.value;
+    expect(registry.releaseAll).toHaveBeenCalledWith(agent.id);
+    expect(vi.mocked(disconnectAgent)).toHaveBeenCalledWith(agent.id);
+  });
+});
+
+describe('POST /api/agents/:id/requeue', () => {
+  beforeEach(async () => { await setupTestDb(); vi.clearAllMocks(); app = createTestApp(); });
+  afterEach(async () => { await cleanupTestDb(); });
+
+  it('disconnects PTY state after requeueing a running agent (Fix-C20b)', async () => {
+    const { disconnectAgent } = await import('../../server/orchestrator/PtyManager.js');
+    const { getFileLockRegistry } = await import('../../server/orchestrator/FileLockRegistry.js');
+    const job = await insertTestJob({ status: 'running' });
+    const agent = await insertAgent(job.id, { status: 'running' });
+
+    const res = await request(app).post(`/api/agents/${agent.id}/requeue`);
+
+    expect(res.status).toBe(200);
+    const registry = vi.mocked(getFileLockRegistry).mock.results[0]?.value;
+    expect(registry.releaseAll).toHaveBeenCalledWith(agent.id);
+    expect(vi.mocked(disconnectAgent)).toHaveBeenCalledWith(agent.id);
   });
 });
 

@@ -415,7 +415,7 @@ describe('POST /api/workflows/:id/wrap-up', () => {
     const { pushAndCreatePr, getPrCreationOutcome } = await import('../../server/orchestrator/WorkflowManager.js');
     const { cancelledAgents } = await import('../../server/orchestrator/AgentRunner.js');
     const { getFileLockRegistry } = await import('../../server/orchestrator/FileLockRegistry.js');
-    const { isTmuxSessionAlive, saveSnapshot } = await import('../../server/orchestrator/PtyManager.js');
+    const { disconnectAgent, isTmuxSessionAlive, saveSnapshot } = await import('../../server/orchestrator/PtyManager.js');
     const { execFileSync } = await import('child_process');
     const queries = await import('../../server/db/queries.js');
     const socket = await import('../../server/socket/SocketManager.js');
@@ -468,6 +468,7 @@ describe('POST /api/workflows/:id/wrap-up', () => {
 
       const registry = vi.mocked(getFileLockRegistry).mock.results[0]?.value;
       expect(registry.releaseAll).toHaveBeenCalledWith(agent.id);
+      expect(vi.mocked(disconnectAgent)).toHaveBeenCalledWith(agent.id);
 
       const updatedAgent = queries.getAgentById(agent.id);
       const updatedJob = queries.getJobById(job.id);
