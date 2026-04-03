@@ -1359,17 +1359,24 @@ function isMissingRemoteRefError(err: unknown): boolean {
 }
 
 function countCommitsAgainstBaseRef(cwd: string, baseRef: string): number | null {
+  // Verify ref exists before counting — avoids masking real git failures
+  // (corrupt objects, ambiguous refs) as "ref missing"
   try {
-    const count = execSync(
-      `git rev-list --count HEAD ${JSON.stringify(`^${baseRef}`)}`,
-      { cwd, stdio: 'pipe', timeout: 10000 }
-    ).toString().trim();
-    const parsed = parseInt(count, 10);
-    return Number.isFinite(parsed) ? parsed : 0;
-  } catch (err) {
-    if (isMissingRemoteRefError(err)) return null;
-    throw err;
+    execSync(`git rev-parse --verify ${JSON.stringify(baseRef)}`, {
+      cwd, stdio: 'pipe', timeout: 5000,
+    });
+  } catch {
+    // ref doesn't exist — caller should try next candidate
+    return null;
   }
+
+  // ref exists — any rev-list failure is unexpected, let it propagate
+  const count = execSync(
+    `git rev-list --count HEAD ${JSON.stringify(`^${baseRef}`)}`,
+    { cwd, stdio: 'pipe', timeout: 10000 }
+  ).toString().trim();
+  const parsed = parseInt(count, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export function countBranchCommits(cwd: string): number {

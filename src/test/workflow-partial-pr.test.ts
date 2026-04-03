@@ -595,8 +595,9 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
       if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
         throw new Error('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref');
       }
-      if (cmd.includes('git rev-list --count HEAD')) {
-        throw new Error('fatal: bad revision');
+      // rev-parse --verify for origin/HEAD fails (ref doesn't exist)
+      if (cmd === 'git rev-parse --verify "origin/HEAD"') {
+        throw new Error('fatal: Needed a single revision');
       }
       return Buffer.from('');
     });
@@ -606,7 +607,7 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
     expect(countBranchCommits('/tmp/wt')).toBe(0);
     expect(execSyncCalls.map(c => c.cmd)).toEqual([
       'git symbolic-ref refs/remotes/origin/HEAD',
-      'git rev-list --count HEAD "^origin/HEAD"',
+      'git rev-parse --verify "origin/HEAD"',
     ]);
   });
 
@@ -617,11 +618,12 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
       if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
         return Buffer.from('refs/remotes/origin/main\n');
       }
-      if (cmd === 'git rev-list --count HEAD "^origin/main"') {
-        throw new Error('fatal: bad revision ^origin/main');
+      // rev-parse --verify for both candidates fails (refs don't exist)
+      if (cmd === 'git rev-parse --verify "origin/main"') {
+        throw new Error('fatal: Needed a single revision');
       }
-      if (cmd === 'git rev-list --count HEAD "^origin/HEAD"') {
-        throw new Error('fatal: bad revision ^origin/HEAD');
+      if (cmd === 'git rev-parse --verify "origin/HEAD"') {
+        throw new Error('fatal: Needed a single revision');
       }
       return Buffer.from('');
     });
@@ -631,8 +633,8 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
     expect(countBranchCommits('/tmp/wt')).toBe(0);
     expect(execSyncCalls.map(c => c.cmd)).toEqual([
       'git symbolic-ref refs/remotes/origin/HEAD',
-      'git rev-list --count HEAD "^origin/main"',
-      'git rev-list --count HEAD "^origin/HEAD"',
+      'git rev-parse --verify "origin/main"',
+      'git rev-parse --verify "origin/HEAD"',
     ]);
   });
 
@@ -642,6 +644,9 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
       if (typeof cmd !== 'string') return Buffer.from('');
       if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
         return Buffer.from('refs/remotes/origin/main\n');
+      }
+      if (cmd === 'git rev-parse --verify "origin/main"') {
+        return Buffer.from('abc1234\n');
       }
       if (cmd === 'git rev-list --count HEAD "^origin/main"') {
         return Buffer.from('2\n');
@@ -654,6 +659,7 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
     expect(countBranchCommits('/tmp/wt')).toBe(2);
     expect(execSyncCalls.map(c => c.cmd)).toEqual([
       'git symbolic-ref refs/remotes/origin/HEAD',
+      'git rev-parse --verify "origin/main"',
       'git rev-list --count HEAD "^origin/main"',
     ]);
   });
@@ -665,8 +671,8 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
       if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
         throw new Error('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref');
       }
-      if (cmd === 'git rev-list --count HEAD "^origin/HEAD"') {
-        throw new Error('fatal: bad revision ^origin/HEAD');
+      if (cmd === 'git rev-parse --verify "origin/HEAD"') {
+        throw new Error('fatal: Needed a single revision');
       }
       return Buffer.from('');
     });
@@ -675,5 +681,28 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
     const wf = makeWorkflow({ worktree_path: '/tmp/wt', work_dir: '/tmp/test' });
 
     expect(getPrCreationOutcome(wf, null)).toBe('no_publishable_commits');
+  });
+
+  it('re-throws rev-list errors when rev-parse succeeds (Fix-C10a)', async () => {
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+        return Buffer.from('refs/remotes/origin/main\n');
+      }
+      // ref exists
+      if (cmd === 'git rev-parse --verify "origin/main"') {
+        return Buffer.from('abc1234\n');
+      }
+      // but rev-list fails (e.g. corrupt pack object)
+      if (cmd === 'git rev-list --count HEAD "^origin/main"') {
+        throw new Error('fatal: bad object abc1234');
+      }
+      return Buffer.from('');
+    });
+
+    const { countBranchCommits } = await import('../server/orchestrator/WorkflowManager.js');
+
+    expect(() => countBranchCommits('/tmp/wt')).toThrow('fatal: bad object abc1234');
   });
 });
