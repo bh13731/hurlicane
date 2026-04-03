@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   setupTestDb,
   cleanupTestDb,
+  createSocketMock,
   insertTestProject,
   insertTestWorkflow,
   insertTestJob,
@@ -18,28 +19,87 @@ import {
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
-// Capture writeFileSync calls to verify diagnostic content
-const writeFileSyncSpy = vi.fn();
-const mkdirSyncSpy = vi.fn();
-
-vi.mock(import('fs'), async (importOriginal) => {
-  const actual = await importOriginal();
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
   return {
     ...actual,
-    writeFileSync: writeFileSyncSpy,
-    mkdirSync: mkdirSyncSpy,
+    writeFileSync: vi.fn(),
+    mkdirSync: vi.fn(),
     readFileSync: vi.fn(() => ''),
     existsSync: vi.fn(() => true),
   };
 });
 
-// Need to mock child_process for execSync (git status/log in diagnostic)
 vi.mock('child_process', () => ({
   exec: vi.fn(),
   execSync: vi.fn(() => Buffer.from('')),
 }));
 
+vi.mock('../server/socket/SocketManager.js', () => createSocketMock());
+
+vi.mock('../server/orchestrator/WorkflowPrompts.js', () => ({
+  buildAssessPrompt: vi.fn(() => 'mock'),
+  buildReviewPrompt: vi.fn(() => 'mock'),
+  buildImplementPrompt: vi.fn(() => 'mock'),
+  buildWorkflowRepairPrompt: vi.fn(() => 'mock'),
+}));
+
+vi.mock('../server/orchestrator/ModelClassifier.js', () => ({
+  resolveModel: vi.fn(async (job: any) => job.model ?? 'claude-sonnet-4-6'),
+  getAvailableModel: vi.fn((m: string) => m),
+  getFallbackModel: vi.fn(() => null),
+  getAlternateProviderModel: vi.fn(() => null),
+  markModelRateLimited: vi.fn(),
+  markProviderRateLimited: vi.fn(),
+  getModelProvider: vi.fn(() => 'anthropic'),
+  _resetForTest: vi.fn(),
+}));
+
+vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
+  classifyJobFailure: vi.fn(() => 'unknown'),
+  isFallbackEligibleFailure: vi.fn(() => false),
+  isSameModelRetryEligible: vi.fn(() => false),
+  shouldMarkProviderUnavailable: vi.fn(() => false),
+  _resetWarnedUnclassifiedForTest: vi.fn(),
+}));
+
+vi.mock('../server/orchestrator/CompletionChecks.js', () => ({
+  runCompletionChecks: vi.fn(() => null),
+}));
+
+vi.mock('../server/orchestrator/RetryManager.js', () => ({
+  handleRetry: vi.fn(),
+}));
+
+vi.mock('../server/orchestrator/MemoryTriager.js', () => ({
+  triageLearnings: vi.fn(async () => {}),
+}));
+
+vi.mock('../server/orchestrator/RecoveryLedger.js', () => ({
+  claimRecovery: vi.fn(),
+  clearRecoveryState: vi.fn(),
+  _resetForTest: vi.fn(),
+}));
+
+vi.mock('../server/orchestrator/PrCreator.js', () => ({
+  createPrForJob: vi.fn(async () => null),
+  pushBranchForFailedJob: vi.fn(),
+  pushAndCreatePr: vi.fn(() => null),
+}));
+
+vi.mock('../server/orchestrator/EyeConfig.js', () => ({
+  buildEyePrompt: vi.fn(() => 'mock eye prompt'),
+  isEyeJob: vi.fn(() => false),
+}));
+
+vi.mock('../server/orchestrator/FileLockRegistry.js', () => ({
+  getFileLockRegistry: vi.fn(() => ({
+    releaseAll: vi.fn(),
+  })),
+}));
+
 let queries: typeof import('../server/db/queries.js');
+let fs: typeof import('fs');
 
 describe('writeBlockedDiagnostic', () => {
   let project: any;
@@ -47,9 +107,10 @@ describe('writeBlockedDiagnostic', () => {
   beforeEach(async () => {
     await setupTestDb();
     queries = await import('../server/db/queries.js');
+    fs = await import('fs');
     project = await insertTestProject();
-    writeFileSyncSpy.mockClear();
-    mkdirSyncSpy.mockClear();
+    vi.mocked(fs.writeFileSync).mockClear();
+    vi.mocked(fs.mkdirSync).mockClear();
   });
 
   afterEach(async () => {
@@ -67,11 +128,9 @@ describe('writeBlockedDiagnostic', () => {
       current_cycle: 3,
     });
 
-    // Update workflow with blocked_reason (insertTestWorkflow doesn't support it directly)
     queries.updateWorkflow(workflow.id, { blocked_reason: 'zero_progress_exceeded' } as any);
     const updated = queries.getWorkflowById(workflow.id)!;
 
-    // Insert a done job and a failed job
     await insertTestJob({
       workflow_id: workflow.id,
       workflow_phase: 'implement',
@@ -88,7 +147,6 @@ describe('writeBlockedDiagnostic', () => {
       title: 'Implement cycle 3',
     });
 
-    // Insert an agent for the failed job
     queries.insertAgent({
       id: 'agent-newest-111',
       job_id: failedJob.id,
@@ -107,24 +165,24 @@ describe('writeBlockedDiagnostic', () => {
 
     writeBlockedDiagnostic(updated);
 
-    expect(mkdirSyncSpy).toHaveBeenCalledWith(
+    expect(fs.mkdirSync).toHaveBeenCalledWith(
       expect.stringContaining('blocked-diagnostics'),
       { recursive: true },
     );
-    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
+    expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
 
-    const [filePath, content] = writeFileSyncSpy.mock.calls[0];
-    expect(filePath).toContain('blocked-diagnostics/');
-    expect(filePath).toContain(workflow.id.slice(0, 8));
-    expect(filePath).toMatch(/\.md$/);
+    const [filePath, content] = vi.mocked(fs.writeFileSync).mock.calls[0];
+    expect(String(filePath)).toContain('blocked-diagnostics/');
+    expect(String(filePath)).toContain(workflow.id.slice(0, 8));
+    expect(String(filePath)).toMatch(/\.md$/);
 
-    // Verify content includes key fields
-    expect(content).toContain('My Test Workflow');
-    expect(content).toContain('zero_progress_exceeded');
-    expect(content).toContain('implement');
-    expect(content).toContain('Implement cycle 3');
-    expect(content).toContain('Rate limit exceeded');
-    expect(content).toContain('agent-ne'); // agent ID sliced to 8 chars
+    const md = String(content);
+    expect(md).toContain('My Test Workflow');
+    expect(md).toContain('zero_progress_exceeded');
+    expect(md).toContain('implement');
+    expect(md).toContain('Implement cycle 3');
+    expect(md).toContain('Rate limit exceeded');
+    expect(md).toContain('agent-ne'); // agent ID sliced to 8 chars
   });
 
   it('(b) uses most recent agent (agents[0] from DESC ordering) for failed job details', async () => {
@@ -145,7 +203,7 @@ describe('writeBlockedDiagnostic', () => {
       title: 'Failed job',
     });
 
-    // Insert TWO agents for the same job — older first, newer second
+    // Insert TWO agents — older first, newer second
     // getAgentsWithJobByJobId orders by started_at DESC, so agents[0] = newest
     queries.insertAgent({
       id: 'agent-old-xxxxxxx',
@@ -181,8 +239,8 @@ describe('writeBlockedDiagnostic', () => {
 
     writeBlockedDiagnostic(updated);
 
-    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
-    const content = writeFileSyncSpy.mock.calls[0][1] as string;
+    expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+    const content = String(vi.mocked(fs.writeFileSync).mock.calls[0][1]);
 
     // Should contain the NEW agent's error (most recent = agents[0] due to DESC ordering)
     expect(content).toContain('NEW agent error - should appear');
@@ -202,7 +260,6 @@ describe('writeBlockedDiagnostic', () => {
     queries.updateWorkflow(workflow.id, { blocked_reason: 'manual_block' } as any);
     const updated = queries.getWorkflowById(workflow.id)!;
 
-    // Only insert a done job — no failures
     await insertTestJob({
       workflow_id: workflow.id,
       workflow_phase: 'assess',
@@ -212,8 +269,8 @@ describe('writeBlockedDiagnostic', () => {
 
     writeBlockedDiagnostic(updated);
 
-    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
-    const content = writeFileSyncSpy.mock.calls[0][1] as string;
+    expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+    const content = String(vi.mocked(fs.writeFileSync).mock.calls[0][1]);
     expect(content).toContain('No Failed Jobs Workflow');
     expect(content).toContain('No failed jobs.');
   });
@@ -229,7 +286,6 @@ describe('writeBlockedDiagnostic', () => {
     queries.updateWorkflow(workflow.id, { blocked_reason: 'stuck' } as any);
     const updated = queries.getWorkflowById(workflow.id)!;
 
-    // Failed job but no agent inserted
     await insertTestJob({
       workflow_id: workflow.id,
       workflow_phase: 'implement',
@@ -237,11 +293,10 @@ describe('writeBlockedDiagnostic', () => {
       title: 'Orphan failed job',
     });
 
-    // Should not throw
     writeBlockedDiagnostic(updated);
 
-    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
-    const content = writeFileSyncSpy.mock.calls[0][1] as string;
+    expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+    const content = String(vi.mocked(fs.writeFileSync).mock.calls[0][1]);
     expect(content).toContain('No Agent Workflow');
     expect(content).toContain('Orphan failed job');
     expect(content).toContain('n/a'); // agent_id fallback

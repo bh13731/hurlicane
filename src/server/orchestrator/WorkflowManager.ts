@@ -1299,10 +1299,6 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
 export const BLOCKED_LOG_DIR = path.join(process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : './data', 'blocked-diagnostics');
 
 export function writeBlockedDiagnostic(workflow: Workflow): void {
-  // Skip in test environments and for test workflows created by agents running test suites
-  if (process.env.VITEST || process.env.NODE_ENV === 'test') return;
-  if (workflow.title === 'Test Workflow') return;
-
   mkdirSync(BLOCKED_LOG_DIR, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const filename = `${ts}_${workflow.id.slice(0, 8)}.md`;
