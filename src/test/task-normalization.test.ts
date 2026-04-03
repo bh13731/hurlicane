@@ -767,6 +767,24 @@ describe('taskToWorkflowRequest', () => {
     const result = taskToWorkflowRequest(req, matching);
     expect(result.task).toBe('x');
   });
+
+  it('ignores stale config with inflated iterations when canonical iterations is lower', () => {
+    // Request says iterations=5, stale config claims iterations=10
+    const req: CreateTaskRequest = { description: 'x', iterations: 5 };
+    const stale = { ...resolveTaskConfig(req), iterations: 10 };
+    const result = taskToWorkflowRequest(req, stale);
+    // Output must follow canonical (iterations=5) → maxCycles=5
+    expect(result.maxCycles).toBe(5);
+  });
+
+  it('ignores stale config with shrunk iterations when canonical iterations is higher', () => {
+    // Request says iterations=10, stale config claims iterations=2
+    const req: CreateTaskRequest = { description: 'x', iterations: 10 };
+    const stale = { ...resolveTaskConfig(req), iterations: 2 };
+    const result = taskToWorkflowRequest(req, stale);
+    // Output must follow canonical (iterations=10) → maxCycles=10
+    expect(result.maxCycles).toBe(10);
+  });
 });
 
 // ─── Round-trip: preset → resolve → convert determinism ─────────────────────

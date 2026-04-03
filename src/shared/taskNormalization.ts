@@ -243,13 +243,15 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
     throw new Error('scheduledAt is not supported for workflow tasks (iterations > 1)');
   }
 
+  // Always derive maxCycles from canonical config — a stale same-route config
+  // must not inflate or shrink the workflow cycle count.
   return {
     task: req.description,
     title: req.title,
     workDir: req.workDir,
     implementerModel: req.model,
     reviewerModel: req.reviewerModel,
-    maxCycles: cfg.iterations,
+    maxCycles: canonical.iterations,
     useWorktree: cfg.useWorktree,
     templateId: req.templateId,
     completionThreshold: req.completionThreshold,
