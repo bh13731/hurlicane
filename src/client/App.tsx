@@ -1,13 +1,12 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { Header } from './components/Header';
-import { AgentGrid } from './components/AgentGrid';
 import { AgentTerminal } from './components/AgentTerminal';
 import { WorkQueueSidebar } from './components/WorkQueueSidebar';
 import { FileLockMap } from './components/FileLockMap';
 import { JobLineagePanel } from './components/JobLineagePanel';
 import { RunningJobsPanel } from './components/RunningJobsPanel';
 import { EyePanel } from './components/EyePanel';
-import { AutonomousRunDashboard } from './components/AutonomousRunDashboard';
+import { TaskFeed } from './components/TaskFeed';
 
 // Lazy-loaded modal components (only rendered when toggled open)
 const TaskForm = lazy(() => import('./components/TaskForm').then(m => ({ default: m.TaskForm })));
@@ -282,16 +281,6 @@ export default function App() {
     return workflows;
   }, [workflows, activeProjectId]);
 
-  const singleRunAgents = useMemo(
-    () => filteredAgents.filter(agent => !agent.job.workflow_id),
-    [filteredAgents],
-  );
-
-  const queuedSingleJobs = useMemo(
-    () => filteredJobs.filter(job => job.status === 'queued' && !job.workflow_id),
-    [filteredJobs],
-  );
-
   const activeProjectName = useMemo(() => {
     if (!activeProjectId) return null;
     if (activeProjectId === '__archived__') return 'Archived';
@@ -458,32 +447,28 @@ export default function App() {
         </div>
 
         <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
-          {activeProjectId !== '__archived__' && (
-            <section className="dashboard-home-section">
-              <div className="dashboard-home-section-header">
-                <div>
-                  <h2 className="dashboard-home-section-title">Autonomous Runs</h2>
-                  <p className="dashboard-home-section-subtitle">Long-running assess, review, and implement runs with project-level status.</p>
-                </div>
-              </div>
-              <AutonomousRunDashboard
-                workflows={filteredWorkflows}
-                jobs={filteredJobs}
-                agents={agents}
-                now={dashboardNow}
-                onSelectWorkflow={setSelectedWorkflow}
-              />
-            </section>
-          )}
-
           <section className="dashboard-home-section">
             <div className="dashboard-home-section-header">
               <div>
-                <h2 className="dashboard-home-section-title">Single Jobs</h2>
-                <p className="dashboard-home-section-subtitle">Standalone jobs and interactive sessions that are not part of an autonomous run.</p>
+                <h2 className="dashboard-home-section-title">Tasks</h2>
+                <p className="dashboard-home-section-subtitle">All workflows and standalone jobs, grouped by urgency.</p>
               </div>
             </div>
-            <AgentGrid agents={singleRunAgents} queuedJobs={queuedSingleJobs} onSelectAgent={handleSelectAgent} onArchiveJob={handleArchiveJob} onArchiveAll={handleArchiveAll} templates={templates} selectedAgentId={selectedAgent?.id ?? null} ptyIdleAgentIds={ptyIdleAgents} isArchived={activeProjectId === '__archived__'} />
+            <TaskFeed
+              workflows={filteredWorkflows}
+              agents={filteredAgents}
+              allAgents={agents}
+              jobs={filteredJobs}
+              queuedJobs={filteredJobs.filter(j => j.status === 'queued')}
+              now={dashboardNow}
+              onSelectAgent={handleSelectAgent}
+              onSelectWorkflow={setSelectedWorkflow}
+              onArchiveJob={handleArchiveJob}
+              onArchiveAll={handleArchiveAll}
+              selectedAgentId={selectedAgent?.id ?? null}
+              ptyIdleAgentIds={ptyIdleAgents}
+              isArchived={activeProjectId === '__archived__'}
+            />
           </section>
           {activeProjectId === '__archived__' && archivedJobs.length < archivedTotal && (
             <div style={{ textAlign: 'center', padding: '12px' }}>
