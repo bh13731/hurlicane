@@ -476,21 +476,39 @@ describe('taskToJobRequest', () => {
     expect(withConfig.reviewConfig).toEqual({ models: ['codex'], auto: true });
   });
 
-  it('exact-match success: caller-supplied reviewConfig preserved as-is', () => {
+  it('exact-match success: caller-supplied reviewConfig preserved as-is (per-call mutation safety)', () => {
     // Exercises the req.reviewConfig ?? ... branch where the caller supplies their own config.
-    const customReview = Object.freeze({ models: ['gpt-4', 'codex'], auto: false });
-    const snapshot = JSON.parse(JSON.stringify(customReview));
-    const req: CreateTaskRequest = { description: 'custom review', review: true, reviewConfig: customReview };
-    const matching = resolveTaskConfig(req);
-    const withConfig = taskToJobRequest(req, matching);
-    const withoutConfig = taskToJobRequest(req);
-    expect(withConfig).toEqual(withoutConfig);
-    // The original input must not have been mutated by either call.
-    expect(customReview).toEqual(snapshot);
-    // Identity check: the returned reviewConfig must be the exact supplied object,
-    // not a rebuilt equivalent — pass-through semantics require reference identity.
-    expect(withConfig.reviewConfig).toBe(customReview);
-    expect(withoutConfig.reviewConfig).toBe(customReview);
+    // Each converter call gets its own fresh input and immediate pre/post snapshot so a
+    // transient mutation in one call cannot be masked by the other.
+
+    // --- with-config path: fresh objects, immediate assertion ---
+    const customReview1 = Object.freeze({ models: ['gpt-4', 'codex'], auto: false });
+    const snapshot1 = JSON.parse(JSON.stringify(customReview1));
+    const req1: CreateTaskRequest = { description: 'custom review', review: true, reviewConfig: customReview1 };
+    const matching1 = resolveTaskConfig(req1);
+    const withConfig = taskToJobRequest(req1, matching1);
+    // Assert immutability immediately after this single call.
+    expect(customReview1).toEqual(snapshot1);
+    expect(customReview1.models).toEqual(['gpt-4', 'codex']);
+    // Reference identity: pass-through semantics require the exact supplied object.
+    expect(withConfig.reviewConfig).toBe(customReview1);
+
+    // --- without-config path: separate fresh objects, immediate assertion ---
+    const customReview2 = Object.freeze({ models: ['gpt-4', 'codex'], auto: false });
+    const snapshot2 = JSON.parse(JSON.stringify(customReview2));
+    const req2: CreateTaskRequest = { description: 'custom review', review: true, reviewConfig: customReview2 };
+    const withoutConfig = taskToJobRequest(req2);
+    // Assert immutability immediately after this single call.
+    expect(customReview2).toEqual(snapshot2);
+    expect(customReview2.models).toEqual(['gpt-4', 'codex']);
+    // Reference identity for the no-config path too.
+    expect(withoutConfig.reviewConfig).toBe(customReview2);
+
+    // Both paths must produce equivalent derived output (modulo the distinct reviewConfig refs).
+    const { reviewConfig: rc1, ...rest1 } = withConfig;
+    const { reviewConfig: rc2, ...rest2 } = withoutConfig;
+    expect(rest1).toEqual(rest2);
+    expect(rc1).toEqual(rc2);
   });
 
   it('throws on stale config with review=true when canonical review is false', () => {
