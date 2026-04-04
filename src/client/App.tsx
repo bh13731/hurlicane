@@ -10,7 +10,7 @@ import { EyePanel } from './components/EyePanel';
 import { AutonomousRunDashboard } from './components/AutonomousRunDashboard';
 
 // Lazy-loaded modal components (only rendered when toggled open)
-const JobForm = lazy(() => import('./components/JobForm').then(m => ({ default: m.JobForm })));
+const TaskForm = lazy(() => import('./components/TaskForm').then(m => ({ default: m.TaskForm })));
 const TemplateManager = lazy(() => import('./components/TemplateManager').then(m => ({ default: m.TemplateManager })));
 const BatchTemplateManager = lazy(() => import('./components/BatchTemplateManager').then(m => ({ default: m.BatchTemplateManager })));
 const UsageModal = lazy(() => import('./components/UsageModal').then(m => ({ default: m.UsageModal })));
@@ -21,7 +21,6 @@ const ProjectSelector = lazy(() => import('./components/ProjectSelector').then(m
 const SettingsModal = lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
 const DebateForm = lazy(() => import('./components/DebateForm').then(m => ({ default: m.DebateForm })));
 const DebateDetailModal = lazy(() => import('./components/DebateDetailModal').then(m => ({ default: m.DebateDetailModal })));
-const WorkflowForm = lazy(() => import('./components/WorkflowForm').then(m => ({ default: m.WorkflowForm })));
 const WorkflowDetailModal = lazy(() => import('./components/WorkflowDetailModal').then(m => ({ default: m.WorkflowDetailModal })));
 const KnowledgeBaseModal = lazy(() => import('./components/KnowledgeBaseModal').then(m => ({ default: m.KnowledgeBaseModal })));
 import { useSocket } from './hooks/useSocket';
@@ -34,7 +33,7 @@ import { useWorkflows } from './hooks/useWorkflows';
 import { useToasts } from './hooks/useToasts';
 import { ToastFeed } from './components/ToastFeed';
 import socket from './socket';
-import type { AgentWithJob, AgentOutput, CreateJobRequest, CreateDebateRequest, CreateAutonomousAgentRunRequest, Debate, Workflow, Job, Template, BatchTemplate, Discussion, Proposal } from '@shared/types';
+import type { AgentWithJob, AgentOutput, CreateJobRequest, CreateTaskRequest, CreateTaskResponse, CreateDebateRequest, CreateAutonomousAgentRunRequest, Debate, Workflow, Job, Template, BatchTemplate, Discussion, Proposal } from '@shared/types';
 
 export default function App() {
   const { agents, setInitial: setInitialAgents, addAgent, updateAgent } = useAgents();
@@ -47,7 +46,7 @@ export default function App() {
   const [templates, setTemplates] = useState<Template[]>([]);
 
   const [selectedAgent, setSelectedAgent] = useState<AgentWithJob | null>(null);
-  const [showJobForm, setShowJobForm] = useState(false);
+  const [showTaskForm, setShowTaskForm] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showUsage, setShowUsage] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -59,7 +58,6 @@ export default function App() {
   const [showDebateForm, setShowDebateForm] = useState(false);
   const [debateFormInitial, setDebateFormInitial] = useState<Partial<CreateDebateRequest> | undefined>();
   const [selectedDebate, setSelectedDebate] = useState<Debate | null>(null);
-  const [showWorkflowForm, setShowWorkflowForm] = useState(false);
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
   const [showKnowledgeBase, setShowKnowledgeBase] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -351,33 +349,27 @@ export default function App() {
     } catch { /* ignore */ }
   }, [updateJob]);
 
-  const handleSubmitJob = useCallback(async (req: CreateJobRequest) => {
-    const payload = activeProjectId ? { ...req, projectId: activeProjectId } : req;
-    const res = await fetch('/api/jobs', {
+  const handleSubmitTask = useCallback(async (req: CreateTaskRequest) => {
+    // Inject active project for job-routed tasks (workflow creates its own project)
+    const isJobRoute = !req.iterations || req.iterations <= 1;
+    const payload = activeProjectId && isJobRoute
+      ? { ...req, projectId: activeProjectId }
+      : req;
+    const res = await fetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error ?? 'Failed to create job');
+      throw new Error(err.error ?? 'Failed to create task');
     }
-  }, [activeProjectId]);
-
-  const handleSubmitWorkflow = useCallback(async (req: CreateAutonomousAgentRunRequest) => {
-    const res = await fetch('/api/autonomous-agent-runs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error ?? 'Failed to create autonomous agent run');
+    const data: CreateTaskResponse = await res.json();
+    if (data.task_type === 'workflow' && data.project) {
+      addProject(data.project);
+      setActiveProjectId(data.project.id);
     }
-    const data = await res.json();
-    addProject(data.project);
-    setActiveProjectId(data.project.id);
-  }, [addProject]);
+  }, [activeProjectId, addProject]);
 
   const handleSubmitDebate = useCallback(async (req: CreateDebateRequest) => {
     const res = await fetch('/api/debates', {
@@ -432,7 +424,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header onNewJob={() => setShowJobForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => { setDebateFormInitial(undefined); setShowDebateForm(true); }} onDebates={debates.length > 0 ? debates : undefined} onSelectDebate={(d) => setSelectedDebate(d)} onWorkflow={() => setShowWorkflowForm(true)} onWorkflows={workflows.length > 0 ? workflows : undefined} onSelectWorkflow={(w) => setSelectedWorkflow(w)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(v => !v)} eyeEnabled={eyeEnabled} eyeActive={showEye} eyeBadgeCount={showEye ? 0 : discussions.filter(d => d.needs_reply).length + proposals.filter(p => p.needs_reply).length} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowJobForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowWorkflowForm(false); setShowKnowledgeBase(false); setShowEye(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} />
+      <Header onNewTask={() => setShowTaskForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => { setDebateFormInitial(undefined); setShowDebateForm(true); }} onDebates={debates.length > 0 ? debates : undefined} onSelectDebate={(d) => setSelectedDebate(d)} onWorkflows={workflows.length > 0 ? workflows : undefined} onSelectWorkflow={(w) => setSelectedWorkflow(w)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(v => !v)} eyeEnabled={eyeEnabled} eyeActive={showEye} eyeBadgeCount={showEye ? 0 : discussions.filter(d => d.needs_reply).length + proposals.filter(p => p.needs_reply).length} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowTaskForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); setShowEye(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} />
 
       <div className="main-layout">
         <div className={`left-sidebar-stack ${leftTab === 'lineage' && selectedAgent ? '' : 'left-sidebar-stack--narrow'}`}>
@@ -515,10 +507,10 @@ export default function App() {
       </div>
 
       <Suspense fallback={null}>
-      {showJobForm && (
-        <JobForm
-          onSubmit={handleSubmitJob}
-          onClose={() => setShowJobForm(false)}
+      {showTaskForm && (
+        <TaskForm
+          onSubmit={handleSubmitTask}
+          onClose={() => setShowTaskForm(false)}
           availableJobs={jobs}
         />
       )}
@@ -579,13 +571,6 @@ export default function App() {
 
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} eyeEnabled={eyeEnabled} onEyeEnabledChange={setEyeEnabled} />
-      )}
-
-      {showWorkflowForm && (
-        <WorkflowForm
-          onSubmit={handleSubmitWorkflow}
-          onClose={() => setShowWorkflowForm(false)}
-        />
       )}
 
       {selectedWorkflow && (

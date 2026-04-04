@@ -73,6 +73,10 @@ export function createTaskCore(
 
   if (config.routesTo === 'workflow') {
     const workflowReq = taskToWorkflowRequest(body, config);
+    // Apply inherited model from calling agent when request omits model
+    if (opts.inheritedModel && !workflowReq.implementerModel) {
+      workflowReq.implementerModel = opts.inheritedModel;
+    }
     const result = createAutonomousAgentRun(workflowReq);
     socket.emitWorkflowNew(result.workflow);
 
