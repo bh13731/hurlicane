@@ -476,13 +476,25 @@ describe('taskToJobRequest', () => {
     expect(withConfig.reviewConfig).toEqual({ models: ['codex'], auto: true });
   });
 
-  it('exact-match success: caller-supplied reviewConfig preserved as-is (per-call mutation safety)', () => {
+  it('exact-match success: caller-supplied reviewConfig preserved as-is (per-call deep-freeze mutation safety)', () => {
     // Exercises the req.reviewConfig ?? ... branch where the caller supplies their own config.
     // Each converter call gets its own fresh input and immediate pre/post snapshot so a
     // transient mutation in one call cannot be masked by the other.
+    // Deep-freeze ensures nested arrays (e.g. models) also throw on in-place mutation.
 
-    // --- with-config path: fresh objects, immediate assertion ---
-    const customReview1 = Object.freeze({ models: ['gpt-4', 'codex'], auto: false });
+    function deepFreeze<T extends Record<string, unknown>>(obj: T): Readonly<T> {
+      Object.freeze(obj);
+      for (const val of Object.values(obj)) {
+        if (val !== null && typeof val === 'object' && !Object.isFrozen(val)) {
+          Object.freeze(val);
+        }
+      }
+      return obj;
+    }
+
+    // --- with-config path: deep-frozen objects, immediate assertion ---
+    const models1 = ['gpt-4', 'codex'];
+    const customReview1 = deepFreeze({ models: models1, auto: false });
     const snapshot1 = JSON.parse(JSON.stringify(customReview1));
     const req1: CreateTaskRequest = { description: 'custom review', review: true, reviewConfig: customReview1 };
     const matching1 = resolveTaskConfig(req1);
@@ -490,18 +502,23 @@ describe('taskToJobRequest', () => {
     // Assert immutability immediately after this single call.
     expect(customReview1).toEqual(snapshot1);
     expect(customReview1.models).toEqual(['gpt-4', 'codex']);
-    // Reference identity: pass-through semantics require the exact supplied object.
+    // Nested array identity: the exact same array reference must survive.
+    expect(withConfig.reviewConfig!.models).toBe(models1);
+    // Top-level reference identity: pass-through semantics require the exact supplied object.
     expect(withConfig.reviewConfig).toBe(customReview1);
 
-    // --- without-config path: separate fresh objects, immediate assertion ---
-    const customReview2 = Object.freeze({ models: ['gpt-4', 'codex'], auto: false });
+    // --- without-config path: separate deep-frozen objects, immediate assertion ---
+    const models2 = ['gpt-4', 'codex'];
+    const customReview2 = deepFreeze({ models: models2, auto: false });
     const snapshot2 = JSON.parse(JSON.stringify(customReview2));
     const req2: CreateTaskRequest = { description: 'custom review', review: true, reviewConfig: customReview2 };
     const withoutConfig = taskToJobRequest(req2);
     // Assert immutability immediately after this single call.
     expect(customReview2).toEqual(snapshot2);
     expect(customReview2.models).toEqual(['gpt-4', 'codex']);
-    // Reference identity for the no-config path too.
+    // Nested array identity for the no-config path too.
+    expect(withoutConfig.reviewConfig!.models).toBe(models2);
+    // Top-level reference identity for the no-config path too.
     expect(withoutConfig.reviewConfig).toBe(customReview2);
 
     // Both paths must produce equivalent derived output (modulo the distinct reviewConfig refs).
