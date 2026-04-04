@@ -475,14 +475,19 @@ describe('taskToJobRequest', () => {
 
   it('exact-match success: caller-supplied reviewConfig preserved as-is', () => {
     // Exercises the req.reviewConfig ?? ... branch where the caller supplies their own config.
-    const customReview = { models: ['gpt-4', 'codex'], auto: false };
+    const customReview = Object.freeze({ models: ['gpt-4', 'codex'], auto: false });
+    const snapshot = JSON.parse(JSON.stringify(customReview));
     const req: CreateTaskRequest = { description: 'custom review', review: true, reviewConfig: customReview };
     const matching = resolveTaskConfig(req);
     const withConfig = taskToJobRequest(req, matching);
     const withoutConfig = taskToJobRequest(req);
     expect(withConfig).toEqual(withoutConfig);
-    // Spot-check that the caller-supplied reviewConfig was passed through, not rebuilt.
-    expect(withConfig.reviewConfig).toEqual(customReview);
+    // The original input must not have been mutated by either call.
+    expect(customReview).toEqual(snapshot);
+    // Identity check: the returned reviewConfig must be the exact supplied object,
+    // not a rebuilt equivalent — pass-through semantics require reference identity.
+    expect(withConfig.reviewConfig).toBe(customReview);
+    expect(withoutConfig.reviewConfig).toBe(customReview);
   });
 
   it('throws on stale config with review=true when canonical review is false', () => {
