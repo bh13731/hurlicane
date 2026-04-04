@@ -236,11 +236,11 @@
 
 .sidebar-job-scheduled:hover {
   background: color-mix(in srgb, var(--badge-color) 25%, transparent);
-  color: color-mix(in srgb, var(--badge-color) 80%, white);
+  color: var(--badge-scheduled-hover);
 }
 
 .sidebar-job-badge-debate {
-  --badge-color: var(--badge-debate);
+  --badge-color: var(--badge-debate-muted);
   flex-shrink: 0;
   font-size: 10px;
   color: var(--badge-color);

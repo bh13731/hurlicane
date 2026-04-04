@@ -43,8 +43,10 @@
 
   /* Badges */
   --badge-debate: #d2a8ff;
+  --badge-debate-muted: #a78bfa;
   --badge-warning: #eab308;
   --badge-scheduled: #ffa658;
+  --badge-scheduled-hover: #ffbe78;
 
   /* Semantic */
   --danger: #f85149;
