@@ -470,7 +470,10 @@ describe('taskToJobRequest', () => {
     // Spot-check that template-only branch specifics are correct.
     expect(withConfig.description).toBe('');
     expect(withConfig.templateId).toBe('tpl-42');
-    expect(withConfig.reviewConfig).toBeDefined();
+    // Assert canonical reviewed defaults directly so a shared regression in
+    // resolveTaskConfig or buildReviewConfig cannot hide behind path equality.
+    expect(withConfig.useWorktree).toBe(true);
+    expect(withConfig.reviewConfig).toEqual({ models: ['codex'], auto: true });
   });
 
   it('exact-match success: caller-supplied reviewConfig preserved as-is', () => {
