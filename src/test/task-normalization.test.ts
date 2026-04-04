@@ -753,22 +753,52 @@ describe('taskToJobRequest', () => {
     expect(grandchild.threshold).toBeNaN();
   });
 
-  it('stale-config throw path preserves caller-supplied reviewConfig when review is disabled', () => {
-    // Review-disabled request (quick preset) that nonetheless carries a reviewConfig.
-    // The stale config mismatches on review (true vs canonical false).
+  it('stale-config throw path preserves caller-supplied nested reviewConfig when review is disabled', () => {
+    // Review-disabled request (quick preset) that nonetheless carries a nested
+    // reviewConfig with grandchild objects and non-JSON-preserved values, plus a
+    // stale config that mismatches on review (true vs canonical false).
     // Even though reviewConfig is irrelevant for a non-reviewed task, the converter
-    // must not mutate or rebuild it before throwing.
-    const models = ['claude-sonnet-4-6'];
-    const customReview = deepFreeze({ models, auto: true });
-    const snapshot = JSON.parse(JSON.stringify(customReview));
+    // must not mutate, rebuild, or normalize any level of the caller-owned nested
+    // structure before throwing.
+    //
+    // Reverting to JSON snapshots would silently erase `undefined` and `NaN`,
+    // and removing recursive freezing would leave grandchildren mutable.
+    const grandchild = { tag: 'meta', removed: undefined as string | undefined, threshold: NaN };
+    const nestedModels = [{ name: 'claude-sonnet-4-6', settings: grandchild }];
+    const customReview = deepFreeze({ models: nestedModels, auto: true } as unknown as ReviewConfig);
+
+    // structuredClone preserves undefined and NaN that JSON.stringify would erase.
+    const fullSnapshot = structuredClone(customReview);
+
+    // Sanity-check: the snapshot actually preserved non-JSON state.
+    const snapGC = ((fullSnapshot as unknown as Record<string, unknown[]>).models[0] as Record<string, Record<string, unknown>>).settings;
+    expect('removed' in snapGC).toBe(true);
+    expect(snapGC.removed).toBeUndefined();
+    expect(snapGC.threshold).toBeNaN();
+
     const req: CreateTaskRequest = { description: 'x', preset: 'quick', reviewConfig: customReview };
     // Mismatch on review: canonical quick is false; stale says true.
     const stale = { ...resolveTaskConfig(req), review: true };
     expect(() => taskToJobRequest(req, stale)).toThrow(/review: supplied true vs canonical false/);
-    // The caller-owned reviewConfig must be completely untouched after the throw.
-    expect(customReview).toEqual(snapshot);
-    expect(customReview.models).toBe(models);          // array identity preserved
-    expect(customReview.models).toEqual(['claude-sonnet-4-6']); // contents unchanged
+
+    // Full-object unchanged: structuredClone comparison catches non-JSON mutations.
+    expect(customReview).toEqual(fullSnapshot);
+
+    // Recursive freeze integrity: top-level, nested array, element, and grandchild
+    // must remain frozen.  A non-recursive deepFreeze would fail on the inner levels.
+    expect(Object.isFrozen(customReview)).toBe(true);
+    expect(Object.isFrozen((customReview as Record<string, unknown>).models)).toBe(true);
+    expect(Object.isFrozen(nestedModels[0])).toBe(true);
+    expect(Object.isFrozen(grandchild)).toBe(true);
+
+    // Grandchild identity: the exact same object reference must survive the throw path.
+    expect((nestedModels[0] as Record<string, unknown>).settings).toBe(grandchild);
+    expect(grandchild.tag).toBe('meta');
+
+    // Non-JSON-preserved nested values must survive the throw path.
+    expect('removed' in grandchild).toBe(true);
+    expect(grandchild.removed).toBeUndefined();
+    expect(grandchild.threshold).toBeNaN();
   });
 });
 
