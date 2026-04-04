@@ -323,7 +323,7 @@ function emitWarning(agentId: string, type: string, message: string): void {
   });
   try {
     socket.emitWarningNew(warning);
-  } catch { /* socket may not be ready */ }
+  } catch (err) { console.debug('[health] socket emit failed for emitWarningNew (socket may not be ready):', err); }
   // Also refresh the agent card so the badge appears
   const agentWithJob = queries.getAgentWithJob(agentId);
   if (agentWithJob) {
