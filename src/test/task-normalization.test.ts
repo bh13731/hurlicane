@@ -630,6 +630,8 @@ describe('taskToJobRequest', () => {
     expect(Object.isFrozen(customReview2)).toBe(true);
     // Same identity and frozen-state assertions for the no-config path.
     expect(withoutConfig.reviewConfig).toBe(customReview2);
+    // Nested models array itself must remain frozen — symmetric with the with-config branch.
+    expect(Object.isFrozen((customReview2 as Record<string, unknown>).models)).toBe(true);
     expect(Object.isFrozen(nestedModels2[0])).toBe(true);
     expect(Object.isFrozen(grandchild2)).toBe(true);
     expect((nestedModels2[0] as Record<string, unknown>).settings).toBe(grandchild2);
