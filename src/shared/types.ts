@@ -556,7 +556,9 @@ export interface CreateWorkflowRequest {
   stopValueImplement?: number;
   templateId?: string;
   useWorktree?: boolean;
-  projectId?: string;
+  // NOTE: projectId intentionally omitted — createAutonomousAgentRun() always
+  // creates a new project.  The unified CreateTaskRequest supports projectId
+  // for job-routed tasks only; workflow-routed tasks reject it at validation.
   completionThreshold?: number;
 }
 
@@ -569,6 +571,92 @@ export interface CreateWorkflowResponse {
 export type CreateAutonomousAgentRunRequest = CreateWorkflowRequest;
 export interface CreateAutonomousAgentRunResponse extends CreateWorkflowResponse {
   autonomous_agent_run?: Workflow;
+}
+
+// ─── Unified Tasks ──────────────────────────────────────────────────────────
+
+export type TaskPreset = 'quick' | 'reviewed' | 'autonomous';
+
+/**
+ * Unified request shape for creating any task — quick single-shot, reviewed,
+ * or full autonomous multi-cycle. Sent to POST /api/tasks and the create_task
+ * MCP tool. The backend normalises this into either a Job or a Workflow based
+ * on the resolved `iterations` value (1 → job, >1 → workflow).
+ */
+export interface CreateTaskRequest {
+  // ── Core ──────────────────────────────────────────────────────────────────
+  description?: string;                // optional when templateId is provided (job-routed only)
+  title?: string;
+  preset?: TaskPreset;               // hint — values can be overridden individually
+
+  // ── Complexity dial ───────────────────────────────────────────────────────
+  review?: boolean;                   // enable a review pass (default per preset)
+  iterations?: number;                // 1–50 (1 = job, >1 = workflow cycles)
+
+  // ── Model ─────────────────────────────────────────────────────────────────
+  model?: string;                     // primary / implementer model
+  reviewerModel?: string;             // reviewer model (used when review=true)
+
+  // ── Environment ───────────────────────────────────────────────────────────
+  workDir?: string;
+  useWorktree?: boolean;
+  templateId?: string;
+  projectId?: string;
+
+  // ── Stopping conditions (simple — used when iterations=1) ─────────────────
+  stopMode?: StopMode;
+  stopValue?: number;
+  maxTurns?: number;
+
+  // ── Stopping conditions (per-phase — used when iterations>1) ──────────────
+  maxTurnsAssess?: number;
+  maxTurnsReview?: number;
+  maxTurnsImplement?: number;
+  stopModeAssess?: StopMode;
+  stopValueAssess?: number;
+  stopModeReview?: StopMode;
+  stopValueReview?: number;
+  stopModeImplement?: StopMode;
+  stopValueImplement?: number;
+  completionThreshold?: number;
+
+  // ── Advanced job options (quick / reviewed only) ──────────────────────────
+  context?: Record<string, string>;
+  priority?: number;
+  dependsOn?: string[];
+  interactive?: boolean;
+  repeatIntervalMs?: number;
+  scheduledAt?: number;
+  retryPolicy?: RetryPolicy;
+  maxRetries?: number;
+  completionChecks?: string[];
+  reviewConfig?: ReviewConfig;
+
+  // ── Debate (job-only) ─────────────────────────────────────────────────────
+  debate?: boolean;
+  debateClaudeModel?: string;
+  debateCodexModel?: string;
+  debateMaxRounds?: number;
+}
+
+/**
+ * Resolved task configuration with all defaults applied and routing decided.
+ * Produced by `resolveTaskConfig()` in taskNormalization.ts.
+ */
+export interface ResolvedTaskConfig {
+  preset: TaskPreset;
+  routesTo: 'job' | 'workflow';
+  review: boolean;
+  iterations: number;
+  useWorktree: boolean;
+}
+
+export interface CreateTaskResponse {
+  task_type: 'job' | 'workflow';
+  job?: Job;
+  workflow?: Workflow;
+  project?: Project;
+  jobs?: Job[];   // phase jobs for workflow, or the single job
 }
 
 // ─── Agent Warnings (Feature 6) ──────────────────────────────────────────────
