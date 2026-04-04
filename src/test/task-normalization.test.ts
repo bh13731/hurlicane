@@ -579,6 +579,43 @@ describe('taskToJobRequest', () => {
     const stale = { ...resolveTaskConfig(req), review: true, useWorktree: true };
     expect(() => taskToJobRequest(req, stale)).toThrow(/review:.*useWorktree:/);
   });
+
+  // ── Stale-config failure-path mutation safety for caller-supplied reviewConfig ──
+
+  it('stale-config throw path preserves caller-supplied reviewConfig when review is enabled', () => {
+    // Review-enabled request with a caller-supplied reviewConfig and a stale
+    // config that mismatches on useWorktree.  The converter must throw without
+    // touching the caller-owned reviewConfig or its nested models array.
+    const models = ['gpt-4', 'codex'];
+    const customReview = deepFreeze({ models, auto: false });
+    const snapshot = JSON.parse(JSON.stringify(customReview));
+    const req: CreateTaskRequest = { description: 'x', review: true, reviewConfig: customReview };
+    // Mismatch on useWorktree: canonical reviewed defaults to true; stale says false.
+    const stale = { ...resolveTaskConfig(req), useWorktree: false };
+    expect(() => taskToJobRequest(req, stale)).toThrow(/useWorktree: supplied false vs canonical true/);
+    // The caller-owned reviewConfig must be completely untouched after the throw.
+    expect(customReview).toEqual(snapshot);
+    expect(customReview.models).toBe(models);          // array identity preserved
+    expect(customReview.models).toEqual(['gpt-4', 'codex']); // contents unchanged
+  });
+
+  it('stale-config throw path preserves caller-supplied reviewConfig when review is disabled', () => {
+    // Review-disabled request (quick preset) that nonetheless carries a reviewConfig.
+    // The stale config mismatches on review (true vs canonical false).
+    // Even though reviewConfig is irrelevant for a non-reviewed task, the converter
+    // must not mutate or rebuild it before throwing.
+    const models = ['claude-sonnet-4-6'];
+    const customReview = deepFreeze({ models, auto: true });
+    const snapshot = JSON.parse(JSON.stringify(customReview));
+    const req: CreateTaskRequest = { description: 'x', preset: 'quick', reviewConfig: customReview };
+    // Mismatch on review: canonical quick is false; stale says true.
+    const stale = { ...resolveTaskConfig(req), review: true };
+    expect(() => taskToJobRequest(req, stale)).toThrow(/review: supplied true vs canonical false/);
+    // The caller-owned reviewConfig must be completely untouched after the throw.
+    expect(customReview).toEqual(snapshot);
+    expect(customReview.models).toBe(models);          // array identity preserved
+    expect(customReview.models).toEqual(['claude-sonnet-4-6']); // contents unchanged
+  });
 });
 
 // ─── taskToWorkflowRequest ──────────────────────────────────────────────────
