@@ -940,7 +940,7 @@
 }
 
 .interactive-toggle-active {
-  color: #3b82f6;
+  color: var(--status-idle);
 }
 
 .agent-status-badge {
@@ -960,7 +960,6 @@
 .status-done     { background: var(--status-done-bg); color: var(--status-done); }
 .status-failed    { background: var(--status-failed-bg); color: var(--status-failed); }
 .status-cancelled { background: var(--status-failed-bg); color: var(--status-failed); }
-
 
 /* ─── Workflow Summary Card ──────────────────────────────────────────────── */
 
