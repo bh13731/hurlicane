@@ -480,14 +480,14 @@ describe('taskToJobRequest', () => {
     // Exercises the req.reviewConfig ?? ... branch where the caller supplies their own config.
     // Each converter call gets its own fresh input and immediate pre/post snapshot so a
     // transient mutation in one call cannot be masked by the other.
-    // Deep-freeze ensures nested arrays (e.g. models) also throw on in-place mutation.
+    // Recursive deep-freeze ensures all nested objects/arrays throw on in-place mutation.
 
-    function deepFreeze<T extends Record<string, unknown>>(obj: T): Readonly<T> {
+    function deepFreeze<T>(obj: T): T {
+      if (obj === null || typeof obj !== 'object' || Object.isFrozen(obj)) return obj;
       Object.freeze(obj);
-      for (const val of Object.values(obj)) {
-        if (val !== null && typeof val === 'object' && !Object.isFrozen(val)) {
-          Object.freeze(val);
-        }
+      const values = Array.isArray(obj) ? obj : Object.values(obj as Record<string, unknown>);
+      for (const val of values) {
+        deepFreeze(val);
       }
       return obj;
     }
