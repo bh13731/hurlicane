@@ -8,6 +8,8 @@
   --bg-surface: #161b22;
   --bg-elevated: #1c2128;
   --bg-interactive: #21262d;
+  --bg-selected: #1c2d3e;
+  --bg-selected-hover: #1e3248;
 
   /* Borders */
   --border: #30363d;
@@ -15,7 +17,7 @@
   /* Text */
   --text-primary: #e6edf3;
   --text-body: #c9d1d9;
-  --text-normal: #c9d1d9;
+  --text-normal: var(--text-body);
   --text-secondary: #8b949e;
   --text-muted: #6e7681;
   --text-dim: #484f58;
