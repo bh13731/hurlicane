@@ -1362,6 +1362,19 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
       }
     } catch { /* merge-tree check failed — proceed with PR anyway */ }
 
+    // Check if a PR already exists before trying to create one
+    try {
+      const existingUrl = execSync(
+        `gh pr view --json url -q .url --head ${JSON.stringify(worktree_branch)}`,
+        { cwd: worktree_path, stdio: 'pipe', timeout: 15000 }
+      ).toString().trim();
+      if (existingUrl) {
+        updateAndEmit(workflow.id, { pr_url: existingUrl });
+        console.log(`[workflow ${workflow.id}] PR already exists: ${existingUrl}`);
+        return existingUrl;
+      }
+    } catch { /* no existing PR — create one */ }
+
     // Create PR via gh CLI
     const draftFlag = isDraft ? ' --draft' : '';
     const finalBody = conflictWarning ? body + conflictWarning : body;
@@ -1374,7 +1387,22 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
     console.log(`[workflow ${workflow.id}] ${isDraft ? 'draft ' : ''}PR created: ${prUrl}`);
     return prUrl;
   } catch (err: any) {
-    console.warn(`[workflow ${workflow.id}] push/PR failed (worktree branch preserved locally):`, err.message);
+    const stderr = err.stderr?.toString() ?? err.message ?? '';
+    // gh CLI returns error if PR already exists — find and use existing
+    if (stderr.includes('already exists')) {
+      try {
+        const existing = execSync(
+          `gh pr view --json url -q .url --head ${JSON.stringify(worktree_branch)}`,
+          { cwd: worktree_path, stdio: 'pipe', timeout: 15000 }
+        ).toString().trim();
+        if (existing) {
+          updateAndEmit(workflow.id, { pr_url: existing });
+          console.log(`[workflow ${workflow.id}] PR already exists: ${existing}`);
+          return existing;
+        }
+      } catch { /* can't find existing PR */ }
+    }
+    console.warn(`[workflow ${workflow.id}] push/PR failed (worktree branch preserved locally):`, stderr);
     return null;
   }
 }
