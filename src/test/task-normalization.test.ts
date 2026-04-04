@@ -12,6 +12,23 @@ import {
 } from '../shared/taskNormalization.js';
 import type { CreateTaskRequest } from '../shared/types.js';
 
+// ─── Shared test helpers ────────────────────────────────────────────────────
+
+/**
+ * Recursively freeze an object and all nested objects/arrays so any in-place
+ * mutation attempt throws at runtime.  Used by mutation-safety regression tests
+ * for both success and stale-config failure paths.
+ */
+function deepFreeze<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object' || Object.isFrozen(obj)) return obj;
+  Object.freeze(obj);
+  const values = Array.isArray(obj) ? obj : Object.values(obj as Record<string, unknown>);
+  for (const val of values) {
+    deepFreeze(val);
+  }
+  return obj;
+}
+
 // ─── inferPreset ────────────────────────────────────────────────────────────
 
 describe('inferPreset', () => {
@@ -480,17 +497,8 @@ describe('taskToJobRequest', () => {
     // Exercises the req.reviewConfig ?? ... branch where the caller supplies their own config.
     // Each converter call gets its own fresh input and immediate pre/post snapshot so a
     // transient mutation in one call cannot be masked by the other.
-    // Recursive deep-freeze ensures all nested objects/arrays throw on in-place mutation.
-
-    function deepFreeze<T>(obj: T): T {
-      if (obj === null || typeof obj !== 'object' || Object.isFrozen(obj)) return obj;
-      Object.freeze(obj);
-      const values = Array.isArray(obj) ? obj : Object.values(obj as Record<string, unknown>);
-      for (const val of values) {
-        deepFreeze(val);
-      }
-      return obj;
-    }
+    // Uses the file-level deepFreeze helper so both success and failure paths
+    // share one recursive-freeze implementation.
 
     // --- with-config path: deep-frozen objects, immediate assertion ---
     const models1 = ['gpt-4', 'codex'];
