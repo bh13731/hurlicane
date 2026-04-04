@@ -879,6 +879,10 @@
 }
 
 /* ─── Agent Card ───────────────────────────────────────────────────────────── */
+/* RETAINED: The .agent-card, .agent-card-header, .flag-btn, .interactive-toggle,
+   .agent-status-badge, and .status-* classes below are still used by
+   AgentGrid.tsx, AgentTerminal.tsx, and SearchModal.tsx. Keep them here until
+   those components are migrated to CSS Modules.                                */
 
 .agent-card {
   background: var(--bg-surface);

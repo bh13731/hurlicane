@@ -17,7 +17,7 @@
   /* Text */
   --text-primary: #e6edf3;
   --text-body: #c9d1d9;
-  --text-normal: var(--text-body);
+  --text-normal: var(--text-body); /* alias kept for backward compatibility */
   --text-secondary: #8b949e;
   --text-muted: #6e7681;
   --text-dim: #484f58;
