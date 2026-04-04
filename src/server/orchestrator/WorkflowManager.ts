@@ -314,15 +314,27 @@ function _onJobCompleted(job: Job): void {
 
             // Compute progress delta. Clamp to 0: reviewer restructuring can make done < preImplDone
             const delta = Math.max(0, milestones.done - preImplDone);
-            // Only write cycle-progress note when no reviewer restructuring occurred.
-            // When milestones.done < preImplDone, the reviewer changed the plan during implement —
-            // skip the note so the diminishing returns detector doesn't count a false zero.
-            if (milestones.done >= preImplDone) {
+
+            // Detect evidence of work even when no milestone was checked off.
+            // Only relevant in the zero-progress path (delta === 0, no reviewer restructuring).
+            const hasWorkEvidence = delta === 0 && milestones.done >= preImplDone
+              ? detectCycleEvidence(job, updated, updated.current_cycle)
+              : false;
+
+            // Only write cycle-progress note when no reviewer restructuring occurred
+            // AND no evidence-based bypass — avoids feeding a false zero to the
+            // diminishing returns detector when the reviewer rejected the agent's work.
+            if (milestones.done >= preImplDone && !hasWorkEvidence) {
               queries.upsertNote(`workflow/${workflow.id}/cycle-progress/${updated.current_cycle}`, String(delta), null);
             }
 
             if (delta > 0) {
               // Actual progress was made — reset counter
+              queries.upsertNote(zeroProgressKey, '0', null);
+            } else if (hasWorkEvidence) {
+              // Evidence of work (commits or worklog) but reviewer did not accept the milestone.
+              // Treat as "reviewer rejection", not true zero-progress — reset counter, skip escalation.
+              console.log(`[workflow ${workflow.id}] cycle ${updated.current_cycle} has work evidence (commits or worklog) but no milestone check-off — treating as reviewer rejection, not zero-progress`);
               queries.upsertNote(zeroProgressKey, '0', null);
             } else if (milestones.done >= preImplDone) {
               // No progress this cycle (genuine zero-progress, not reviewer restructuring)
@@ -399,6 +411,67 @@ function _onJobCompleted(job: Job): void {
     default:
       console.warn(`[workflow ${workflow.id}] unknown phase '${job.workflow_phase}' on job ${job.id}`);
   }
+}
+
+// ─── Cycle Evidence Detection ─────────────────────────────────────────────────
+
+/**
+ * Detects whether an implement cycle produced real work even if no milestone was
+ * checked off — i.e., "reviewer rejection" rather than true zero-progress.
+ *
+ * Two signals:
+ *   1. Git commits: new commits in the worktree since the newest agent's base_sha.
+ *   2. Worklog: a non-blank, non-heading-only note for this cycle.
+ *
+ * Falls back gracefully (returns false) on missing data or git errors.
+ * Uses only the newest agent attempt (agents ordered by started_at DESC) to
+ * avoid stale base_sha values from earlier retry attempts driving commit detection.
+ */
+function detectCycleEvidence(job: Job, workflow: Workflow, cycleNum: number): boolean {
+  // --- Signal 1: git commits since agent started ---
+  const agents = queries.getAgentsWithJobByJobId(job.id);
+  const newestAgent = agents[0]; // ordered by started_at DESC
+  const gitDir = workflow.worktree_path ?? workflow.work_dir;
+
+  if (newestAgent?.base_sha && gitDir && existsSync(gitDir)) {
+    try {
+      const countStr = execSync(
+        `git rev-list ${JSON.stringify(newestAgent.base_sha)}..HEAD --count`,
+        { cwd: gitDir, stdio: 'pipe', timeout: 5000 },
+      ).toString().trim();
+      if (parseInt(countStr, 10) > 0) {
+        console.log(`[workflow ${workflow.id}] cycle ${cycleNum} evidence: ${countStr} commit(s) found since ${newestAgent.base_sha.slice(0, 8)}`);
+        return true;
+      }
+    } catch {
+      // git error or missing repo — fall through to worklog check
+    }
+  }
+
+  // --- Signal 2: substantive worklog entry ---
+  const worklogNote = queries.getNote(`workflow/${workflow.id}/worklog/cycle-${cycleNum}`);
+  if (worklogNote && isSubstantiveWorklog(worklogNote.value)) {
+    console.log(`[workflow ${workflow.id}] cycle ${cycleNum} evidence: substantive worklog entry found`);
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Returns true if the worklog content is substantive — has at least one
+ * non-blank, non-heading line after trimming.
+ * Blank/whitespace-only and heading-only entries (all lines start with '#')
+ * are not considered substantive.
+ */
+function isSubstantiveWorklog(content: string): boolean {
+  if (!content.trim()) return false;
+  return content
+    .split('\n')
+    .some(l => {
+      const t = l.trim();
+      return t.length > 0 && !t.startsWith('#');
+    });
 }
 
 // ─── Milestone Parsing ────────────────────────────────────────────────────────
