@@ -236,7 +236,7 @@
 
 .sidebar-job-scheduled:hover {
   background: color-mix(in srgb, var(--badge-color) 25%, transparent);
-  color: var(--badge-scheduled-hover);
+  color: color-mix(in srgb, var(--badge-color) 80%, white);
 }
 
 .sidebar-job-badge-debate {
