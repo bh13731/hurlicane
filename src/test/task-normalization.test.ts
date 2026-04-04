@@ -584,17 +584,20 @@ describe('taskToJobRequest', () => {
 
     // Snapshot the full nested structure before conversion so we can detect any
     // field-level mutation, not just changes to the specific grandchildren we
-    // spot-check below.
-    const fullSnapshotBefore = JSON.parse(JSON.stringify(customReview));
+    // spot-check below.  Uses structuredClone instead of JSON round-tripping so
+    // the snapshot preserves undefined values, sparse-array holes, and any
+    // non-JSON-serializable fields that a future typed-cast fixture might add.
+    const fullSnapshotBefore = structuredClone(customReview);
 
     // --- with-config path ---
     const req1: CreateTaskRequest = { description: 'nested review', review: true, reviewConfig: customReview };
     const matching1 = resolveTaskConfig(req1);
     const withConfig = taskToJobRequest(req1, matching1);
 
-    // Full-object unchanged: the supplied reviewConfig must be identical to its
-    // pre-conversion snapshot after the with-config call.
-    expect(JSON.parse(JSON.stringify(customReview))).toEqual(fullSnapshotBefore);
+    // Full-object unchanged: compare the frozen original directly to the
+    // pre-conversion structuredClone.  Because the clone preserves undefined
+    // and non-JSON state, any mutation the JSON approach would miss is caught.
+    expect(customReview).toEqual(fullSnapshotBefore);
 
     // Top-level supplied object must be frozen.
     expect(Object.isFrozen(customReview)).toBe(true);
@@ -613,14 +616,15 @@ describe('taskToJobRequest', () => {
     const nestedModels2 = [{ name: 'gpt-4', settings: grandchild2 }];
     const customReview2 = deepFreeze({ models: nestedModels2, auto: false } as unknown as ReviewConfig);
 
-    // Snapshot before the no-config conversion call.
-    const fullSnapshotBefore2 = JSON.parse(JSON.stringify(customReview2));
+    // Snapshot before the no-config conversion call (structuredClone preserves
+    // non-JSON state the JSON round-trip would silently drop).
+    const fullSnapshotBefore2 = structuredClone(customReview2);
 
     const req2: CreateTaskRequest = { description: 'nested review', review: true, reviewConfig: customReview2 };
     const withoutConfig = taskToJobRequest(req2);
 
     // Full-object unchanged after the no-config call.
-    expect(JSON.parse(JSON.stringify(customReview2))).toEqual(fullSnapshotBefore2);
+    expect(customReview2).toEqual(fullSnapshotBefore2);
 
     // Top-level supplied object must be frozen.
     expect(Object.isFrozen(customReview2)).toBe(true);
