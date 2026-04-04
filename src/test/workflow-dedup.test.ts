@@ -609,6 +609,52 @@ describe('WorkflowManager: onJobCompleted phase transitions', () => {
     expect(updated.blocked_reason).toContain('codex_cli_crash');
   });
 
+  it('codex_cli_crash duplicate onJobCompleted spawns exactly one retry and increments counter once', async () => {
+    // Regression for the TOCTOU race: two concurrent job-completion events for the
+    // same failed job must not both insert the cli-retry idempotency key and spawn
+    // two retry jobs. insertNoteIfNotExists (INSERT OR IGNORE) ensures only the first
+    // caller wins; the second returns early without touching attemptsKey.
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { upsertNote, getNote, getWorkflowById, getJobsForWorkflow } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'review',
+      current_cycle: 2,
+      reviewer_model: 'codex',
+    });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 2,
+      workflow_phase: 'review',
+      status: 'failed',
+      model: 'codex',
+    });
+
+    vi.mocked(classifyJobFailure).mockReturnValue('codex_cli_crash');
+
+    // Simulate duplicate completion — same job processed twice (TOCTOU scenario)
+    onJobCompleted(job);
+    onJobCompleted(job);
+
+    // Exactly one retry job must have been spawned
+    const jobs = getJobsForWorkflow(workflow.id);
+    const retryJobs = jobs.filter(j => j.id !== job.id);
+    expect(retryJobs).toHaveLength(1);
+
+    // attemptsKey must have been incremented exactly once (to '1')
+    const attemptsNote = getNote(`workflow/${workflow.id}/cli-retry/review/cycle-2`);
+    expect(attemptsNote?.value).toBe('1');
+
+    // Workflow must still be running (not blocked by the duplicate)
+    expect(getWorkflowById(workflow.id)!.status).toBe('running');
+  });
+
   it('max_cycles reached with remaining milestones blocks instead of completing', async () => {
     const socket = await import('../server/socket/SocketManager.js');
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');

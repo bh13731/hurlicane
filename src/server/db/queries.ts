@@ -1343,6 +1343,21 @@ export function upsertNote(key: string, value: string, agentId: string | null): 
   `).run(key, value, agentId, Date.now());
 }
 
+/**
+ * Atomically insert a note only if the key does not already exist.
+ * Returns true if this caller inserted the row (winner), false if the key
+ * already existed (duplicate — another caller won the race).
+ * Uses INSERT OR IGNORE so concurrent callers are safe without external locking.
+ */
+export function insertNoteIfNotExists(key: string, value: string, agentId: string | null): boolean {
+  const db = getDb();
+  const result = db.prepare(`
+    INSERT OR IGNORE INTO notes (key, value, agent_id, updated_at)
+    VALUES (?, ?, ?, ?)
+  `).run(key, value, agentId, Date.now());
+  return result.changes > 0;
+}
+
 export function getNote(key: string): Note | null {
   const db = getDb();
   const row = db.prepare('SELECT * FROM notes WHERE key = ?').get(key);
