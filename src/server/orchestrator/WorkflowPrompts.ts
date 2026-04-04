@@ -288,7 +288,7 @@ The implementer just completed cycle ${cycle - 1}. You must review the actual co
    - Run \`git log --oneline -10\` to see recent commits
    - Run \`git diff HEAD~1\` (or \`git diff HEAD~<n>\` to cover all commits from this cycle) to see exact code changes
    - Read any new or heavily modified files in full
-   - Run the test suite to check for regressions
+   - Run the test suite to check for regressions. If the test suite fails due to missing dependencies or environment issues (e.g. \`ModuleNotFoundError\`, \`No module named\`, \`command not found\`, \`pytest: command not found\`), note the environment gap in your review but do NOT block the milestone or add fix milestones for environment setup — focus on code correctness from reading the implementation instead.
 3. **Assess code quality** — look for:
    - Correctness: does it actually satisfy the milestone's acceptance criteria?
    - Edge cases: null/undefined handling, empty arrays, concurrency, off-by-one errors
