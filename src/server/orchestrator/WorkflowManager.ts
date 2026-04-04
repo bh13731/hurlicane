@@ -459,10 +459,21 @@ function detectCycleEvidence(job: Job, workflow: Workflow, cycleNum: number): bo
 }
 
 /**
+ * Boilerplate metadata labels that appear in every worklog template but carry
+ * no evidence of actual work. Lines matching this pattern are excluded from
+ * substantive-content detection so that a skeleton/template entry does not
+ * incorrectly bypass the zero-progress detector.
+ */
+const WORKLOG_METADATA_LABEL = /^\*\*(Owner|Timestamp):\*\*/;
+
+/**
  * Returns true if the worklog content is substantive — has at least one
- * non-blank, non-heading line after trimming.
- * Blank/whitespace-only and heading-only entries (all lines start with '#')
- * are not considered substantive.
+ * non-blank, non-heading, non-template-metadata line after trimming.
+ * The following are NOT considered substantive:
+ *   - Blank/whitespace-only entries
+ *   - Heading-only entries (all non-blank lines start with '#')
+ *   - Template-scaffold entries whose only non-heading lines are metadata
+ *     labels like `**Owner:**` and `**Timestamp:**`
  */
 function isSubstantiveWorklog(content: string): boolean {
   if (!content.trim()) return false;
@@ -470,7 +481,7 @@ function isSubstantiveWorklog(content: string): boolean {
     .split('\n')
     .some(l => {
       const t = l.trim();
-      return t.length > 0 && !t.startsWith('#');
+      return t.length > 0 && !t.startsWith('#') && !WORKLOG_METADATA_LABEL.test(t);
     });
 }
 

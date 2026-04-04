@@ -207,3 +207,413 @@ describe('WorkflowManager: auto-split via re-plan on zero progress (M8/1C)', () 
     expect(zpNote?.value).toBe('0');
   });
 });
+
+describe('WorkflowManager: evidence-based zero-progress bypass', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+    await resetManagerState();
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('commit evidence bypasses replan on first zero-progress cycle', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById, getNote, insertAgent, updateAgent } = await import('../server/db/queries.js');
+    const { execSync } = await import('child_process');
+    const { randomUUID } = await import('crypto');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 3,
+      max_cycles: 10,
+      milestones_total: 5,
+      milestones_done: 2,
+    });
+
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4\n- [ ] M5', null);
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/3`, '2', null);
+    // No replan-attempted — first zero-progress cycle
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 3,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    // Agent with base_sha so commit detection runs
+    const agentId = randomUUID();
+    insertAgent({ id: agentId, job_id: job.id, status: 'done' });
+    updateAgent(agentId, { base_sha: 'abc1234def' });
+
+    // Simulate 3 commits found since base_sha
+    vi.mocked(execSync).mockReturnValueOnce(Buffer.from('3\n') as any);
+
+    onJobCompleted(job);
+
+    // No replan-attempted note (evidence bypass prevented replan)
+    const replanNote = getNote(`workflow/${workflow.id}/replan-attempted/3`);
+    expect(replanNote).toBeNull();
+
+    // Zero-progress counter reset to 0
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('0');
+
+    // Workflow not blocked
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).not.toBe('blocked');
+  });
+
+  it('commit evidence bypasses counter increment when replan-attempted is already set', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById, getNote, insertAgent, updateAgent } = await import('../server/db/queries.js');
+    const { execSync } = await import('child_process');
+    const { randomUUID } = await import('crypto');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 3,
+      max_cycles: 10,
+      milestones_total: 5,
+      milestones_done: 2,
+    });
+
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4\n- [ ] M5', null);
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/3`, '2', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/3`, '1', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 3,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    const agentId = randomUUID();
+    insertAgent({ id: agentId, job_id: job.id, status: 'done' });
+    updateAgent(agentId, { base_sha: 'abc1234def' });
+
+    vi.mocked(execSync).mockReturnValueOnce(Buffer.from('2\n') as any);
+
+    onJobCompleted(job);
+
+    // Counter should be reset to 0 (evidence bypass), not incremented
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('0');
+
+    // Workflow not blocked
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).not.toBe('blocked');
+  });
+
+  it('commit detection uses the newest agent when multiple agents exist for the job', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getNote, insertAgent, updateAgent } = await import('../server/db/queries.js');
+    const { execSync } = await import('child_process');
+    const { randomUUID } = await import('crypto');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 3,
+      max_cycles: 10,
+      milestones_total: 5,
+      milestones_done: 2,
+    });
+
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4\n- [ ] M5', null);
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/3`, '2', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/3`, '1', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 3,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    const now = Date.now();
+    // Older agent — stale base_sha
+    const oldAgentId = randomUUID();
+    insertAgent({ id: oldAgentId, job_id: job.id, status: 'done', started_at: now - 10000 });
+    updateAgent(oldAgentId, { base_sha: 'old-sha-111' });
+
+    // Newer agent — newer base_sha
+    const newAgentId = randomUUID();
+    insertAgent({ id: newAgentId, job_id: job.id, status: 'done', started_at: now });
+    updateAgent(newAgentId, { base_sha: 'new-sha-222' });
+
+    // execSync returns commits only when the newest agent's sha is in the command
+    vi.mocked(execSync).mockImplementationOnce((cmd: string) => {
+      if (typeof cmd === 'string' && cmd.includes('"new-sha-222"')) return Buffer.from('4\n') as any;
+      return Buffer.from('0\n') as any;
+    });
+
+    onJobCompleted(job);
+
+    // Newest agent's sha detected commits → evidence bypass → counter at 0
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('0');
+  });
+
+  it('substantive worklog with no commits also bypasses zero-progress escalation', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById, getNote } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 3,
+      max_cycles: 10,
+      milestones_total: 5,
+      milestones_done: 2,
+    });
+
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4\n- [ ] M5', null);
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/3`, '2', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/3`, '1', null);
+
+    // No agent with base_sha — git commit check skipped
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 3,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    // Substantive worklog: contains real body text, not just template
+    upsertNote(`workflow/${workflow.id}/worklog/cycle-3`,
+      '## Cycle 3 — M3\n**Owner:** Implementer\n**Timestamp:** 2026-04-04T22:00:00Z\n### What changed\n- src/foo.ts: refactored bar function\n### Blockers\n- None', null);
+
+    onJobCompleted(job);
+
+    // Counter reset to 0 (worklog evidence bypass)
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('0');
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).not.toBe('blocked');
+  });
+
+  it('blank worklog and no commits follows existing zero-progress path', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getNote } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 3,
+      max_cycles: 10,
+      milestones_total: 5,
+      milestones_done: 2,
+    });
+
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4\n- [ ] M5', null);
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/3`, '2', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/3`, '1', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 3,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    // Blank worklog — not substantive
+    upsertNote(`workflow/${workflow.id}/worklog/cycle-3`, '   ', null);
+
+    onJobCompleted(job);
+
+    // No evidence → counter incremented
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('1');
+  });
+
+  it('heading-only worklog and no commits follows existing zero-progress path', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getNote } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 3,
+      max_cycles: 10,
+      milestones_total: 5,
+      milestones_done: 2,
+    });
+
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4\n- [ ] M5', null);
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/3`, '2', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/3`, '1', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 3,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    // Heading-only worklog — all non-blank lines start with '#'
+    upsertNote(`workflow/${workflow.id}/worklog/cycle-3`,
+      '## Cycle 3 — M3\n### What changed\n### Commits\n### Blockers\n### Next step', null);
+
+    onJobCompleted(job);
+
+    // No evidence → counter incremented
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('1');
+  });
+
+  it('template-only worklog (Owner+Timestamp metadata only) and no commits follows existing path', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getNote } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 3,
+      max_cycles: 10,
+      milestones_total: 5,
+      milestones_done: 2,
+    });
+
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4\n- [ ] M5', null);
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/3`, '2', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/3`, '1', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 3,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    // Template-only worklog: only headings and **Owner:**/**Timestamp:** metadata
+    upsertNote(`workflow/${workflow.id}/worklog/cycle-3`,
+      '## Cycle 3 — M3\n**Owner:** Implementer\n**Timestamp:** 2026-04-04T22:00:00Z\n### What changed\n### Commits\n### Blockers\n### Next step', null);
+
+    onJobCompleted(job);
+
+    // Template-only is not substantive (M2 fix) → no evidence → counter incremented
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('1');
+  });
+
+  it('execSync failure falls back to worklog evidence check', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById, getNote, insertAgent, updateAgent } = await import('../server/db/queries.js');
+    const { execSync } = await import('child_process');
+    const { randomUUID } = await import('crypto');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 3,
+      max_cycles: 10,
+      milestones_total: 5,
+      milestones_done: 2,
+    });
+
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4\n- [ ] M5', null);
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/3`, '2', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/3`, '1', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 3,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    const agentId = randomUUID();
+    insertAgent({ id: agentId, job_id: job.id, status: 'done' });
+    updateAgent(agentId, { base_sha: 'abc1234def' });
+
+    // git fails — should fall through to worklog check
+    vi.mocked(execSync).mockImplementationOnce(() => { throw new Error('git: not a repository'); });
+
+    // Substantive worklog provides the signal
+    upsertNote(`workflow/${workflow.id}/worklog/cycle-3`,
+      '## Cycle 3 — M3\n### What changed\n- src/bar.ts: implemented feature X', null);
+
+    onJobCompleted(job);
+
+    // Worklog evidence bypasses escalation
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('0');
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).not.toBe('blocked');
+  });
+
+  it('missing base_sha falls back gracefully to worklog check', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById, getNote } = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 3,
+      max_cycles: 10,
+      milestones_total: 5,
+      milestones_done: 2,
+    });
+
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [ ] M3\n- [ ] M4\n- [ ] M5', null);
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/3`, '2', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/3`, '1', null);
+
+    // Agent has no base_sha — git check skipped
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 3,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    // Substantive worklog provides the evidence signal instead
+    upsertNote(`workflow/${workflow.id}/worklog/cycle-3`,
+      '## Cycle 3\n### What changed\n- src/baz.ts: fixed edge case in parser', null);
+
+    onJobCompleted(job);
+
+    // Worklog signal picked up even without base_sha
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('0');
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).not.toBe('blocked');
+  });
+});
