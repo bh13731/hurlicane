@@ -822,6 +822,40 @@ describe('taskToWorkflowRequest', () => {
     expect(withConfig.useWorktree).toBe(true);
   });
 
+  it('exact-match success: defaulted worktree and mapped workflow fields', () => {
+    // Omit useWorktree so the canonical defaulting path (iterations > 1 → true) is exercised.
+    // Include non-default mapped fields to verify they survive the matching-config path.
+    const req: CreateTaskRequest = {
+      description: 'full workflow task',
+      title: 'Mapped fields test',
+      iterations: 4,
+      reviewerModel: 'claude-sonnet-4-6',
+      templateId: 'tmpl-abc',
+      maxTurnsAssess: 20,
+      maxTurnsReview: 15,
+      maxTurnsImplement: 80,
+      stopModeAssess: 'turns' as const,
+      stopValueAssess: 18,
+      stopModeReview: 'turns' as const,
+      stopValueReview: 12,
+      stopModeImplement: 'budget' as const,
+      stopValueImplement: 500000,
+    };
+    const matching = resolveTaskConfig(req);
+    const withConfig = taskToWorkflowRequest(req, matching);
+    const withoutConfig = taskToWorkflowRequest(req);
+    // Full output equality ensures the matching-config path cannot diverge from canonical.
+    expect(withConfig).toEqual(withoutConfig);
+    // Spot-check that defaulted useWorktree was applied and mapped fields are present.
+    expect(withConfig.useWorktree).toBe(true);
+    expect(withConfig.maxCycles).toBe(4);
+    expect(withConfig.reviewerModel).toBe('claude-sonnet-4-6');
+    expect(withConfig.title).toBe('Mapped fields test');
+    expect(withConfig.templateId).toBe('tmpl-abc');
+    expect(withConfig.stopModeImplement).toBe('budget');
+    expect(withConfig.stopValueImplement).toBe(500000);
+  });
+
   it('throws on stale config with inflated iterations', () => {
     const req: CreateTaskRequest = { description: 'x', iterations: 5 };
     const stale = { ...resolveTaskConfig(req), iterations: 10 };
