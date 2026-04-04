@@ -460,6 +460,19 @@ describe('taskToJobRequest', () => {
     expect(withConfig.reviewConfig).toEqual({ models: ['claude-sonnet-4-6'], auto: true });
   });
 
+  it('exact-match success: template-only reviewed job conversion', () => {
+    // Exercises the description ?? '' branch with a template-only reviewed request.
+    const req: CreateTaskRequest = { templateId: 'tpl-42', review: true };
+    const matching = resolveTaskConfig(req);
+    const withConfig = taskToJobRequest(req, matching);
+    const withoutConfig = taskToJobRequest(req);
+    expect(withConfig).toEqual(withoutConfig);
+    // Spot-check that template-only branch specifics are correct.
+    expect(withConfig.description).toBe('');
+    expect(withConfig.templateId).toBe('tpl-42');
+    expect(withConfig.reviewConfig).toBeDefined();
+  });
+
   it('exact-match success: caller-supplied reviewConfig preserved as-is', () => {
     // Exercises the req.reviewConfig ?? ... branch where the caller supplies their own config.
     const customReview = { models: ['gpt-4', 'codex'], auto: false };
