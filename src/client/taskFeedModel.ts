@@ -94,16 +94,20 @@ function classifyAgent(agent: AgentWithJob): TaskGroup {
 /**
  * Build the unified, deduplicated, grouped, and sorted task-item list.
  *
+ * Callers may pass ALL agents and ALL queued jobs — the function itself
+ * filters out workflow-owned entries and collapses overlapping agent/queued-job
+ * inputs so that each underlying work unit appears at most once.
+ *
  * @param workflows      All workflows visible in the current project view
- * @param standaloneAgents  Agents whose jobs do NOT belong to a workflow
- * @param queuedStandaloneJobs  Queued jobs without an agent and without a workflow
+ * @param agents         All agents (workflow-owned ones are filtered out internally)
+ * @param queuedJobs     All queued jobs without an agent (workflow-owned ones filtered out internally)
  * @param now            Current dashboard timestamp (for recent-window cutoff)
  * @param recentWindowMs How long completed items stay in "recent" (default 1h)
  */
 export function buildGroupedTaskItems(
   workflows: Workflow[],
-  standaloneAgents: AgentWithJob[],
-  queuedStandaloneJobs: Job[],
+  agents: AgentWithJob[],
+  queuedJobs: Job[],
   now: number,
   recentWindowMs: number = RECENT_WINDOW_MS,
 ): GroupedTaskItems {
@@ -118,6 +122,14 @@ export function buildGroupedTaskItems(
       case 'recent': recent.push(item); break;
     }
   }
+
+  // ── Build lookup sets for deduplication ────────────────────────────────────
+
+  // Set of workflow IDs to exclude workflow-owned agents and queued jobs
+  const workflowIds = new Set(workflows.map(w => w.id));
+
+  // Set of job IDs that already have an agent, to avoid duplicate queued_job items
+  const agentJobIds = new Set(agents.map(a => a.job_id));
 
   // ── Workflows ──────────────────────────────────────────────────────────────
 
@@ -153,9 +165,12 @@ export function buildGroupedTaskItems(
     });
   }
 
-  // ── Standalone agents (not belonging to any workflow) ──────────────────────
+  // ── Standalone agents (exclude workflow-owned) ─────────────────────────────
 
-  for (const agent of standaloneAgents) {
+  for (const agent of agents) {
+    // Skip agents whose jobs belong to a workflow
+    if (agent.job.workflow_id && workflowIds.has(agent.job.workflow_id)) continue;
+
     const group = classifyAgent(agent);
 
     if (group === 'recent') {
@@ -183,9 +198,14 @@ export function buildGroupedTaskItems(
     });
   }
 
-  // ── Queued standalone jobs (no agent yet, not belonging to any workflow) ───
+  // ── Queued jobs (exclude workflow-owned and already-has-agent) ─────────────
 
-  for (const job of queuedStandaloneJobs) {
+  for (const job of queuedJobs) {
+    // Skip jobs belonging to a workflow
+    if (job.workflow_id && workflowIds.has(job.workflow_id)) continue;
+    // Skip jobs that already have a running agent (avoid duplicate cards)
+    if (agentJobIds.has(job.id)) continue;
+
     push({
       id: `job-${job.id}`,
       kind: 'queued_job',

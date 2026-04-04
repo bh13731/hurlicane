@@ -224,4 +224,103 @@ describe('buildGroupedTaskItems', () => {
     expect(result.active).toHaveLength(0);
     expect(result.recent).toHaveLength(0);
   });
+
+  // ── M2: Deduplication and workflow-exclusion regression tests ──────────────
+
+  describe('workflow-owned exclusion', () => {
+    it('excludes agents whose jobs belong to a workflow', () => {
+      const wf = makeWorkflow({ id: 'wf-1', status: 'running' });
+      const ownedAgent = makeAgent(
+        { id: 'owned-ag', status: 'running' },
+        { id: 'owned-job', workflow_id: 'wf-1' },
+      );
+      const standaloneAgent = makeAgent(
+        { id: 'standalone-ag', status: 'running' },
+        { id: 'standalone-job', workflow_id: null },
+      );
+      const result = buildGroupedTaskItems([wf], [ownedAgent, standaloneAgent], [], NOW);
+      const agentIds = [...result.attention, ...result.active, ...result.recent]
+        .filter(i => i.kind === 'agent')
+        .map(i => i.id);
+      // Only standalone agent should appear
+      expect(agentIds).toEqual(['agent-standalone-ag']);
+    });
+
+    it('excludes queued jobs that belong to a workflow', () => {
+      const wf = makeWorkflow({ id: 'wf-1', status: 'running' });
+      const ownedJob = makeJob({ id: 'wf-job', workflow_id: 'wf-1' });
+      const standaloneJob = makeJob({ id: 'standalone-job', workflow_id: null });
+      const result = buildGroupedTaskItems([wf], [], [ownedJob, standaloneJob], NOW);
+      const jobIds = [...result.attention, ...result.active, ...result.recent]
+        .filter(i => i.kind === 'queued_job')
+        .map(i => i.id);
+      expect(jobIds).toEqual(['job-standalone-job']);
+    });
+  });
+
+  describe('agent/queued-job overlap deduplication', () => {
+    it('excludes queued job when an agent already exists for the same job', () => {
+      const job = makeJob({ id: 'shared-job', status: 'running', workflow_id: null });
+      const agent = makeAgent(
+        { id: 'ag-for-shared', status: 'running', job_id: 'shared-job' },
+        { id: 'shared-job', workflow_id: null },
+      );
+      // Pass the same job as both an agent entry and a queued job
+      const result = buildGroupedTaskItems([], [agent], [job], NOW);
+      const allItems = [...result.attention, ...result.active, ...result.recent];
+      // Should have exactly 1 item — the agent, not the queued job duplicate
+      expect(allItems).toHaveLength(1);
+      expect(allItems[0].kind).toBe('agent');
+      expect(allItems[0].id).toBe('agent-ag-for-shared');
+    });
+
+    it('keeps queued job when no agent exists for it', () => {
+      const agent = makeAgent(
+        { id: 'ag-other', status: 'running', job_id: 'other-job' },
+        { id: 'other-job', workflow_id: null },
+      );
+      const queuedJob = makeJob({ id: 'new-job', workflow_id: null });
+      const result = buildGroupedTaskItems([], [agent], [queuedJob], NOW);
+      const allItems = [...result.attention, ...result.active, ...result.recent];
+      expect(allItems).toHaveLength(2);
+      expect(allItems.map(i => i.kind).sort()).toEqual(['agent', 'queued_job']);
+    });
+  });
+
+  describe('overlapping inputs do not produce duplicates', () => {
+    it('handles overlapping workflow-owned agents + workflows without duplicates', () => {
+      const wf = makeWorkflow({ id: 'wf-1', status: 'running' });
+      const ownedAgent1 = makeAgent(
+        { id: 'impl-ag', status: 'running' },
+        { id: 'impl-job', workflow_id: 'wf-1', workflow_phase: 'implement' as any },
+      );
+      const ownedAgent2 = makeAgent(
+        { id: 'review-ag', status: 'done', finished_at: NOW - 500, updated_at: NOW - 500 },
+        { id: 'review-job', workflow_id: 'wf-1', workflow_phase: 'review' as any },
+      );
+      const standaloneAgent = makeAgent(
+        { id: 'solo-ag', status: 'running' },
+        { id: 'solo-job', workflow_id: null },
+      );
+      const result = buildGroupedTaskItems([wf], [ownedAgent1, ownedAgent2, standaloneAgent], [], NOW);
+      const allItems = [...result.attention, ...result.active, ...result.recent];
+      const allIds = allItems.map(i => i.id);
+      // Workflow + standalone agent only; owned agents excluded
+      expect(allIds.sort()).toEqual(['agent-solo-ag', 'wf-wf-1'].sort());
+    });
+
+    it('handles full overlap scenario: workflow + owned agent + owned queued job', () => {
+      const wf = makeWorkflow({ id: 'wf-x', status: 'running' });
+      const ownedAgent = makeAgent(
+        { id: 'wf-ag', status: 'running' },
+        { id: 'wf-ag-job', workflow_id: 'wf-x' },
+      );
+      const ownedQueuedJob = makeJob({ id: 'wf-q-job', workflow_id: 'wf-x' });
+      const result = buildGroupedTaskItems([wf], [ownedAgent], [ownedQueuedJob], NOW);
+      const allItems = [...result.attention, ...result.active, ...result.recent];
+      // Only the workflow itself should appear
+      expect(allItems).toHaveLength(1);
+      expect(allItems[0].kind).toBe('workflow');
+    });
+  });
 });
