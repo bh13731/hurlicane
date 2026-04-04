@@ -10,7 +10,7 @@ import {
   taskToJobRequest,
   taskToWorkflowRequest,
 } from '../shared/taskNormalization.js';
-import type { CreateTaskRequest } from '../shared/types.js';
+import type { CreateTaskRequest, ReviewConfig } from '../shared/types.js';
 
 // ─── Shared test helpers ────────────────────────────────────────────────────
 
@@ -569,6 +569,51 @@ describe('taskToJobRequest', () => {
     const { reviewConfig: rc1, ...rest1 } = withConfig;
     const { reviewConfig: rc2, ...rest2 } = withoutConfig;
     expect(rest1).toEqual(rest2);
+    expect(rc1).toEqual(rc2);
+  });
+
+  it('exact-match success: nested reviewConfig grandchildren remain frozen and identity-preserved after conversion', () => {
+    // Uses a typed cast to thread a reviewConfig with genuine grandchild nesting
+    // through the converter's pass-through path.  A non-recursive deepFreeze
+    // would leave the grandchild objects/arrays unfrozen, so the Object.isFrozen
+    // assertions below would fail — proving the success-path mutation regression
+    // depends on recursive freezing, not just the standalone helper test.
+    const grandchild = { tag: 'important' };
+    const nestedModels = [{ name: 'gpt-4', settings: grandchild }];
+    const customReview = deepFreeze({ models: nestedModels, auto: false } as unknown as ReviewConfig);
+
+    // --- with-config path ---
+    const req1: CreateTaskRequest = { description: 'nested review', review: true, reviewConfig: customReview };
+    const matching1 = resolveTaskConfig(req1);
+    const withConfig = taskToJobRequest(req1, matching1);
+
+    // Pass-through identity: exact same frozen reference returned.
+    expect(withConfig.reviewConfig).toBe(customReview);
+    // Grandchild objects must still be frozen — a non-recursive deepFreeze fails here.
+    expect(Object.isFrozen((customReview as Record<string, unknown>).models)).toBe(true);
+    expect(Object.isFrozen(nestedModels[0])).toBe(true);
+    expect(Object.isFrozen(grandchild)).toBe(true);
+    // Content and identity of the grandchild must survive the converter.
+    expect((nestedModels[0] as Record<string, unknown>).settings).toBe(grandchild);
+    expect(grandchild.tag).toBe('important');
+
+    // --- without-config path (separate frozen input) ---
+    const grandchild2 = { tag: 'important' };
+    const nestedModels2 = [{ name: 'gpt-4', settings: grandchild2 }];
+    const customReview2 = deepFreeze({ models: nestedModels2, auto: false } as unknown as ReviewConfig);
+    const req2: CreateTaskRequest = { description: 'nested review', review: true, reviewConfig: customReview2 };
+    const withoutConfig = taskToJobRequest(req2);
+
+    // Same identity and frozen-state assertions for the no-config path.
+    expect(withoutConfig.reviewConfig).toBe(customReview2);
+    expect(Object.isFrozen(nestedModels2[0])).toBe(true);
+    expect(Object.isFrozen(grandchild2)).toBe(true);
+    expect((nestedModels2[0] as Record<string, unknown>).settings).toBe(grandchild2);
+
+    // Both paths must produce equivalent derived output (modulo distinct reviewConfig refs).
+    const { reviewConfig: rc1, ...r1 } = withConfig;
+    const { reviewConfig: rc2, ...r2 } = withoutConfig;
+    expect(r1).toEqual(r2);
     expect(rc1).toEqual(rc2);
   });
 
