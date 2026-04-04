@@ -146,8 +146,8 @@ export function TaskFeed({
 
   // ─── Build grouped items from model ─────────────────────────────────────
   const grouped: GroupedTaskItems = useMemo(
-    () => buildGroupedTaskItems(workflows, agents, queuedJobs, effectiveNow),
-    [workflows, agents, queuedJobs, effectiveNow],
+    () => buildGroupedTaskItems(workflows, agents, queuedJobs, effectiveNow, isArchived ? Infinity : undefined),
+    [workflows, agents, queuedJobs, effectiveNow, isArchived],
   );
 
   // ─── Apply drag-reorder to agent items within groups ────────────────────

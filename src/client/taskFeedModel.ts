@@ -168,12 +168,16 @@ export function buildGroupedTaskItems(
   // ── Standalone agents (exclude workflow-owned) ─────────────────────────────
 
   for (const agent of agents) {
-    // Skip agents whose jobs belong to a workflow
-    if (agent.job.workflow_id && workflowIds.has(agent.job.workflow_id)) continue;
+    // Skip agents whose jobs belong to ANY workflow — not just ones in the
+    // current workflow list. This prevents workflow child agents from appearing
+    // as standalone cards in views where their parent workflow is absent (e.g. archived).
+    if (agent.job.workflow_id) continue;
 
     const group = classifyAgent(agent);
 
-    if (group === 'recent') {
+    // In archived mode (recentWindowMs === Infinity), keep all completed items.
+    // In normal mode, drop completed items older than the recent window.
+    if (group === 'recent' && recentWindowMs !== Infinity) {
       const completedAt = agent.finished_at ?? agent.updated_at;
       if (now - completedAt > recentWindowMs) continue;
     }
@@ -202,7 +206,7 @@ export function buildGroupedTaskItems(
 
   for (const job of queuedJobs) {
     // Skip jobs belonging to a workflow
-    if (job.workflow_id && workflowIds.has(job.workflow_id)) continue;
+    if (job.workflow_id) continue;
     // Skip jobs that already have a running agent (avoid duplicate cards)
     if (agentJobIds.has(job.id)) continue;
 
