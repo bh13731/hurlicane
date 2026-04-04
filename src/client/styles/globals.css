@@ -197,34 +197,36 @@
 }
 
 .sidebar-job-repeat {
+  --badge-color: var(--accent);
   flex-shrink: 0;
   font-size: 10px;
   color: var(--text-muted);
-  background: rgba(88, 166, 255, 0.12);
-  border: 1px solid rgba(88, 166, 255, 0.25);
+  background: color-mix(in srgb, var(--badge-color) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--badge-color) 25%, transparent);
   border-radius: 3px;
   padding: 1px 4px;
   white-space: nowrap;
 }
 
 .sidebar-job-retry {
-  --retry-color: var(--status-running);
+  --badge-color: var(--status-running);
   flex-shrink: 0;
   font-size: 10px;
-  color: var(--retry-color);
-  background: color-mix(in srgb, var(--retry-color) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--retry-color) 25%, transparent);
+  color: var(--badge-color);
+  background: color-mix(in srgb, var(--badge-color) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--badge-color) 25%, transparent);
   border-radius: 3px;
   padding: 1px 4px;
   white-space: nowrap;
 }
 
 .sidebar-job-scheduled {
+  --badge-color: var(--badge-scheduled);
   flex-shrink: 0;
   font-size: 10px;
   color: var(--text-muted);
-  background: rgba(255, 166, 88, 0.12);
-  border: 1px solid rgba(255, 166, 88, 0.3);
+  background: color-mix(in srgb, var(--badge-color) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--badge-color) 30%, transparent);
   border-radius: 3px;
   padding: 1px 4px;
   white-space: nowrap;
@@ -233,16 +235,17 @@
 }
 
 .sidebar-job-scheduled:hover {
-  background: rgba(255, 166, 88, 0.25);
-  color: rgb(255, 190, 120);
+  background: color-mix(in srgb, var(--badge-color) 25%, transparent);
+  color: color-mix(in srgb, var(--badge-color) 80%, white);
 }
 
 .sidebar-job-badge-debate {
+  --badge-color: var(--badge-debate);
   flex-shrink: 0;
   font-size: 10px;
-  color: #a78bfa;
-  background: rgba(167, 139, 250, 0.12);
-  border: 1px solid rgba(167, 139, 250, 0.25);
+  color: var(--badge-color);
+  background: color-mix(in srgb, var(--badge-color) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--badge-color) 25%, transparent);
   border-radius: 3px;
   padding: 0 4px;
 }
