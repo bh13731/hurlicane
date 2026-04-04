@@ -572,7 +572,7 @@ describe('taskToJobRequest', () => {
     expect(rc1).toEqual(rc2);
   });
 
-  it('exact-match success: nested reviewConfig grandchildren remain frozen and identity-preserved after conversion', () => {
+  it('exact-match success: nested reviewConfig and all grandchildren remain frozen and unchanged after conversion', () => {
     // Uses a typed cast to thread a reviewConfig with genuine grandchild nesting
     // through the converter's pass-through path.  A non-recursive deepFreeze
     // would leave the grandchild objects/arrays unfrozen, so the Object.isFrozen
@@ -582,11 +582,22 @@ describe('taskToJobRequest', () => {
     const nestedModels = [{ name: 'gpt-4', settings: grandchild }];
     const customReview = deepFreeze({ models: nestedModels, auto: false } as unknown as ReviewConfig);
 
+    // Snapshot the full nested structure before conversion so we can detect any
+    // field-level mutation, not just changes to the specific grandchildren we
+    // spot-check below.
+    const fullSnapshotBefore = JSON.parse(JSON.stringify(customReview));
+
     // --- with-config path ---
     const req1: CreateTaskRequest = { description: 'nested review', review: true, reviewConfig: customReview };
     const matching1 = resolveTaskConfig(req1);
     const withConfig = taskToJobRequest(req1, matching1);
 
+    // Full-object unchanged: the supplied reviewConfig must be identical to its
+    // pre-conversion snapshot after the with-config call.
+    expect(JSON.parse(JSON.stringify(customReview))).toEqual(fullSnapshotBefore);
+
+    // Top-level supplied object must be frozen.
+    expect(Object.isFrozen(customReview)).toBe(true);
     // Pass-through identity: exact same frozen reference returned.
     expect(withConfig.reviewConfig).toBe(customReview);
     // Grandchild objects must still be frozen — a non-recursive deepFreeze fails here.
@@ -601,9 +612,18 @@ describe('taskToJobRequest', () => {
     const grandchild2 = { tag: 'important' };
     const nestedModels2 = [{ name: 'gpt-4', settings: grandchild2 }];
     const customReview2 = deepFreeze({ models: nestedModels2, auto: false } as unknown as ReviewConfig);
+
+    // Snapshot before the no-config conversion call.
+    const fullSnapshotBefore2 = JSON.parse(JSON.stringify(customReview2));
+
     const req2: CreateTaskRequest = { description: 'nested review', review: true, reviewConfig: customReview2 };
     const withoutConfig = taskToJobRequest(req2);
 
+    // Full-object unchanged after the no-config call.
+    expect(JSON.parse(JSON.stringify(customReview2))).toEqual(fullSnapshotBefore2);
+
+    // Top-level supplied object must be frozen.
+    expect(Object.isFrozen(customReview2)).toBe(true);
     // Same identity and frozen-state assertions for the no-config path.
     expect(withoutConfig.reviewConfig).toBe(customReview2);
     expect(Object.isFrozen(nestedModels2[0])).toBe(true);
