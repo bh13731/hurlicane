@@ -100,8 +100,8 @@ export function TaskFeed({
 
   // ─── Build grouped items from model ─────────────────────────────────────
   const grouped: GroupedTaskItems = useMemo(
-    () => buildGroupedTaskItems(workflows, agents, queuedJobs, now),
-    [workflows, agents, queuedJobs, now],
+    () => buildGroupedTaskItems(workflows, agents, queuedJobs, effectiveNow),
+    [workflows, agents, queuedJobs, effectiveNow],
   );
 
   // ─── Sync custom drag order when agents change ─────────────────────────
@@ -327,8 +327,26 @@ export function TaskFeed({
     );
   }
 
-  // ─── Main render ────────────────────────────────────────────────────────
+  // ─── Compute post-filter visibility ──────────────────────────────────────
   const totalItems = grouped.attention.length + grouped.active.length + grouped.recent.length;
+  const filtersActive = activeFilters.size > 0 || showFlaggedOnly;
+
+  const visibleItemCount = useMemo(() => {
+    if (!filtersActive) return totalItems;
+    let count = 0;
+    for (const items of [grouped.attention, grouped.active, grouped.recent]) {
+      for (const item of items) {
+        if (item.kind === 'agent') {
+          if (activeFilters.size > 0 && !activeFilters.has(item.agent.status)) continue;
+          if (showFlaggedOnly && !item.agent.job?.flagged) continue;
+        }
+        count++;
+      }
+    }
+    return count;
+  }, [grouped, filtersActive, activeFilters, showFlaggedOnly, totalItems]);
+
+  // ─── Main render ────────────────────────────────────────────────────────
 
   if (totalItems === 0 && !showFilterBar) {
     return (
@@ -417,13 +435,10 @@ export function TaskFeed({
       {renderGroup('active', grouped.active)}
       {renderGroup('recent', grouped.recent)}
 
-      {/* If all groups are empty after filtering */}
-      {totalItems > 0 &&
-        grouped.attention.length === 0 &&
-        grouped.active.length === 0 &&
-        grouped.recent.length === 0 && (
+      {/* Filtered empty state: items exist but all hidden by filters */}
+      {totalItems > 0 && visibleItemCount === 0 && (
         <div className={styles.empty}>
-          <p>No tasks match the current view.</p>
+          <p>No tasks match the current filters.</p>
         </div>
       )}
     </div>
