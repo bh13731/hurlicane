@@ -11,6 +11,7 @@ import { checkFileLocksHandler, checkFileLocksSchema } from './tools/checkFileLo
 import { reportStatusHandler, reportStatusSchema } from './tools/reportStatus.js';
 import { createJobHandler, createJobSchema } from './tools/createJob.js';
 import { createAutonomousAgentRunHandler, createAutonomousAgentRunSchema } from './tools/createAutonomousAgentRun.js';
+import { createTaskHandler, createTaskSchema } from './tools/createTask.js';
 import { waitForJobsHandler, waitForJobsSchema, activeWaits, abortAgentWait } from './tools/waitForJobs.js';
 import { writeNoteHandler, writeNoteSchema, readNoteHandler, readNoteSchema, listNotesHandler, listNotesSchema } from './tools/notes.js';
 import { watchNotesHandler, watchNotesSchema } from './tools/watchNotes.js';
@@ -337,7 +338,7 @@ function buildMcpServer(agentId: string): MCP {
 
   server.tool(
     'create_job',
-    'Create a new job that will be queued and run by another agent. Returns { job_id, title, status }. Use wait_for_jobs to block until it completes.',
+    'Create a new job that will be queued and run by another agent. Returns { job_id, title, status }. Use wait_for_jobs to block until it completes. NOTE: Prefer create_task instead — it supports jobs, reviewed jobs, and autonomous workflows through a single unified interface.',
     {
       description: createJobSchema.shape.description,
       title: createJobSchema.shape.title,
@@ -355,7 +356,7 @@ function buildMcpServer(agentId: string): MCP {
 
   server.tool(
     'create_autonomous_agent_run',
-    'Create a structured autonomous agent run with assess, review, and implement phases. Use this instead of create_job when the work needs iterative planning, milestone tracking, shared worktree continuity, or automatic PR creation.',
+    'Create a structured autonomous agent run with assess, review, and implement phases. Use this instead of create_job when the work needs iterative planning, milestone tracking, shared worktree continuity, or automatic PR creation. NOTE: Prefer create_task instead — it supports jobs, reviewed jobs, and autonomous workflows through a single unified interface.',
     {
       task: createAutonomousAgentRunSchema.shape.task,
       title: createAutonomousAgentRunSchema.shape.title,
@@ -377,6 +378,63 @@ function buildMcpServer(agentId: string): MCP {
     },
     safeTool('create_autonomous_agent_run', agentId, async (input) => {
       const result = await createAutonomousAgentRunHandler(agentId, input as z.infer<typeof createAutonomousAgentRunSchema>);
+      return { content: [{ type: 'text' as const, text: result }] };
+    })
+  );
+
+  server.tool(
+    'create_task',
+    'Create a task using the unified interface. Automatically routes to a job (iterations=1) or an autonomous workflow (iterations>1) based on the resolved configuration. Supports presets (quick, reviewed, autonomous) that pre-fill sensible defaults. Returns { task_type, job_id/autonomous_agent_run_id, title, status }.',
+    {
+      // Core
+      description: createTaskSchema.shape.description,
+      title: createTaskSchema.shape.title,
+      preset: createTaskSchema.shape.preset,
+      // Complexity dial
+      review: createTaskSchema.shape.review,
+      iterations: createTaskSchema.shape.iterations,
+      // Model
+      model: createTaskSchema.shape.model,
+      reviewerModel: createTaskSchema.shape.reviewerModel,
+      // Environment
+      workDir: createTaskSchema.shape.workDir,
+      useWorktree: createTaskSchema.shape.useWorktree,
+      templateId: createTaskSchema.shape.templateId,
+      projectId: createTaskSchema.shape.projectId,
+      // Stopping conditions (simple)
+      stopMode: createTaskSchema.shape.stopMode,
+      stopValue: createTaskSchema.shape.stopValue,
+      maxTurns: createTaskSchema.shape.maxTurns,
+      // Stopping conditions (per-phase)
+      maxTurnsAssess: createTaskSchema.shape.maxTurnsAssess,
+      maxTurnsReview: createTaskSchema.shape.maxTurnsReview,
+      maxTurnsImplement: createTaskSchema.shape.maxTurnsImplement,
+      stopModeAssess: createTaskSchema.shape.stopModeAssess,
+      stopValueAssess: createTaskSchema.shape.stopValueAssess,
+      stopModeReview: createTaskSchema.shape.stopModeReview,
+      stopValueReview: createTaskSchema.shape.stopValueReview,
+      stopModeImplement: createTaskSchema.shape.stopModeImplement,
+      stopValueImplement: createTaskSchema.shape.stopValueImplement,
+      completionThreshold: createTaskSchema.shape.completionThreshold,
+      // Advanced job options
+      context: createTaskSchema.shape.context,
+      priority: createTaskSchema.shape.priority,
+      dependsOn: createTaskSchema.shape.dependsOn,
+      interactive: createTaskSchema.shape.interactive,
+      repeatIntervalMs: createTaskSchema.shape.repeatIntervalMs,
+      scheduledAt: createTaskSchema.shape.scheduledAt,
+      retryPolicy: createTaskSchema.shape.retryPolicy,
+      maxRetries: createTaskSchema.shape.maxRetries,
+      completionChecks: createTaskSchema.shape.completionChecks,
+      reviewConfig: createTaskSchema.shape.reviewConfig,
+      // Debate
+      debate: createTaskSchema.shape.debate,
+      debateClaudeModel: createTaskSchema.shape.debateClaudeModel,
+      debateCodexModel: createTaskSchema.shape.debateCodexModel,
+      debateMaxRounds: createTaskSchema.shape.debateMaxRounds,
+    },
+    safeTool('create_task', agentId, async (input) => {
+      const result = await createTaskHandler(agentId, input as z.infer<typeof createTaskSchema>);
       return { content: [{ type: 'text' as const, text: result }] };
     })
   );

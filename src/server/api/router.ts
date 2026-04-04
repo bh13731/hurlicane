@@ -20,6 +20,7 @@ import modelsRouter from './models.js';
 import healthRouter from './health.js';
 import eventsRouter from './events.js';
 import resilienceEventsRouter from './resilienceEvents.js';
+import tasksRouter from './tasks.js';
 
 const router = Router();
 
@@ -45,5 +46,6 @@ router.use('/eye', eyeRouter);
 router.use('/local-config', localConfigRouter);
 router.use('/models', modelsRouter);
 router.use('/resilience-events', resilienceEventsRouter);
+router.use('/tasks', tasksRouter);
 
 export default router;

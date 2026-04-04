@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import type { Debate, Workflow } from '@shared/types';
 
 interface HeaderProps {
-  onNewJob: () => void;
+  onNewTask: () => void;
   onTemplates: () => void;
   onBatchTemplates: () => void;
   onUsage: () => void;
@@ -14,7 +14,6 @@ interface HeaderProps {
   onDebate: () => void;
   onDebates?: Debate[];
   onSelectDebate?: (debate: Debate) => void;
-  onWorkflow: () => void;
   onWorkflows?: Workflow[];
   onSelectWorkflow?: (workflow: Workflow) => void;
   onKnowledgeBase: () => void;
@@ -56,7 +55,7 @@ function HurlicaLogo() {
   );
 }
 
-export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onDebates, onSelectDebate, onWorkflow, onWorkflows, onSelectWorkflow, onKnowledgeBase, onEye, eyeActive, eyeBadgeCount, eyeEnabled, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate }: HeaderProps) {
+export function Header({ onNewTask, onTemplates, onBatchTemplates, onUsage, onSearch, onTimeline, onDag, onProjects, onSettings, onDebate, onDebates, onSelectDebate, onWorkflows, onSelectWorkflow, onKnowledgeBase, onEye, eyeActive, eyeBadgeCount, eyeEnabled, onHome, currentProjectName, onClearProject, todayClaudeCost, todayCodexCost, costAutoUpdate, onToggleCostAutoUpdate }: HeaderProps) {
   const hasCost = (todayClaudeCost != null && todayClaudeCost > 0) || (todayCodexCost != null && todayCodexCost > 0);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
@@ -129,31 +128,28 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
             )}
           </button>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 1, background: 'var(--border)', borderRadius: 6, overflow: 'visible' }}>
-          <button className="header-btn" onClick={onWorkflow} style={{ borderRadius: onWorkflows && onWorkflows.length > 0 ? '6px 0 0 6px' : '6px' }}>Autonomous Agents</button>
-          {onWorkflows && onWorkflows.length > 0 && (
-            <div ref={workflowMenuRef} style={{ position: 'relative' }}>
-              <button className="header-btn" style={{ padding: '5px 6px', borderRadius: '0 6px 6px 0' }} onClick={() => setWorkflowMenuOpen(v => !v)} title="View autonomous agent runs">&#x25be;</button>
-              {workflowMenuOpen && (
-                <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 200, marginTop: 4, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', minWidth: 280, maxWidth: 400, maxHeight: 360, overflowY: 'auto' }}>
-                  <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid var(--border)' }}>Autonomous Agents</div>
-                  {[...onWorkflows].sort((a, b) => b.updated_at - a.updated_at).map(w => {
-                    const statusColor = w.status === 'running' ? 'var(--status-running)' : w.status === 'complete' ? 'var(--status-done)' : w.status === 'blocked' ? '#f59e0b' : 'var(--status-failed)';
-                    return (
-                      <button key={w.id} onClick={() => { setWorkflowMenuOpen(false); onSelectWorkflow?.(w); }}
-                        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', textAlign: 'left', borderBottom: '1px solid var(--border)' }}
-                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')} onMouseLeave={e => (e.currentTarget.style.background = 'none')}>
-                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor, flexShrink: 0, display: 'inline-block' }} />
-                        <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.title}</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-dim)', flexShrink: 0 }}>C{w.current_cycle}/{w.max_cycles}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        {onWorkflows && onWorkflows.length > 0 && (
+          <div ref={workflowMenuRef} style={{ position: 'relative' }}>
+            <button className="header-btn" style={{ borderRadius: 6 }} onClick={() => setWorkflowMenuOpen(v => !v)} title="View autonomous agent runs">Autonomous Agents &#x25be;</button>
+            {workflowMenuOpen && (
+              <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 200, marginTop: 4, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', minWidth: 280, maxWidth: 400, maxHeight: 360, overflowY: 'auto' }}>
+                <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid var(--border)' }}>Autonomous Agents</div>
+                {[...onWorkflows].sort((a, b) => b.updated_at - a.updated_at).map(w => {
+                  const statusColor = w.status === 'running' ? 'var(--status-running)' : w.status === 'complete' ? 'var(--status-done)' : w.status === 'blocked' ? '#f59e0b' : 'var(--status-failed)';
+                  return (
+                    <button key={w.id} onClick={() => { setWorkflowMenuOpen(false); onSelectWorkflow?.(w); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', textAlign: 'left', borderBottom: '1px solid var(--border)' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')} onMouseLeave={e => (e.currentTarget.style.background = 'none')}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor, flexShrink: 0, display: 'inline-block' }} />
+                      <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.title}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-dim)', flexShrink: 0 }}>C{w.current_cycle}/{w.max_cycles}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 1, background: 'var(--border)', borderRadius: 6, overflow: 'visible' }}>
           <button className="header-btn" onClick={onDebate} style={{ borderRadius: '6px 0 0 6px' }}>Debate</button>
           {onDebates && onDebates.length > 0 && (
@@ -206,7 +202,7 @@ export function Header({ onNewJob, onTemplates, onBatchTemplates, onUsage, onSea
         <button className="btn-icon" onClick={onSettings} title="Settings" aria-label="Settings">
           <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd"/></svg>
         </button>
-        <button className="btn btn-primary btn-sm" onClick={onNewJob}>+ New Job</button>
+        <button className="btn btn-primary btn-sm" onClick={onNewTask}>+ New Task</button>
       </div>
     </header>
   );
