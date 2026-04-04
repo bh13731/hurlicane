@@ -29,6 +29,42 @@ function deepFreeze<T>(obj: T): T {
   return obj;
 }
 
+// ─── deepFreeze (helper regression) ────────────────────────────────────────
+
+describe('deepFreeze', () => {
+  it('freezes grandchild objects and arrays that a one-level helper would leave mutable', () => {
+    // Structure with three nesting levels: top → child → grandchild.
+    // The pre-M44 helper froze the top level and its immediate children but
+    // never recursed into grandchildren, so `grandchildArray` and
+    // `grandchildObj` would have remained mutable under the old implementation.
+    const grandchildArray = ['a', 'b'];
+    const grandchildObj = { key: 'value' };
+    const fixture = deepFreeze({
+      child: {
+        grandchildArray,
+        grandchildObj,
+      },
+      items: [{ nested: 'inside-array' }],
+    });
+
+    // Top level is frozen
+    expect(Object.isFrozen(fixture)).toBe(true);
+    // Immediate children are frozen
+    expect(Object.isFrozen(fixture.child)).toBe(true);
+    expect(Object.isFrozen(fixture.items)).toBe(true);
+    // Grandchildren must also be frozen — the old helper would fail here
+    expect(Object.isFrozen(grandchildArray)).toBe(true);
+    expect(Object.isFrozen(grandchildObj)).toBe(true);
+    // Object nested inside a frozen array must also be frozen
+    expect(Object.isFrozen(fixture.items[0])).toBe(true);
+
+    // Mutation attempts on grandchildren must throw
+    expect(() => { (grandchildArray as string[]).push('c'); }).toThrow();
+    expect(() => { (grandchildObj as Record<string, string>).key = 'changed'; }).toThrow();
+    expect(() => { (fixture.items[0] as Record<string, string>).nested = 'changed'; }).toThrow();
+  });
+});
+
 // ─── inferPreset ────────────────────────────────────────────────────────────
 
 describe('inferPreset', () => {
