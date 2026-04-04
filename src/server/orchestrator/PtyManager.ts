@@ -307,9 +307,10 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
   const useCodex = isCodexModel(model);
   if (useCodex) ensureCodexTrusted(workDir);
 
-  // Debate-stage and workflow-phase jobs run Claude with --print so the process
-  // exits automatically when the task is done, triggering the next stage.
-  const isDebateStage = isAutoExitJob(job);
+  // Non-interactive jobs run Claude with --print so the process exits automatically
+  // when the task is done. This covers: workflow phases, debate stages, and standalone
+  // batch jobs (is_interactive=0). Only truly interactive sessions use the TUI.
+  const usePrintMode = !useCodex && (isAutoExitJob(job) || !job.is_interactive);
 
   let execLine: string;
   if (useCodex) {
@@ -322,7 +323,7 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
     execLine = `exec ${JSON.stringify(CODEX)} --dangerously-bypass-approvals-and-sandbox -C ${JSON.stringify(workDir)} -c 'mcp_servers.orchestrator.url="${mcpUrl}"'${modelFlag}`;
   } else {
     const resumeFlag = resumeSessionId ? ` --resume ${JSON.stringify(resumeSessionId)}` : '';
-    if (isDebateStage) {
+    if (usePrintMode) {
       // Pipe --print output through tee so: (a) you can attach to the tmux session to observe,
       // and (b) the clean stream-json lands in a .ndjson file the UI can display properly.
       // Can't use `exec` with a pipe — the shell stays alive until claude + tee both finish.
@@ -546,9 +547,9 @@ function flushDebateNdjson(agentId: string): void {
 export async function attachPty(agentId: string, job: Job, cols = 100, rows = 50): Promise<void> {
   if (_ptys.has(agentId)) return; // already attached
 
-  // For debate-stage agents running --print, start tailing the tee'd .ndjson file so
+  // For agents running --print, start tailing the tee'd .ndjson file so
   // agent_output is populated live and the UI streams output as it arrives.
-  if (isAutoExitJob(job)) {
+  if (isAutoExitJob(job) || !job.is_interactive) {
     const ndjsonPath = path.join(PTY_LOG_DIR, `${agentId}.ndjson`);
     startTailing(agentId, job, ndjsonPath, 0, null);
   }
@@ -686,15 +687,14 @@ export async function attachPty(agentId: string, job: Job, cols = 100, rows = 50
         }
 
         // For interactive agents: user ended the session = done
-        // For debate-stage jobs: --print mode exits naturally = done
-        // For other non-interactive agents: tmux exit without finish_job = failed
-        const isDebateStage = isAutoExitJob(job);
-        const status = (job.is_interactive || isDebateStage) ? 'done' : 'failed';
-        const errorMsg = (job.is_interactive || isDebateStage) ? null : 'Agent session ended without calling finish_job.';
+        // For --print mode agents (debate, workflow, batch): exit naturally = done
+        const usesPrintMode = isAutoExitJob(job) || !job.is_interactive;
+        const status = (job.is_interactive || usesPrintMode) ? 'done' : 'failed';
+        const errorMsg = (job.is_interactive || usesPrintMode) ? null : 'Agent session ended without calling finish_job.';
 
-        // For auto-exit agents, stop the live tailer then flush any lines it missed
+        // For --print agents, stop the live tailer then flush any lines it missed
         // in the small race window between the last poll and the PTY exit.
-        if (isDebateStage) {
+        if (usesPrintMode) {
           stopTailing(agentId);
           flushDebateNdjson(agentId);
         }
