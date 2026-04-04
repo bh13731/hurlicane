@@ -572,22 +572,32 @@ describe('taskToJobRequest', () => {
     expect(rc1).toEqual(rc2);
   });
 
-  it('exact-match success: nested reviewConfig and all grandchildren remain frozen and unchanged after conversion', () => {
+  it('exact-match success: nested reviewConfig with non-JSON-preserved values remains frozen and unchanged after conversion', () => {
     // Uses a typed cast to thread a reviewConfig with genuine grandchild nesting
-    // through the converter's pass-through path.  A non-recursive deepFreeze
-    // would leave the grandchild objects/arrays unfrozen, so the Object.isFrozen
-    // assertions below would fail — proving the success-path mutation regression
-    // depends on recursive freezing, not just the standalone helper test.
-    const grandchild = { tag: 'important' };
+    // through the converter's pass-through path.  The fixture intentionally
+    // includes non-JSON-preserved nested values — an `undefined` property and a
+    // `NaN` value — so that reverting the snapshot strategy from structuredClone
+    // back to JSON round-tripping would silently drop them and miss a mutation.
+    //
+    // A non-recursive deepFreeze would also leave the grandchild objects/arrays
+    // unfrozen, so the Object.isFrozen assertions below would fail — proving the
+    // success-path mutation regression depends on recursive freezing, not just the
+    // standalone helper test.
+    const grandchild = { tag: 'important', removed: undefined as string | undefined, threshold: NaN };
     const nestedModels = [{ name: 'gpt-4', settings: grandchild }];
     const customReview = deepFreeze({ models: nestedModels, auto: false } as unknown as ReviewConfig);
 
     // Snapshot the full nested structure before conversion so we can detect any
     // field-level mutation, not just changes to the specific grandchildren we
     // spot-check below.  Uses structuredClone instead of JSON round-tripping so
-    // the snapshot preserves undefined values, sparse-array holes, and any
-    // non-JSON-serializable fields that a future typed-cast fixture might add.
+    // the snapshot preserves undefined values and NaN that JSON would erase.
     const fullSnapshotBefore = structuredClone(customReview);
+
+    // Verify the snapshot actually preserved the non-JSON state (sanity check).
+    const snapGC = ((fullSnapshotBefore as unknown as Record<string, unknown[]>).models[0] as Record<string, Record<string, unknown>>).settings;
+    expect('removed' in snapGC).toBe(true);
+    expect(snapGC.removed).toBeUndefined();
+    expect(snapGC.threshold).toBeNaN();
 
     // --- with-config path ---
     const req1: CreateTaskRequest = { description: 'nested review', review: true, reviewConfig: customReview };
@@ -596,7 +606,7 @@ describe('taskToJobRequest', () => {
 
     // Full-object unchanged: compare the frozen original directly to the
     // pre-conversion structuredClone.  Because the clone preserves undefined
-    // and non-JSON state, any mutation the JSON approach would miss is caught.
+    // and NaN, any mutation the JSON approach would miss is caught.
     expect(customReview).toEqual(fullSnapshotBefore);
 
     // Top-level supplied object must be frozen.
@@ -610,9 +620,13 @@ describe('taskToJobRequest', () => {
     // Content and identity of the grandchild must survive the converter.
     expect((nestedModels[0] as Record<string, unknown>).settings).toBe(grandchild);
     expect(grandchild.tag).toBe('important');
+    // Non-JSON-preserved nested values must survive the with-config path.
+    expect('removed' in grandchild).toBe(true);
+    expect(grandchild.removed).toBeUndefined();
+    expect(grandchild.threshold).toBeNaN();
 
     // --- without-config path (separate frozen input) ---
-    const grandchild2 = { tag: 'important' };
+    const grandchild2 = { tag: 'important', removed: undefined as string | undefined, threshold: NaN };
     const nestedModels2 = [{ name: 'gpt-4', settings: grandchild2 }];
     const customReview2 = deepFreeze({ models: nestedModels2, auto: false } as unknown as ReviewConfig);
 
@@ -635,6 +649,10 @@ describe('taskToJobRequest', () => {
     expect(Object.isFrozen(nestedModels2[0])).toBe(true);
     expect(Object.isFrozen(grandchild2)).toBe(true);
     expect((nestedModels2[0] as Record<string, unknown>).settings).toBe(grandchild2);
+    // Non-JSON-preserved nested values must survive the no-config path.
+    expect('removed' in grandchild2).toBe(true);
+    expect(grandchild2.removed).toBeUndefined();
+    expect(grandchild2.threshold).toBeNaN();
 
     // Both paths must produce equivalent derived output (modulo distinct reviewConfig refs).
     const { reviewConfig: rc1, ...r1 } = withConfig;
