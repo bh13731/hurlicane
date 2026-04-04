@@ -41,6 +41,10 @@
   --btn-primary-bg: #238636;
   --btn-primary-hover: #2ea043;
 
+  /* Badges */
+  --badge-debate: #d2a8ff;
+  --badge-warning: #eab308;
+
   /* Semantic */
   --danger: #f85149;
   --danger-bg: #3d1a1a;
