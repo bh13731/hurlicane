@@ -386,20 +386,26 @@ function buildMcpServer(agentId: string): MCP {
     'create_task',
     'Create a task using the unified interface. Automatically routes to a job (iterations=1) or an autonomous workflow (iterations>1) based on the resolved configuration. Supports presets (quick, reviewed, autonomous) that pre-fill sensible defaults. Returns { task_type, job_id/autonomous_agent_run_id, title, status }.',
     {
+      // Core
       description: createTaskSchema.shape.description,
       title: createTaskSchema.shape.title,
       preset: createTaskSchema.shape.preset,
+      // Complexity dial
       review: createTaskSchema.shape.review,
       iterations: createTaskSchema.shape.iterations,
+      // Model
       model: createTaskSchema.shape.model,
       reviewerModel: createTaskSchema.shape.reviewerModel,
-      work_dir: createTaskSchema.shape.work_dir,
+      // Environment
+      workDir: createTaskSchema.shape.workDir,
       useWorktree: createTaskSchema.shape.useWorktree,
       templateId: createTaskSchema.shape.templateId,
       projectId: createTaskSchema.shape.projectId,
+      // Stopping conditions (simple)
       stopMode: createTaskSchema.shape.stopMode,
       stopValue: createTaskSchema.shape.stopValue,
       maxTurns: createTaskSchema.shape.maxTurns,
+      // Stopping conditions (per-phase)
       maxTurnsAssess: createTaskSchema.shape.maxTurnsAssess,
       maxTurnsReview: createTaskSchema.shape.maxTurnsReview,
       maxTurnsImplement: createTaskSchema.shape.maxTurnsImplement,
@@ -410,9 +416,22 @@ function buildMcpServer(agentId: string): MCP {
       stopModeImplement: createTaskSchema.shape.stopModeImplement,
       stopValueImplement: createTaskSchema.shape.stopValueImplement,
       completionThreshold: createTaskSchema.shape.completionThreshold,
+      // Advanced job options
+      context: createTaskSchema.shape.context,
       priority: createTaskSchema.shape.priority,
-      depends_on: createTaskSchema.shape.depends_on,
+      dependsOn: createTaskSchema.shape.dependsOn,
+      interactive: createTaskSchema.shape.interactive,
+      repeatIntervalMs: createTaskSchema.shape.repeatIntervalMs,
+      scheduledAt: createTaskSchema.shape.scheduledAt,
+      retryPolicy: createTaskSchema.shape.retryPolicy,
+      maxRetries: createTaskSchema.shape.maxRetries,
       completionChecks: createTaskSchema.shape.completionChecks,
+      reviewConfig: createTaskSchema.shape.reviewConfig,
+      // Debate
+      debate: createTaskSchema.shape.debate,
+      debateClaudeModel: createTaskSchema.shape.debateClaudeModel,
+      debateCodexModel: createTaskSchema.shape.debateCodexModel,
+      debateMaxRounds: createTaskSchema.shape.debateMaxRounds,
     },
     safeTool('create_task', agentId, async (input) => {
       const result = await createTaskHandler(agentId, input as z.infer<typeof createTaskSchema>);

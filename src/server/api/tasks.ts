@@ -14,7 +14,6 @@ import {
 } from '../../shared/taskNormalization.js';
 import type { CreateTaskRequest, CreateTaskResponse, Debate } from '../../shared/types.js';
 
-const router = Router();
 const anthropic = new Anthropic();
 
 const TITLE_MAX = 45;
@@ -44,40 +43,50 @@ async function generateSmartTitle(description: string): Promise<string> {
   return autoTitle(description);
 }
 
-router.post('/', (req, res) => {
-  const body = req.body as CreateTaskRequest;
+// ── Shared task creation logic ───────────────────────────────────────────────
+// Used by both the REST endpoint and the MCP create_task tool.
 
-  // 1. Validate
-  const error = validateTaskRequest(body);
-  if (error) {
-    res.status(400).json({ error });
-    return;
-  }
+export interface CreateTaskOptions {
+  /** Agent ID for MCP-originated tasks (sets created_by_agent_id on jobs) */
+  createdByAgentId?: string;
+  /** Override model when not specified in request (inherited from parent job) */
+  inheritedModel?: string | null;
+  /** Override projectId when not specified in request (inherited from parent job) */
+  inheritedProjectId?: string | null;
+}
 
-  // 2. Resolve routing
+export interface CreateTaskResult {
+  response: CreateTaskResponse;
+  /** Fire-and-forget async follow-up work (e.g. smart title generation) */
+  asyncWork?: () => Promise<void>;
+}
+
+/**
+ * Core task creation — validates, resolves routing, creates job or workflow.
+ * Throws on debate validation errors (caller should catch and return 400).
+ */
+export function createTaskCore(
+  body: CreateTaskRequest,
+  opts: CreateTaskOptions = {},
+): CreateTaskResult {
   const config = resolveTaskConfig(body);
 
   if (config.routesTo === 'workflow') {
-    // ── Workflow path ─────────────────────────────────────────────────────
-    try {
-      const workflowReq = taskToWorkflowRequest(body, config);
-      const result = createAutonomousAgentRun(workflowReq);
-      socket.emitWorkflowNew(result.workflow);
+    const workflowReq = taskToWorkflowRequest(body, config);
+    const result = createAutonomousAgentRun(workflowReq);
+    socket.emitWorkflowNew(result.workflow);
 
-      const response: CreateTaskResponse = {
+    return {
+      response: {
         task_type: 'workflow',
         workflow: result.workflow,
         project: result.project,
         jobs: result.jobs,
-      };
-      res.status(201).json(response);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message ?? 'Failed to create workflow' });
-    }
-    return;
+      },
+    };
   }
 
-  // ── Job path — replicates full POST /api/jobs behavior ──────────────────
+  // ── Job path — full behavior: title, debate, interactive, scheduling ─────
   const jobReq = taskToJobRequest(body, config);
 
   const explicitTitle = jobReq.title?.trim();
@@ -90,7 +99,7 @@ router.post('/', (req, res) => {
   const shouldGenerateSmartTitle = !explicitTitle && !!titleSource;
 
   let preDebateId: string | null = null;
-  let projectId = jobReq.projectId ?? null;
+  let projectId = jobReq.projectId ?? opts.inheritedProjectId ?? null;
 
   if (jobReq.debate) {
     let debateTask = jobReq.description?.trim() || '';
@@ -99,8 +108,7 @@ router.post('/', (req, res) => {
       debateTask = tpl?.content?.trim() ?? '';
     }
     if (!debateTask) {
-      res.status(400).json({ error: 'debate requires a description or template with content' });
-      return;
+      throw new Error('debate requires a description or template with content');
     }
 
     const claudeModel = jobReq.debateClaudeModel?.trim() || 'claude-sonnet-4-6[1m]';
@@ -161,7 +169,7 @@ router.post('/', (req, res) => {
     max_turns: jobReq.maxTurns ?? 50,
     stop_mode: jobReq.stopMode ?? 'turns',
     stop_value: jobReq.stopValue ?? (jobReq.maxTurns ?? 50),
-    model: jobReq.model ?? null,
+    model: jobReq.model ?? opts.inheritedModel ?? null,
     template_id: jobReq.templateId ?? null,
     depends_on: jobReq.dependsOn?.length ? JSON.stringify(jobReq.dependsOn) : null,
     is_interactive: jobReq.interactive ? 1 : 0,
@@ -176,6 +184,7 @@ router.post('/', (req, res) => {
     completion_checks: jobReq.completionChecks?.length ? JSON.stringify(jobReq.completionChecks) : null,
     review_config: jobReq.reviewConfig ? JSON.stringify(jobReq.reviewConfig) : null,
     pre_debate_id: preDebateId,
+    created_by_agent_id: opts.createdByAgentId ?? null,
   });
 
   socket.emitJobNew(job);
@@ -186,19 +195,42 @@ router.post('/', (req, res) => {
     job,
     jobs: [job],
   };
-  res.status(201).json(response);
 
-  // Generate smart title async — don't block the response
-  if (shouldGenerateSmartTitle) {
-    generateSmartTitle(titleSource!).then(smartTitle => {
-      if (smartTitle && smartTitle !== title) {
-        queries.updateJobTitle(job.id, smartTitle);
-        const updated = queries.getJobById(job.id);
-        if (updated) {
-          socket.emitJobUpdate(updated);
+  const asyncWork = shouldGenerateSmartTitle
+    ? async () => {
+        const smartTitle = await generateSmartTitle(titleSource!);
+        if (smartTitle && smartTitle !== title) {
+          queries.updateJobTitle(job.id, smartTitle);
+          const updated = queries.getJobById(job.id);
+          if (updated) socket.emitJobUpdate(updated);
         }
       }
-    }).catch(() => {}); // keep fallback on error
+    : undefined;
+
+  return { response, asyncWork };
+}
+
+// ── Express router ───────────────────────────────────────────────────────────
+
+const router = Router();
+
+router.post('/', (req, res) => {
+  const body = req.body as CreateTaskRequest;
+
+  // 1. Validate
+  const error = validateTaskRequest(body);
+  if (error) {
+    res.status(400).json({ error });
+    return;
+  }
+
+  // 2. Create task using shared logic
+  try {
+    const { response, asyncWork } = createTaskCore(body);
+    res.status(201).json(response);
+    if (asyncWork) asyncWork().catch(() => {});
+  } catch (err: any) {
+    res.status(400).json({ error: err.message ?? 'Failed to create task' });
   }
 });
 
