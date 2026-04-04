@@ -4,6 +4,7 @@ import { ProposalCard } from './ProposalCard';
 import socket from '../socket';
 import type { Discussion, DiscussionMessage, Proposal, ProposalMessage, AgentWithJob } from '@shared/types';
 import { InlineOutput, StatusDot, formatDuration, formatTime, formatNextCycle } from './eye/utils';
+import { DailySummary } from './eye/DailySummary';
 
 interface EyeStatus {
   running: boolean;
@@ -160,112 +161,6 @@ function ActivityTab() {
               {canExpand && <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{isExpanded ? '\u25b4' : '\u25be'}</span>}
             </div>
             {isExpanded && <InlineOutput agentId={agent.id} jobStatus={agent.status} />}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Summary Tab ──────────────────────────────────────────────────────────────
-
-interface DailySummaryItem { timestamp: number; text: string }
-interface DailySummary { date: string; items: DailySummaryItem[] }
-
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00');
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-  if (dateStr === today) return 'Today';
-  if (dateStr === yesterday) return 'Yesterday';
-  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-}
-
-function SummaryTab() {
-  const [summaries, setSummaries] = useState<DailySummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
-
-  const fetchSummaries = useCallback(async () => {
-    try {
-      const res = await fetch('/api/eye/summaries');
-      if (res.ok) {
-        const data: DailySummary[] = await res.json();
-        setSummaries(data);
-        // Auto-expand today's date
-        const today = new Date().toISOString().slice(0, 10);
-        setExpandedDates(prev => {
-          const next = new Set(prev);
-          if (data.some(s => s.date === today)) next.add(today);
-          return next;
-        });
-      }
-    } catch { /* ignore */ }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { fetchSummaries(); }, [fetchSummaries]);
-  useEffect(() => {
-    const id = setInterval(fetchSummaries, 30_000);
-    return () => clearInterval(id);
-  }, [fetchSummaries]);
-
-  const toggleDate = (date: string) => setExpandedDates(prev => {
-    const next = new Set(prev);
-    if (next.has(date)) next.delete(date); else next.add(date);
-    return next;
-  });
-
-  if (loading) return <div className="eye-empty">Loading...</div>;
-  if (summaries.length === 0) return (
-    <div className="eye-empty" style={{ padding: 24 }}>
-      No summary yet. Eye will populate this as it works.<br />
-      <span style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6, display: 'block' }}>
-        Eye uses <code>update_daily_summary</code> to record key findings each cycle.
-      </span>
-    </div>
-  );
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      {summaries.map(summary => {
-        const isExpanded = expandedDates.has(summary.date);
-        return (
-          <div key={summary.date} style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-            <div
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
-                cursor: 'pointer', background: isExpanded ? 'var(--bg-elevated)' : 'transparent',
-                userSelect: 'none',
-              }}
-              onClick={() => toggleDate(summary.date)}
-              onMouseEnter={e => { if (!isExpanded) (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-interactive)'; }}
-              onMouseLeave={e => { if (!isExpanded) (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
-            >
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>
-                {formatDate(summary.date)}
-              </span>
-              <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{summary.items.length} item{summary.items.length !== 1 ? 's' : ''}</span>
-              <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{isExpanded ? '▴' : '▾'}</span>
-            </div>
-            {isExpanded && (
-              <div style={{ padding: '6px 14px 10px', borderTop: '1px solid var(--border)' }}>
-                {summary.items.length === 0 ? (
-                  <div style={{ fontSize: 12, color: 'var(--text-dim)', fontStyle: 'italic' }}>No items.</div>
-                ) : (
-                  <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {summary.items.map((item, idx) => (
-                      <li key={idx} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                        <span style={{ fontSize: 11, color: 'var(--text-dim)', flexShrink: 0, paddingTop: 1 }}>
-                          {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                        <span style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>{item.text}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
           </div>
         );
       })}
@@ -1563,7 +1458,7 @@ export function EyePanel({ discussions, proposals, onClose }: EyePanelProps) {
         </div>
       ) : activeTab === 'summary' ? (
         <div className="eye-col-body" style={{ flex: 1 }}>
-          <SummaryTab />
+          <DailySummary />
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto' }}>
