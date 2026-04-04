@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { AgentCard } from './AgentCard';
 import { WorkflowSummaryCard } from './WorkflowSummaryCard';
-import { buildGroupedTaskItems, type TaskItem, type TaskGroup, type GroupedTaskItems } from '../taskFeedModel';
+import { buildGroupedTaskItems, type TaskItem, type AgentTaskItem, type TaskGroup, type GroupedTaskItems } from '../taskFeedModel';
 import type { AgentWithJob, AgentStatus, Job, Workflow } from '@shared/types';
 import styles from './TaskFeed.module.css';
 
@@ -55,6 +55,52 @@ function useNowTick(enabled: boolean): number {
   return now;
 }
 
+/**
+ * Reorder standalone agent items within a group based on customOrder (drag state),
+ * while keeping workflow and queued_job items in their model-defined positions.
+ * In archived mode, agents sort by updated_at descending (like AgentGrid).
+ */
+function applyCustomOrder(items: TaskItem[], customOrder: string[], isArchived: boolean): TaskItem[] {
+  // Collect agent items and their original indices
+  const agentSlots: number[] = [];
+  const agentItems: TaskItem[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].kind === 'agent') {
+      agentSlots.push(i);
+      agentItems.push(items[i]);
+    }
+  }
+
+  if (agentItems.length <= 1) return items; // nothing to reorder
+
+  if (isArchived) {
+    // Archived view: sort agents by updated_at descending (most recent first)
+    agentItems.sort((a, b) => {
+      const agentA = (a as AgentTaskItem).agent;
+      const agentB = (b as AgentTaskItem).agent;
+      return agentB.updated_at - agentA.updated_at;
+    });
+  } else {
+    // Active view: sort agents by customOrder position, preserving model order as fallback
+    agentItems.sort((a, b) => {
+      const ai = customOrder.indexOf((a as AgentTaskItem).agent.id);
+      const bi = customOrder.indexOf((b as AgentTaskItem).agent.id);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1;
+      if (bi !== -1) return 1;
+      return 0; // preserve model order for agents not in customOrder
+    });
+  }
+
+  // Place reordered agent items back into their original slots
+  const result = [...items];
+  for (let i = 0; i < agentSlots.length; i++) {
+    result[agentSlots[i]] = agentItems[i];
+  }
+  return result;
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function TaskFeed({
@@ -103,6 +149,13 @@ export function TaskFeed({
     () => buildGroupedTaskItems(workflows, agents, queuedJobs, effectiveNow),
     [workflows, agents, queuedJobs, effectiveNow],
   );
+
+  // ─── Apply drag-reorder to agent items within groups ────────────────────
+  const orderedGroups: GroupedTaskItems = useMemo(() => ({
+    attention: applyCustomOrder(grouped.attention, customOrder, !!isArchived),
+    active: applyCustomOrder(grouped.active, customOrder, !!isArchived),
+    recent: applyCustomOrder(grouped.recent, customOrder, !!isArchived),
+  }), [grouped, customOrder, isArchived]);
 
   // ─── Sync custom drag order when agents change ─────────────────────────
   useEffect(() => {
@@ -431,9 +484,9 @@ export function TaskFeed({
         </div>
       )}
 
-      {renderGroup('attention', grouped.attention)}
-      {renderGroup('active', grouped.active)}
-      {renderGroup('recent', grouped.recent)}
+      {renderGroup('attention', orderedGroups.attention)}
+      {renderGroup('active', orderedGroups.active)}
+      {renderGroup('recent', orderedGroups.recent)}
 
       {/* Filtered empty state: items exist but all hidden by filters */}
       {totalItems > 0 && visibleItemCount === 0 && (
