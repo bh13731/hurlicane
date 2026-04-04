@@ -15,7 +15,6 @@ import type {
   CreateWorkflowRequest,
   ResolvedTaskConfig,
   ReviewConfig,
-  StopMode,
   TaskPreset,
 } from './types.js';
 
@@ -86,6 +85,13 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
   if (req.preset !== undefined && !PRESET_DEFAULTS[req.preset]) {
     return `invalid preset: ${req.preset}`;
   }
+  // Universal numeric range checks (regardless of routing)
+  if (req.stopValue !== undefined && req.stopValue <= 0) {
+    return 'stopValue must be a positive number';
+  }
+  if (req.maxTurns !== undefined && req.maxTurns <= 0) {
+    return 'maxTurns must be a positive number';
+  }
   // Job-only options are invalid for autonomous tasks
   const config = resolveTaskConfig(req);
   if (config.routesTo === 'workflow') {
@@ -108,6 +114,19 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
     if (req.context !== undefined)   return 'context is not supported for autonomous tasks (iterations > 1)';
     if (req.reviewConfig !== undefined) return 'reviewConfig is not supported for autonomous tasks (iterations > 1); reviewer model is set via reviewerModel';
     if (req.projectId !== undefined)   return 'projectId is not supported for autonomous tasks (iterations > 1) — workflows always create their own project';
+  }
+  // Per-phase stop fields are workflow-only — reject on job-routed tasks
+  if (config.routesTo === 'job') {
+    const perPhaseFields = [
+      'maxTurnsAssess', 'maxTurnsReview', 'maxTurnsImplement',
+      'stopModeAssess', 'stopModeReview', 'stopModeImplement',
+      'stopValueAssess', 'stopValueReview', 'stopValueImplement',
+    ] as const;
+    for (const field of perPhaseFields) {
+      if (req[field] !== undefined) {
+        return `${field} is a workflow-only field and cannot be used on job-routed tasks (iterations = 1)`;
+      }
+    }
   }
   return null;
 }
