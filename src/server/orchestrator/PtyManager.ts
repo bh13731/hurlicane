@@ -1153,6 +1153,14 @@ export function _cleanupStaleTmuxSessionsForTest(): void {
   cleanupStaleTmuxSessions();
 }
 
+export function _seedSpawningAgentForTest(agentId: string): void {
+  _spawningAgents.add(agentId);
+}
+
+export function _isAgentSpawningForTest(agentId: string): boolean {
+  return _spawningAgents.has(agentId);
+}
+
 export function _resolveStandalonePrintJobOutcomeForTest(agentId: string, job: Pick<Job, 'id' | 'title' | 'work_dir' | 'is_interactive' | 'debate_role' | 'workflow_phase'>): StandalonePrintResolution {
   return resolveStandalonePrintJobOutcome(agentId, job);
 }
@@ -1160,6 +1168,7 @@ export function _resolveStandalonePrintJobOutcomeForTest(agentId: string, job: P
 export function _resetPtyManagerStateForTest(): void {
   disconnectAll();
   resetResourceBackoff();
+  _spawningAgents.clear();
   _ptyBuffers.clear();
   _pendingResizes.clear();
   for (const agentId of Array.from(_ptyLogFds.keys())) closePtyLogFd(agentId);
