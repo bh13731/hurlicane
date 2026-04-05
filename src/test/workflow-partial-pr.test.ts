@@ -283,6 +283,7 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
   });
 
   it('does NOT remove worktree when pushAndCreatePr fails but commits exist', async () => {
+    vi.useFakeTimers();
     const mockedExecSync = vi.mocked(execSync);
     mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
@@ -293,8 +294,10 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
         if (cmd.includes('rev-list --count')) return Buffer.from('5\n');
         // git push succeeds
         if (cmd.startsWith('git push')) return Buffer.from('');
-        // gh pr create FAILS
+        // gh pr create FAILS (all 3 attempts)
         if (cmd.includes('gh pr create')) throw new Error('gh: Could not create PR');
+        // gh pr view fallback also returns nothing
+        if (cmd.includes('gh pr view')) throw new Error('no PRs found');
       }
       return Buffer.from('');
     });
@@ -302,7 +305,11 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
     const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
     const wf = makeWorkflow();
 
-    finalizeWorkflow(wf);
+    const promise = finalizeWorkflow(wf);
+    await vi.runAllTimersAsync();
+    await promise;
+
+    vi.useRealTimers();
 
     // Worktree removal should NOT have been called
     const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
@@ -325,7 +332,7 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
     const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
     const wf = makeWorkflow();
 
-    finalizeWorkflow(wf);
+    await finalizeWorkflow(wf);
 
     // Worktree removal SHOULD have been called
     const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
@@ -347,7 +354,7 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
     const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
     const wf = makeWorkflow();
 
-    finalizeWorkflow(wf);
+    await finalizeWorkflow(wf);
 
     // Worktree removal SHOULD have been called (no commits to preserve)
     const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
@@ -367,6 +374,7 @@ describe('finalizeWorkflow: blocked status on PR failure', () => {
   });
 
   it('transitions workflow from complete to blocked when PR creation fails with publishable commits', async () => {
+    vi.useFakeTimers();
     const mockedExecSync = vi.mocked(execSync);
     mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
@@ -374,7 +382,10 @@ describe('finalizeWorkflow: blocked status on PR failure', () => {
         if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
         if (cmd.includes('rev-list --count')) return Buffer.from('5\n');
         if (cmd.startsWith('git push')) return Buffer.from('');
+        // gh pr create FAILS all 3 attempts
         if (cmd.includes('gh pr create')) throw new Error('gh: Could not create PR');
+        // gh pr view fallback also fails
+        if (cmd.includes('gh pr view')) throw new Error('no PRs found');
       }
       return Buffer.from('');
     });
@@ -401,7 +412,11 @@ describe('finalizeWorkflow: blocked status on PR failure', () => {
       milestones_total: 10,
     });
 
-    finalizeWorkflow(wf);
+    const promise = finalizeWorkflow(wf);
+    await vi.runAllTimersAsync();
+    await promise;
+
+    vi.useRealTimers();
 
     // Workflow should now be blocked with a descriptive reason
     const updated = getWorkflowById('wf-pr-fail-blocked');
@@ -448,7 +463,7 @@ describe('finalizeWorkflow: blocked status on PR failure', () => {
       milestones_total: 5,
     });
 
-    finalizeWorkflow(wf);
+    await finalizeWorkflow(wf);
 
     // Workflow should stay complete (not blocked)
     const updated = getWorkflowById('wf-pr-success');
