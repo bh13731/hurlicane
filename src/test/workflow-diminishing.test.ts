@@ -384,6 +384,67 @@ describe('WorkflowManager: diminishing returns detector', () => {
     expect(updated.current_cycle).toBe(6);
   });
 
+  it('evidence-based bypass does not feed false zero into diminishing-returns detector', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById, getNote, insertAgent, updateAgent } = await import('../server/db/queries.js');
+    const { execSync } = await import('child_process');
+    const { randomUUID } = await import('crypto');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 5,
+      max_cycles: 10,
+      milestones_total: 10,
+      milestones_done: 4,
+    });
+
+    // Plan: 4/10 done, pre-implement also 4 → delta = 0 this cycle
+    upsertNote(`workflow/${workflow.id}/plan`,
+      '- [x] M1\n- [x] M2\n- [x] M3\n- [x] M4\n- [ ] M5\n- [ ] M6\n- [ ] M7\n- [ ] M8\n- [ ] M9\n- [ ] M10', null);
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/5`, '4', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/5`, '1', null);
+    // Previous 2 cycles had zero progress — would trigger DR if this cycle also records 0
+    upsertNote(`workflow/${workflow.id}/cycle-progress/3`, '0', null);
+    upsertNote(`workflow/${workflow.id}/cycle-progress/4`, '0', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 5,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+
+    // Agent with base_sha — commit detection will find commits
+    const agentId = randomUUID();
+    insertAgent({ id: agentId, job_id: job.id, status: 'done' });
+    updateAgent(agentId, { base_sha: 'abc1234def' });
+
+    // Simulate commits found this cycle
+    vi.mocked(execSync).mockReturnValueOnce(Buffer.from('2\n') as any);
+
+    onJobCompleted(job);
+
+    // Evidence-based bypass: cycle-progress/5 note must NOT be written
+    // (writing 0 would feed a false zero into the DR rolling average)
+    const cpNote = getNote(`workflow/${workflow.id}/cycle-progress/5`);
+    expect(cpNote).toBeNull();
+
+    // Diminishing returns detector must NOT trigger
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).not.toBe('blocked');
+    expect(updated.blocked_reason ?? '').not.toContain('Diminishing returns');
+
+    // Workflow advances normally
+    expect(updated.current_cycle).toBe(6);
+
+    // Zero-progress counter reset to 0 (not incremented)
+    const zpNote = getNote(`workflow/${workflow.id}/zero-progress-count`);
+    expect(zpNote?.value).toBe('0');
+  });
+
   it('does NOT trigger when rolling 3-cycle average is exactly 0.33 (strict < 0.3)', async () => {
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
     const { upsertNote, getWorkflowById } = await import('../server/db/queries.js');
