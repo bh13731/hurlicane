@@ -1575,6 +1575,45 @@ export async function finalizeWorkflow(workflow: Workflow): Promise<void> {
 }
 
 /**
+ * On startup, find workflows blocked due to PR creation failure and retry PR creation.
+ * Skips workflows missing required worktree fields with a warning log.
+ * Recovered workflows become 'complete' with pr_url set and worktree removed.
+ * Unrecoverable workflows stay blocked with their worktrees preserved.
+ */
+export async function reconcileBlockedPRs(): Promise<void> {
+  const blocked = queries.listWorkflows().filter(
+    wf => wf.status === 'blocked'
+      && typeof wf.blocked_reason === 'string'
+      && wf.blocked_reason.includes('PR creation failed'),
+  );
+
+  if (blocked.length === 0) return;
+  console.log(`[reconcile-blocked-prs] found ${blocked.length} workflow(s) blocked on PR creation — retrying`);
+
+  for (const workflow of blocked) {
+    if (!workflow.worktree_path || !workflow.worktree_branch || !workflow.work_dir) {
+      console.warn(
+        `[reconcile-blocked-prs] workflow ${workflow.id} is missing worktree fields (path=${workflow.worktree_path ?? 'null'}, branch=${workflow.worktree_branch ?? 'null'}, work_dir=${workflow.work_dir ?? 'null'}) — skipping`,
+      );
+      continue;
+    }
+
+    try {
+      const prUrl = pushAndCreatePr(workflow, false);
+      if (prUrl) {
+        updateAndEmit(workflow.id, { status: 'complete', blocked_reason: null, pr_url: prUrl });
+        _removeWorktree(workflow);
+        console.log(`[reconcile-blocked-prs] recovered workflow ${workflow.id} → ${prUrl}`);
+      } else {
+        console.warn(`[reconcile-blocked-prs] PR creation still failing for workflow ${workflow.id} — leaving blocked`);
+      }
+    } catch (err: any) {
+      console.warn(`[reconcile-blocked-prs] error retrying PR for workflow ${workflow.id}:`, err?.message ?? err);
+    }
+  }
+}
+
+/**
  * Called when a workflow is cancelled — skip the PR, just clean up the worktree.
  */
 export function cleanupWorktree(workflow: Workflow): void {
