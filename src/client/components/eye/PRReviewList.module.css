@@ -1,0 +1,270 @@
+/* PRReviewList.module.css */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+/* ─── Review card ─────────────────────────────────────────────────────────── */
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--bg-surface);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.cardMeta {
+  flex: 1;
+  min-width: 0;
+}
+
+.cardTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.prLink {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.prLink:hover {
+  text-decoration: underline;
+}
+
+.badgeNeedsReply {
+  font-size: 10px;
+  background: var(--accent);
+  color: #000;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-weight: 600;
+}
+
+.badgeSubmitted {
+  font-size: 10px;
+  background: var(--status-done);
+  color: #000;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.badgePending {
+  font-size: 10px;
+  background: #f59e0b33;
+  color: #f59e0b;
+  border-radius: 4px;
+  padding: 1px 5px;
+  border: 1px solid #f59e0b55;
+}
+
+.cardSubMeta {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.cardActions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+/* ─── Action buttons ──────────────────────────────────────────────────────── */
+
+.btnSubmit {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: #000;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btnDelete {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+/* ─── Delete confirmation ─────────────────────────────────────────────────── */
+
+.deleteConfirm {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #ef444455;
+  background: #ef444411;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.deleteConfirmText {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.deleteReasonInput {
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  outline: none;
+  width: 100%;
+}
+
+.deleteConfirmActions {
+  display: flex;
+  gap: 6px;
+}
+
+.btnConfirmDelete {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btnCancelDelete {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+/* ─── Summary ─────────────────────────────────────────────────────────────── */
+
+.summary {
+  font-size: 12px;
+  color: var(--text-primary);
+  margin-top: 8px;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+/* ─── Comments section ────────────────────────────────────────────────────── */
+
+.commentsSection {
+  margin-top: 8px;
+}
+
+.toggleComments {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.commentsList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.comment {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid;
+  background: var(--bg-primary);
+}
+
+.commentFile {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+}
+
+.commentBody {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.codexConfirmed {
+  font-size: 11px;
+  color: var(--status-done);
+  margin-top: 4px;
+  display: inline-block;
+}
+
+/* ─── Message thread ──────────────────────────────────────────────────────── */
+
+.messageThread {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  max-width: 90%;
+}
+
+.messageRole {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+/* ─── Reply row ───────────────────────────────────────────────────────────── */
+
+.replyRow {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  align-items: flex-end;
+}
+
+.btnSend {
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: #000;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
