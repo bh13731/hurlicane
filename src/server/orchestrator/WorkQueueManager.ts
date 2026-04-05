@@ -273,8 +273,13 @@ function createWorktree(job: Job, agentId: string): Job {
     .slice(0, 40);
   const branchName = `orchestrator/${slug}-${shortId}`;
 
-  // Place worktrees in a sibling directory to keep the source repo clean
-  const worktreeDir = path.resolve(repoDir, '..', '.orchestrator-worktrees', shortId);
+  // Place worktrees in a namespaced sibling directory: .orchestrator-worktrees/<repoName>/<shortId>
+  // This matches the layout used by WorkflowManager and prevents collisions across repos.
+  const repoName = path.basename(repoDir);
+  const worktreeDir = path.resolve(repoDir, '..', '.orchestrator-worktrees', repoName, shortId);
+
+  // Ensure the namespace directory exists before git worktree add
+  fs.mkdirSync(path.dirname(worktreeDir), { recursive: true });
 
   console.log(`[queue] creating worktree: ${worktreeDir} (branch: ${branchName})`);
   execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branchName)}`, {
