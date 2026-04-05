@@ -110,7 +110,7 @@ export function listJobs(status?: JobStatus): Job[] {
   } else {
     rows = db.prepare('SELECT * FROM jobs WHERE archived_at IS NULL ORDER BY priority DESC, created_at ASC').all();
   }
-  return rows.map(r => cast<Job>(r));
+  return rows.map((r: any) => cast<Job>(r));
 }
 
 /** Slim version for snapshot — truncates description to keep payload small. */
@@ -137,7 +137,7 @@ export function listArchivedJobs(limit?: number, offset?: number): Job[] {
     }
   }
   const rows = db.prepare(sql).all(...args);
-  return rows.map(r => cast<Job>(r));
+  return rows.map((r: any) => cast<Job>(r));
 }
 
 export function listArchivedJobsSlim(limit?: number, offset?: number): Job[] {
@@ -185,7 +185,7 @@ export function listEyeJobs(): Job[] {
     ORDER BY created_at DESC
     LIMIT 200
   `).all();
-  return rows.map(r => cast<Job>(r));
+  return rows.map((r: any) => cast<Job>(r));
 }
 
 /**
@@ -321,7 +321,7 @@ export function getNextQueuedJob(): Job | null {
 export function getJobsByPreDebateId(debateId: string): Job[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM jobs WHERE pre_debate_id = ?').all(debateId);
-  return rows.map(r => cast<Job>(r));
+  return rows.map((r: any) => cast<Job>(r));
 }
 
 export function updateJobDescription(id: string, description: string): void {
@@ -368,7 +368,7 @@ export function getJobsWithFailedDeps(): Job[] {
     WHERE j.status = 'queued'
       AND d.status IN ('failed', 'cancelled')
   `).all();
-  return rows.map(r => cast<Job>(r));
+  return rows.map((r: any) => cast<Job>(r));
 }
 
 export function getFailedDepsForJob(jobId: string): Array<{ id: string; title: string; status: string }> {
@@ -380,7 +380,7 @@ export function getFailedDepsForJob(jobId: string): Array<{ id: string; title: s
     JOIN jobs d ON d.id = dep.value
     WHERE d.status IN ('failed', 'cancelled')
   `).all(job.depends_on);
-  return rows.map(r => cast<{ id: string; title: string; status: string }>(r));
+  return rows.map((r: any) => cast<{ id: string; title: string; status: string }>(r));
 }
 
 // ─── Questions ────────────────────────────────────────────────────────────────

@@ -40,7 +40,7 @@ export function listKBEntries(projectId?: string): KBEntry[] {
   } else {
     rows = db.prepare('SELECT * FROM knowledge_base ORDER BY updated_at DESC').all();
   }
-  return rows.map(r => cast<KBEntry>(r));
+  return rows.map((r: any) => cast<KBEntry>(r));
 }
 
 export function searchKB(query: string, projectId?: string, limit = 20): Array<KBEntry & { excerpt: string }> {
@@ -57,16 +57,16 @@ export function searchKB(query: string, projectId?: string, limit = 20): Array<K
   try {
     const args = projectId ? [query, projectId, limit] : [query, limit];
     const rows = db.prepare(sql).all(...args);
-    const results = rows.map(r => cast<KBEntry & { excerpt: string }>(r));
-    if (results.length > 0) touchKBEntries(results.map(r => r.id));
+    const results = rows.map((r: any) => cast<KBEntry & { excerpt: string }>(r));
+    if (results.length > 0) touchKBEntries(results.map((r: any) => r.id));
     return results;
   } catch {
     try {
       const escaped = `"${query.replace(/"/g, '""')}"`;
       const args = projectId ? [escaped, projectId, limit] : [escaped, limit];
       const rows = db.prepare(sql).all(...args);
-      const results = rows.map(r => cast<KBEntry & { excerpt: string }>(r));
-      if (results.length > 0) touchKBEntries(results.map(r => r.id));
+      const results = rows.map((r: any) => cast<KBEntry & { excerpt: string }>(r));
+      if (results.length > 0) touchKBEntries(results.map((r: any) => r.id));
       return results;
     } catch { return []; }
   }
@@ -179,8 +179,8 @@ export function searchKBForMemory(query: string, projectId: string | null, limit
       ? [projectId, ftsQuery, projectId, limit]
       : [ftsQuery, limit];
     const rows = db.prepare(sql).all(...args);
-    const results = rows.map(r => cast<KBEntry>(r));
-    if (results.length > 0) touchKBEntries(results.map(r => r.id));
+    const results = rows.map((r: any) => cast<KBEntry>(r));
+    if (results.length > 0) touchKBEntries(results.map((r: any) => r.id));
     return results;
   } catch {
     // FTS syntax error — try as quoted phrase of the first keyword
@@ -190,8 +190,8 @@ export function searchKBForMemory(query: string, projectId: string | null, limit
         ? [projectId, escaped, projectId, limit]
         : [escaped, limit];
       const rows = db.prepare(sql).all(...args);
-      const results = rows.map(r => cast<KBEntry>(r));
-      if (results.length > 0) touchKBEntries(results.map(r => r.id));
+      const results = rows.map((r: any) => cast<KBEntry>(r));
+      if (results.length > 0) touchKBEntries(results.map((r: any) => r.id));
       return results;
     } catch { return []; }
   }
@@ -219,8 +219,8 @@ export function getMemoryForJob(projectId: string | null, jobTitle?: string, job
       ORDER BY sort_group ASC, updated_at DESC
       LIMIT ?
     `).all(projectId, projectId, limit);
-    const results = rows.map(r => cast<KBEntry>(r));
-    if (results.length > 0) touchKBEntries(results.map(r => r.id));
+    const results = rows.map((r: any) => cast<KBEntry>(r));
+    if (results.length > 0) touchKBEntries(results.map((r: any) => r.id));
     return results;
   }
   const rows = db.prepare(`
@@ -229,8 +229,8 @@ export function getMemoryForJob(projectId: string | null, jobTitle?: string, job
     ORDER BY updated_at DESC
     LIMIT ?
   `).all(limit);
-  const results = rows.map(r => cast<KBEntry>(r));
-  if (results.length > 0) touchKBEntries(results.map(r => r.id));
+  const results = rows.map((r: any) => cast<KBEntry>(r));
+  if (results.length > 0) touchKBEntries(results.map((r: any) => r.id));
   return results;
 }
 
@@ -255,10 +255,10 @@ export function getKBEntriesForProject(projectId: string | null): KBEntry[] {
   const db = getDb();
   if (projectId) {
     const rows = db.prepare('SELECT * FROM knowledge_base WHERE project_id = ? ORDER BY updated_at DESC').all(projectId);
-    return rows.map(r => cast<KBEntry>(r));
+    return rows.map((r: any) => cast<KBEntry>(r));
   }
   const rows = db.prepare('SELECT * FROM knowledge_base WHERE project_id IS NULL ORDER BY updated_at DESC').all();
-  return rows.map(r => cast<KBEntry>(r));
+  return rows.map((r: any) => cast<KBEntry>(r));
 }
 
 // ─── Discussions ──────────────────────────────────────────────────────────────
@@ -318,7 +318,7 @@ export function insertDiscussionMessage(msg: { id: string; discussion_id: string
 }
 
 export function getDiscussionMessages(discussionId: string): DiscussionMessage[] {
-  return getDb().prepare('SELECT * FROM discussion_messages WHERE discussion_id = ? ORDER BY created_at ASC').all(discussionId).map(r => {
+  return getDb().prepare('SELECT * FROM discussion_messages WHERE discussion_id = ? ORDER BY created_at ASC').all(discussionId).map((r: any) => {
     const m = cast<DiscussionMessage>(r); m.requires_reply = !!m.requires_reply; return m;
   });
 }
@@ -339,7 +339,7 @@ export function getDiscussionsWithNewUserReplies(_agentId: string): Discussion[]
           AND dm.created_at > ?
       )
     ORDER BY d.updated_at DESC
-  `).all(cutoff).map(r => cast<Discussion>(r));
+  `).all(cutoff).map((r: any) => cast<Discussion>(r));
 }
 
 // ─── Proposals ────────────────────────────────────────────────────────────────
@@ -413,11 +413,11 @@ export function insertProposalMessage(msg: { id: string; proposal_id: string; ro
 }
 
 export function getProposalMessages(proposalId: string): ProposalMessage[] {
-  return getDb().prepare('SELECT * FROM proposal_messages WHERE proposal_id = ? ORDER BY created_at ASC').all(proposalId).map(r => cast<ProposalMessage>(r));
+  return getDb().prepare('SELECT * FROM proposal_messages WHERE proposal_id = ? ORDER BY created_at ASC').all(proposalId).map((r: any) => cast<ProposalMessage>(r));
 }
 
 export function getProposalsWithNewUserReplies(agentId: string): Proposal[] {
-  return getDb().prepare(`SELECT p.* FROM proposals p WHERE p.status IN ('pending', 'discussing') AND p.agent_id = ? AND EXISTS (SELECT 1 FROM proposal_messages pm WHERE pm.proposal_id = p.id AND pm.role = 'user' AND pm.created_at = (SELECT MAX(created_at) FROM proposal_messages WHERE proposal_id = p.id)) ORDER BY p.updated_at DESC`).all(agentId).map(r => cast<Proposal>(r));
+  return getDb().prepare(`SELECT p.* FROM proposals p WHERE p.status IN ('pending', 'discussing') AND p.agent_id = ? AND EXISTS (SELECT 1 FROM proposal_messages pm WHERE pm.proposal_id = p.id AND pm.role = 'user' AND pm.created_at = (SELECT MAX(created_at) FROM proposal_messages WHERE proposal_id = p.id)) ORDER BY p.updated_at DESC`).all(agentId).map((r: any) => cast<Proposal>(r));
 }
 
 // ─── PR Reviews ───────────────────────────────────────────────────────────────
@@ -473,7 +473,7 @@ export function insertPrReviewMessage(msg: { id: string; review_id: string; role
 }
 
 export function getPrReviewMessages(reviewId: string): PrReviewMessage[] {
-  return getDb().prepare('SELECT * FROM pr_review_messages WHERE review_id = ? ORDER BY created_at ASC').all(reviewId).map(r => cast<PrReviewMessage>(r));
+  return getDb().prepare('SELECT * FROM pr_review_messages WHERE review_id = ? ORDER BY created_at ASC').all(reviewId).map((r: any) => cast<PrReviewMessage>(r));
 }
 
 export function getPrReviewsWithNewUserReplies(): PrReview[] {
@@ -482,5 +482,5 @@ export function getPrReviewsWithNewUserReplies(): PrReview[] {
       SELECT 1 FROM pr_review_messages m WHERE m.review_id = pr.id AND m.role = 'user'
         AND m.created_at = (SELECT MAX(created_at) FROM pr_review_messages WHERE review_id = pr.id)
     ) ORDER BY pr.updated_at DESC
-  `).all().map(r => cast<PrReview>(r));
+  `).all().map((r: any) => cast<PrReview>(r));
 }
