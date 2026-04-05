@@ -57,6 +57,7 @@ vi.mock('../server/orchestrator/WorkflowPrompts.js', () => ({
   buildReviewPrompt: vi.fn(() => 'mock review prompt'),
   buildImplementPrompt: vi.fn(() => 'mock implement prompt'),
   buildWorkflowRepairPrompt: vi.fn(() => 'mock repair prompt'),
+  buildSimplifiedAssessRepairPrompt: vi.fn(() => 'mock simplified assess repair prompt'),
 }));
 
 // Mock ModelClassifier for rate limit fallback tests
