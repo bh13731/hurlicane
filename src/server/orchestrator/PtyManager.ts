@@ -436,6 +436,22 @@ export interface StartInteractiveOptions {
 }
 
 export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, resumeSessionId, autoFinish = false }: StartInteractiveOptions): void {
+  // Fail fast if an explicit work_dir was provided but doesn't exist.
+  // The cd fail-hard guard in the script catches this too, but failing here
+  // gives a clearer error and avoids spawning a tmux session at all.
+  if (job.work_dir) {
+    try {
+      if (!fs.statSync(job.work_dir).isDirectory()) throw new Error('not a directory');
+    } catch {
+      const msg = `work_dir does not exist: ${job.work_dir}`;
+      console.warn(`[pty ${agentId}] ${msg} — marking job failed`);
+      queries.updateAgent(agentId, { status: 'failed', error_message: msg, finished_at: Date.now() });
+      queries.updateJobStatus(job.id, 'failed');
+      const updated = queries.getAgentWithJob(agentId);
+      if (updated) socket.emitAgentUpdate(updated);
+      return;
+    }
+  }
   const workDir = getExistingCwd(job.work_dir ?? process.cwd());
   const model: string | null = job.model ?? null;
   const mcpPort = Number(MCP_PORT);
