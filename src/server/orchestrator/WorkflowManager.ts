@@ -7,7 +7,7 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import type { Job, Workflow, WorkflowPhase, StopMode } from '../../shared/types.js';
 import { effectiveMaxTurns, isCodexModel } from '../../shared/types.js';
-import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildWorkflowRepairPrompt, type InlineWorkflowContext } from './WorkflowPrompts.js';
+import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildWorkflowRepairPrompt, buildSimplifiedAssessRepairPrompt, type InlineWorkflowContext } from './WorkflowPrompts.js';
 import { getAvailableModel, getFallbackModel, getAlternateProviderModel, getModelProvider, markModelRateLimited, markProviderRateLimited } from './ModelClassifier.js';
 import { classifyJobFailure, isFallbackEligibleFailure, isSameModelRetryEligible, shouldMarkProviderUnavailable } from './FailureClassifier.js';
 import { nudgeQueue } from './WorkQueueManager.js';
@@ -189,12 +189,12 @@ function _onJobCompleted(job: Job): void {
         }
 
         if (missingArtifacts.length > 0) {
-          // Detect whether the agent never called write_note at all (likely MCP incompatibility)
-          // vs. wrote a bad plan (fixable by repair). This context aids diagnosis.
-          if (!planNote && !contractNote) {
-            console.warn(`[workflow ${workflow.id}] assess agent completed without writing plan or contract — model may not support MCP write_note reliably`);
-          }
-          if (spawnRepairJob(workflow, 'assess', job.workflow_cycle ?? 0, missingArtifacts)) return;
+          // Diagnose whether write_note was never called vs. called but failed,
+          // then log and forward as context to the repair prompt.
+          const writeNoteDiag = diagnoseWriteNoteInOutput(job);
+          const diagContext = formatWriteNoteDiagnostic(writeNoteDiag);
+          console.warn(`[workflow ${workflow.id}] assess missing ${missingArtifacts.join(', ')}: ${writeNoteDiag.status}${writeNoteDiag.status === 'called_but_failed' ? ` — ${writeNoteDiag.failureSummary}` : ''}`);
+          if (spawnRepairJob(workflow, 'assess', job.workflow_cycle ?? 0, missingArtifacts, diagContext)) return;
           const assessReason = `Assess phase completed but missing ${missingArtifacts.join(', ')}`;
           console.log(`[workflow ${workflow.id}] ${assessReason} — marking blocked`);
           updateAndEmit(workflow.id, {
@@ -478,6 +478,93 @@ export function recoverPlanFromAgentOutput(job: Job, workflowId: string): boolea
   return false;
 }
 
+// ─── Write-Note Diagnostic ───────────────────────────────────────────────────
+
+export type WriteNoteDiagnostic =
+  | { status: 'never_called' }
+  | { status: 'called_successfully' }
+  | { status: 'called_but_failed'; failureSummary: string };
+
+/**
+ * Inspect agent NDJSON output for `write_note` tool calls and matching results.
+ * Returns a classification of whether write_note was never called, called but
+ * failed with an MCP error, or called and appeared to succeed.
+ * Handles empty, malformed, or partial NDJSON rows without throwing.
+ */
+export function diagnoseWriteNoteInOutput(job: Job): WriteNoteDiagnostic {
+  try {
+    const agents = queries.getAgentsWithJobByJobId(job.id);
+    if (agents.length === 0) return { status: 'never_called' };
+
+    const writeNoteToolIds = new Set<string>();
+    const errorResults: string[] = [];
+
+    for (const agent of agents) {
+      const output = queries.getAgentOutput(agent.id);
+
+      // First pass: collect tool_use IDs for write_note calls
+      for (const row of output) {
+        if (row.event_type !== 'assistant') continue;
+        try {
+          const ev = JSON.parse(row.content);
+          if (ev.type !== 'assistant' || !Array.isArray(ev.message?.content)) continue;
+          for (const block of ev.message.content) {
+            if (
+              block.type === 'tool_use' &&
+              typeof block.name === 'string' &&
+              (block.name === 'write_note' || block.name === 'mcp__orchestrator__write_note') &&
+              typeof block.id === 'string'
+            ) {
+              writeNoteToolIds.add(block.id);
+            }
+          }
+        } catch { /* skip malformed */ }
+      }
+
+      // Second pass: collect error tool_results for those IDs
+      for (const row of output) {
+        if (row.event_type !== 'user') continue;
+        try {
+          const ev = JSON.parse(row.content);
+          if (ev.type !== 'user' || !Array.isArray(ev.message?.content)) continue;
+          for (const block of ev.message.content) {
+            if (
+              block.type === 'tool_result' &&
+              typeof block.tool_use_id === 'string' &&
+              writeNoteToolIds.has(block.tool_use_id) &&
+              block.is_error === true
+            ) {
+              const content = typeof block.content === 'string'
+                ? block.content
+                : (Array.isArray(block.content) && block.content[0]?.text)
+                  ? String(block.content[0].text)
+                  : JSON.stringify(block.content ?? '');
+              errorResults.push(content.slice(0, 200));
+            }
+          }
+        } catch { /* skip malformed */ }
+      }
+    }
+
+    if (writeNoteToolIds.size === 0) return { status: 'never_called' };
+    if (errorResults.length > 0) return { status: 'called_but_failed', failureSummary: errorResults[0] };
+    return { status: 'called_successfully' };
+  } catch {
+    return { status: 'never_called' };
+  }
+}
+
+function formatWriteNoteDiagnostic(diag: WriteNoteDiagnostic): string {
+  switch (diag.status) {
+    case 'never_called':
+      return 'write_note was never called — the agent may have stopped before reaching the tool call. Focus on calling write_note to persist the plan.';
+    case 'called_successfully':
+      return 'write_note was called and did not error — the plan content may have been malformed or used the wrong key. Verify the note key and plan format.';
+    case 'called_but_failed':
+      return `write_note was called but returned an MCP error: "${diag.failureSummary}". Focus on resolving the MCP connectivity issue before writing the note.`;
+  }
+}
+
 /**
  * Extract a plan section from text. Looks for a "# Plan" header and captures
  * everything from that header until the next top-level heading or end of text.
@@ -676,6 +763,7 @@ function spawnRepairJob(
   phase: 'assess' | 'review',
   cycle: number,
   missingArtifacts: string[],
+  diagnosticContext?: string,
 ): boolean {
   const attemptsKey = repairAttemptsKey(workflow.id, phase, cycle);
   const existingAttempts = parseInt(queries.getNote(attemptsKey)?.value ?? '0', 10);
@@ -688,11 +776,24 @@ function spawnRepairJob(
     console.log(`[workflow ${workflow.id}] repair job requires reliable MCP — falling back from Codex to Claude`);
     model = 'claude-sonnet-4-6';
   }
+  // Assess-only escalation: attempt 2 → claude-opus-4-6, attempt 3 → claude-opus-4-6 + simplified prompt.
+  // Review repairs are unaffected and always use the reviewer model selection path above.
+  if (phase === 'assess' && existingAttempts >= 1) {
+    console.log(`[workflow ${workflow.id}] assess repair attempt ${existingAttempts + 1} — escalating to claude-opus-4-6 for reliable MCP`);
+    model = 'claude-opus-4-6';
+  }
   const stopMode = phase === 'review' ? workflow.stop_mode_review : workflow.stop_mode_assess;
   const stopValue = phase === 'review' ? workflow.stop_value_review : workflow.stop_value_assess;
   const baseTurns = effectiveMaxTurns(stopMode, stopValue);
   const maxTurns = Math.ceil(baseTurns * level.turnsMultiplier);
-  const prompt = buildWorkflowRepairPrompt(workflow, phase, cycle, missingArtifacts);
+  // Attempt 3 for assess uses a simplified prompt focused solely on writing the plan note,
+  // but only when plan is the ONLY missing artifact. If contract is also missing, the
+  // simplified prompt (which explicitly skips contract writing) would strand it.
+  const useSimplifiedPrompt = phase === 'assess' && existingAttempts >= 2
+    && missingArtifacts.length === 1 && missingArtifacts[0] === 'plan';
+  const prompt = useSimplifiedPrompt
+    ? buildSimplifiedAssessRepairPrompt(workflow, missingArtifacts, diagnosticContext)
+    : buildWorkflowRepairPrompt(workflow, phase, cycle, missingArtifacts, diagnosticContext);
   const job = queries.insertJob({
     id: randomUUID(),
     title: `[Workflow C${cycle}] ${phase.charAt(0).toUpperCase() + phase.slice(1)} ${level.label}`,
