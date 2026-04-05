@@ -922,3 +922,249 @@ describe('Fix-C11a: transient rev-parse errors propagate to callers via countBra
     );
   });
 });
+
+describe('finalizeWorkflow: retry and fallback behavior', () => {
+  beforeEach(async () => {
+    execSyncCalls.length = 0;
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+    vi.restoreAllMocks();
+  });
+
+  it('(a) succeeds on the second retry attempt when the first fails', async () => {
+    vi.useFakeTimers();
+    let ghPrCreateCount = 0;
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
+      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
+      if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
+      if (cmd.startsWith('git push')) return Buffer.from('');
+      if (cmd.includes('git status --porcelain')) return Buffer.from('');
+      if (cmd.includes('git worktree remove')) return Buffer.from('');
+      if (cmd.includes('gh pr view')) throw new Error('no PR');
+      if (cmd.includes('gh pr create')) {
+        ghPrCreateCount++;
+        if (ghPrCreateCount === 1) {
+          throw Object.assign(new Error('transient network error'), { stderr: Buffer.from('transient') });
+        }
+        return Buffer.from('https://github.com/test/repo/pull/55\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
+    const dbWf = await insertTestWorkflow({ id: 'wf-retry-a', status: 'complete', use_worktree: 1 });
+    updateWorkflow(dbWf.id, { worktree_path: '/tmp/wt', worktree_branch: 'workflow/test-branch' });
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({ id: 'wf-retry-a', status: 'complete' });
+
+    const promise = finalizeWorkflow(wf);
+    await vi.runAllTimersAsync();
+    await promise;
+    vi.useRealTimers();
+
+    // PR creation was attempted twice
+    expect(ghPrCreateCount).toBe(2);
+
+    const updated = getWorkflowById('wf-retry-a');
+    expect(updated!.pr_url).toBe('https://github.com/test/repo/pull/55');
+    expect(updated!.status).not.toBe('blocked');
+
+    // Worktree was cleaned up after successful PR
+    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    expect(removeCall).toBeDefined();
+  });
+
+  it('(b) uses gh pr view fallback when all 3 PR creation attempts fail', async () => {
+    vi.useFakeTimers();
+    let ghPrViewCount = 0;
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
+      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
+      if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
+      if (cmd.startsWith('git push')) return Buffer.from('');
+      if (cmd.includes('git status --porcelain')) return Buffer.from('');
+      if (cmd.includes('git worktree remove')) return Buffer.from('');
+      if (cmd.includes('gh pr create')) {
+        throw Object.assign(new Error('transient error'), { stderr: Buffer.from('transient') });
+      }
+      if (cmd.includes('gh pr view')) {
+        ghPrViewCount++;
+        // First 3 calls come from pushAndCreatePr's pre-create check — return empty
+        if (ghPrViewCount <= 3) throw new Error('no PR');
+        // 4th call is the finalizeWorkflow fallback — return the URL
+        return Buffer.from('https://github.com/test/repo/pull/77\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
+    const dbWf = await insertTestWorkflow({ id: 'wf-fallback-b', status: 'complete', use_worktree: 1 });
+    updateWorkflow(dbWf.id, { worktree_path: '/tmp/wt', worktree_branch: 'workflow/test-branch' });
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({ id: 'wf-fallback-b', status: 'complete' });
+
+    const promise = finalizeWorkflow(wf);
+    await vi.runAllTimersAsync();
+    await promise;
+    vi.useRealTimers();
+
+    const updated = getWorkflowById('wf-fallback-b');
+    expect(updated!.pr_url).toBe('https://github.com/test/repo/pull/77');
+    // gh pr view fallback found a PR → outcome is 'created' → worktree removed
+    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    expect(removeCall).toBeDefined();
+  });
+
+  it('(c) releases workflow claims synchronously before any retry delay', async () => {
+    vi.useFakeTimers();
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
+      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
+      if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
+      if (cmd.startsWith('git push')) return Buffer.from('');
+      if (cmd.includes('gh pr create')) {
+        throw Object.assign(new Error('fail'), { stderr: Buffer.from('fail') });
+      }
+      if (cmd.includes('gh pr view')) throw new Error('no PR');
+      return Buffer.from('');
+    });
+
+    const { claimFiles, getActiveClaimsForWorkflow, updateWorkflow } = await import('../server/db/queries.js');
+    const dbWf = await insertTestWorkflow({ id: 'wf-claims-c', status: 'complete', use_worktree: 1 });
+    updateWorkflow(dbWf.id, { worktree_path: '/tmp/wt', worktree_branch: 'workflow/test-branch' });
+    claimFiles('wf-claims-c', ['/tmp/project/src/main.ts']);
+
+    // Verify the claim exists before we start
+    expect(getActiveClaimsForWorkflow('wf-claims-c').length).toBe(1);
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({ id: 'wf-claims-c', status: 'complete' });
+
+    // Start finalizeWorkflow without advancing timers — first attempt will fail and queue a 30s sleep
+    const promise = finalizeWorkflow(wf);
+
+    // Claims must be released synchronously BEFORE any timer fires
+    expect(getActiveClaimsForWorkflow('wf-claims-c').length).toBe(0);
+
+    // Now drain timers and let it complete
+    await vi.runAllTimersAsync();
+    await promise;
+    vi.useRealTimers();
+  });
+});
+
+describe('reconcileBlockedPRs: startup recovery', () => {
+  beforeEach(async () => {
+    execSyncCalls.length = 0;
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+    vi.restoreAllMocks();
+  });
+
+  it('(d) recovers a blocked workflow when PR creation succeeds on retry', async () => {
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
+      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
+      if (cmd.includes('rev-list --count')) return Buffer.from('2\n');
+      if (cmd.startsWith('git push')) return Buffer.from('');
+      if (cmd.includes('git status --porcelain')) return Buffer.from('');
+      if (cmd.includes('git worktree remove')) return Buffer.from('');
+      if (cmd.includes('gh pr view')) return Buffer.from('');
+      if (cmd.includes('gh pr create')) return Buffer.from('https://github.com/test/repo/pull/88\n');
+      return Buffer.from('');
+    });
+
+    const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
+    const dbWf = await insertTestWorkflow({ id: 'wf-reconcile-d', status: 'blocked', use_worktree: 1 });
+    updateWorkflow(dbWf.id, {
+      worktree_path: '/tmp/wt',
+      worktree_branch: 'workflow/test-branch',
+      blocked_reason: 'PR creation failed — worktree preserved for retry at /tmp/wt',
+    });
+
+    const { reconcileBlockedPRs } = await import('../server/orchestrator/WorkflowManager.js');
+    await reconcileBlockedPRs();
+
+    const updated = getWorkflowById('wf-reconcile-d');
+    expect(updated!.status).toBe('complete');
+    expect(updated!.pr_url).toBe('https://github.com/test/repo/pull/88');
+    expect(updated!.blocked_reason).toBeNull();
+
+    // Worktree was removed after recovery
+    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    expect(removeCall).toBeDefined();
+  });
+
+  it('(e) skips malformed workflows (null worktree_path) without aborting reconciliation', async () => {
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
+      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
+      if (cmd.includes('rev-list --count')) return Buffer.from('2\n');
+      if (cmd.startsWith('git push')) return Buffer.from('');
+      if (cmd.includes('git status --porcelain')) return Buffer.from('');
+      if (cmd.includes('git worktree remove')) return Buffer.from('');
+      if (cmd.includes('gh pr view')) return Buffer.from('');
+      if (cmd.includes('gh pr create')) return Buffer.from('https://github.com/test/repo/pull/90\n');
+      return Buffer.from('');
+    });
+
+    const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
+
+    // Malformed: worktree_path is null — reconcile should skip this with a warning
+    await insertTestWorkflow({ id: 'wf-malformed-e', status: 'blocked', use_worktree: 1 });
+    updateWorkflow('wf-malformed-e', {
+      blocked_reason: 'PR creation failed — worktree preserved for retry at /tmp/wt',
+      // worktree_path intentionally left null
+    });
+
+    // Valid: all required fields present
+    const dbValid = await insertTestWorkflow({ id: 'wf-valid-e', status: 'blocked', use_worktree: 1 });
+    updateWorkflow(dbValid.id, {
+      worktree_path: '/tmp/wt',
+      worktree_branch: 'workflow/test-branch',
+      blocked_reason: 'PR creation failed — worktree preserved for retry at /tmp/wt',
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { reconcileBlockedPRs } = await import('../server/orchestrator/WorkflowManager.js');
+
+    // Should not throw despite the malformed row
+    await reconcileBlockedPRs();
+
+    // Malformed workflow stays blocked (was skipped)
+    const malformed = getWorkflowById('wf-malformed-e');
+    expect(malformed!.status).toBe('blocked');
+
+    // Valid workflow is recovered
+    const valid = getWorkflowById('wf-valid-e');
+    expect(valid!.status).toBe('complete');
+    expect(valid!.pr_url).toBe('https://github.com/test/repo/pull/90');
+
+    // A warning was logged for the skipped malformed workflow (single-string form)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('wf-malformed-e'));
+  });
+});
