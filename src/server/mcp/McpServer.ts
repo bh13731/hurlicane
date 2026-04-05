@@ -197,7 +197,6 @@ export function createMcpApp(): express.Application {
         // before the restart. The SDK's validateSession only checks that _initialized
         // is true and that the request's mcp-session-id matches sessionId, both of
         // which will now be true.
-        // @ts-expect-error accessing SDK private _webStandardTransport for session recovery
         const inner = (transport as unknown as { _webStandardTransport: { sessionId: string; _initialized: boolean } })._webStandardTransport;
         if (!inner || typeof inner.sessionId !== 'string') throw new Error('MCP SDK internal API changed — _webStandardTransport not found');
         inner.sessionId = sessionId;

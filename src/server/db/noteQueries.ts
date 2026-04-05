@@ -34,7 +34,7 @@ export function getActiveLocksForFile(filePath: string): FileLock[] {
   const rows = db.prepare(`
     SELECT * FROM file_locks WHERE file_path = ? AND released_at IS NULL AND expires_at > ?
   `).all(filePath, now);
-  return rows.map(r => cast<FileLock>(r));
+  return rows.map((r: any) => cast<FileLock>(r));
 }
 
 export function getActiveLocksForAgent(agentId: string): FileLock[] {
@@ -43,7 +43,7 @@ export function getActiveLocksForAgent(agentId: string): FileLock[] {
   const rows = db.prepare(`
     SELECT * FROM file_locks WHERE agent_id = ? AND released_at IS NULL AND expires_at > ?
   `).all(agentId, now);
-  return rows.map(r => cast<FileLock>(r));
+  return rows.map((r: any) => cast<FileLock>(r));
 }
 
 export function getAllActiveLocks(): FileLock[] {
@@ -52,7 +52,7 @@ export function getAllActiveLocks(): FileLock[] {
   const rows = db.prepare(`
     SELECT * FROM file_locks WHERE released_at IS NULL AND expires_at > ?
   `).all(now);
-  return rows.map(r => cast<FileLock>(r));
+  return rows.map((r: any) => cast<FileLock>(r));
 }
 
 export function releaseLock(id: string): void {
@@ -77,7 +77,7 @@ export function getActiveLocksForTerminalAgents(): FileLock[] {
       AND fl.expires_at > ?
       AND a.status IN ('done', 'failed', 'cancelled')
   `).all(now);
-  return rows.map(r => cast<FileLock>(r));
+  return rows.map((r: any) => cast<FileLock>(r));
 }
 
 // Returns unreleased locks whose TTL has expired. These are stale rows that
@@ -89,7 +89,7 @@ export function getExpiredUnreleasedLocks(): FileLock[] {
   const rows = db.prepare(`
     SELECT * FROM file_locks WHERE released_at IS NULL AND expires_at <= ?
   `).all(now);
-  return rows.map(r => cast<FileLock>(r));
+  return rows.map((r: any) => cast<FileLock>(r));
 }
 
 // Returns all unreleased locks for an agent regardless of TTL expiry.
@@ -99,7 +99,7 @@ export function getAllUnreleasedLocksForAgent(agentId: string): FileLock[] {
   const rows = db.prepare(
     'SELECT * FROM file_locks WHERE agent_id = ? AND released_at IS NULL'
   ).all(agentId);
-  return rows.map(r => cast<FileLock>(r));
+  return rows.map((r: any) => cast<FileLock>(r));
 }
 
 export function getActiveLocksForFiles(filePaths: string[]): FileLock[] {
@@ -110,7 +110,7 @@ export function getActiveLocksForFiles(filePaths: string[]): FileLock[] {
   const rows = db.prepare(`
     SELECT * FROM file_locks WHERE file_path IN (${placeholders}) AND released_at IS NULL AND expires_at > ?
   `).all(...filePaths, now);
-  return rows.map(r => cast<FileLock>(r));
+  return rows.map((r: any) => cast<FileLock>(r));
 }
 
 // Returns all active checkout:: locks. Used to find checkout locks that might
@@ -122,7 +122,7 @@ export function getAllActiveCheckoutLocks(): FileLock[] {
     SELECT * FROM file_locks
     WHERE file_path LIKE 'checkout::%' AND released_at IS NULL AND expires_at > ?
   `).all(now);
-  return rows.map(r => cast<FileLock>(r));
+  return rows.map((r: any) => cast<FileLock>(r));
 }
 
 // Returns all active non-checkout file locks whose path starts with dirPath + '/'.
@@ -135,7 +135,7 @@ export function getActiveFileLocksUnderPath(dirPath: string): FileLock[] {
     WHERE file_path LIKE ? AND file_path NOT LIKE 'checkout::%'
       AND released_at IS NULL AND expires_at > ?
   `).all(dirPath + '/%', now);
-  return rows.map(r => cast<FileLock>(r));
+  return rows.map((r: any) => cast<FileLock>(r));
 }
 
 // ─── Templates ────────────────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ export function getTemplateById(id: string): Template | null {
 export function listTemplates(): Template[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM templates ORDER BY name ASC').all();
-  return rows.map(r => cast<Template>(r));
+  return rows.map((r: any) => cast<Template>(r));
 }
 
 export function updateTemplate(id: string, fields: Partial<Pick<Template, 'name' | 'content' | 'work_dir' | 'model'>>): Template | null {
@@ -221,7 +221,7 @@ export function listNotes(prefix?: string): Note[] {
   } else {
     rows = db.prepare('SELECT * FROM notes ORDER BY key ASC').all();
   }
-  return rows.map(r => cast<Note>(r));
+  return rows.map((r: any) => cast<Note>(r));
 }
 
 export function deleteNote(key: string): void {
@@ -270,7 +270,7 @@ export function getProjectById(id: string): Project | null {
 export function listProjects(): Project[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM projects ORDER BY name ASC').all();
-  return rows.map(r => cast<Project>(r));
+  return rows.map((r: any) => cast<Project>(r));
 }
 
 export function updateProject(id: string, fields: Partial<Pick<Project, 'name' | 'description'>>): Project | null {
@@ -330,7 +330,7 @@ export function getBatchTemplateById(id: string): BatchTemplate | null {
 export function listBatchTemplates(): BatchTemplate[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM batch_templates ORDER BY name ASC').all();
-  return rows.map(r => rowToBatchTemplate(cast<BatchTemplateRow>(r)));
+  return rows.map((r: any) => rowToBatchTemplate(cast<BatchTemplateRow>(r)));
 }
 
 export function updateBatchTemplate(id: string, fields: Partial<Pick<BatchTemplate, 'name' | 'items'>>): BatchTemplate | null {
@@ -385,7 +385,7 @@ export function getDebateById(id: string): Debate | null {
 export function listDebates(): Debate[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM debates ORDER BY created_at DESC').all();
-  return rows.map(r => cast<Debate>(r));
+  return rows.map((r: any) => cast<Debate>(r));
 }
 
 export function updateDebate(id: string, fields: Partial<Pick<Debate, 'current_round' | 'status' | 'consensus' | 'post_action_job_id' | 'verification_review_job_id' | 'verification_response_job_id' | 'verification_round' | 'current_loop'>>): Debate | null {
@@ -408,11 +408,11 @@ export function updateDebate(id: string, fields: Partial<Pick<Debate, 'current_r
 export function getJobsForDebate(debateId: string): Job[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM jobs WHERE debate_id = ? ORDER BY debate_loop ASC, debate_round ASC, created_at ASC').all(debateId);
-  return rows.map(r => cast<Job>(r));
+  return rows.map((r: any) => cast<Job>(r));
 }
 
 export function getJobsForDebateRound(debateId: string, loop: number, round: number): Job[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM jobs WHERE debate_id = ? AND debate_loop = ? AND debate_round = ?').all(debateId, loop, round);
-  return rows.map(r => cast<Job>(r));
+  return rows.map((r: any) => cast<Job>(r));
 }

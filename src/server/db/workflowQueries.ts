@@ -25,7 +25,7 @@ export function insertReview(review: { id: string; parent_job_id: string; model:
 export function getReviewsForJob(parentJobId: string): Review[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM reviews WHERE parent_job_id = ? ORDER BY created_at ASC').all(parentJobId);
-  return rows.map(r => cast<Review>(r));
+  return rows.map((r: any) => cast<Review>(r));
 }
 
 export function updateReview(id: string, fields: Partial<Pick<Review, 'reviewer_job_id' | 'verdict' | 'summary' | 'completed_at'>>): void {
@@ -70,7 +70,7 @@ export function getTemplateModelStats(): TemplateModelStat[] {
     WHERE j.status IN ('done','failed') AND j.debate_id IS NULL AND j.original_job_id IS NULL AND j.review_parent_job_id IS NULL
     GROUP BY j.template_id, j.model HAVING total >= 1
   `).all();
-  return rows.map(r => cast<TemplateModelStat>(r));
+  return rows.map((r: any) => cast<TemplateModelStat>(r));
 }
 
 // ─── Budget ───────────────────────────────────────────────────────────────────
@@ -118,7 +118,7 @@ export function getWorkflowById(id: string): Workflow | null {
 export function listWorkflows(): Workflow[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM workflows ORDER BY created_at DESC').all();
-  return rows.map(r => cast<Workflow>(r));
+  return rows.map((r: any) => cast<Workflow>(r));
 }
 
 export function updateWorkflow(id: string, fields: Partial<Pick<Workflow, 'current_cycle' | 'current_phase' | 'status' | 'milestones_total' | 'milestones_done' | 'worktree_path' | 'worktree_branch' | 'blocked_reason' | 'pr_url' | 'stop_mode_assess' | 'stop_value_assess' | 'stop_mode_review' | 'stop_value_review' | 'stop_mode_implement' | 'stop_value_implement'>>): Workflow | null {
@@ -137,7 +137,7 @@ export function updateWorkflow(id: string, fields: Partial<Pick<Workflow, 'curre
 export function getJobsForWorkflow(workflowId: string): Job[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM jobs WHERE workflow_id = ? ORDER BY workflow_cycle ASC, created_at ASC').all(workflowId);
-  return rows.map(r => cast<Job>(r));
+  return rows.map((r: any) => cast<Job>(r));
 }
 
 /**
@@ -277,11 +277,11 @@ export function listResilienceEvents(opts?: { type?: string; limit?: number }): 
   if (opts?.type) {
     return db.prepare(
       'SELECT * FROM resilience_events WHERE event_type = ? ORDER BY created_at DESC LIMIT ?'
-    ).all(opts.type, limit).map(r => cast<ResilienceEvent>(r));
+    ).all(opts.type, limit).map((r: any) => cast<ResilienceEvent>(r));
   }
   return db.prepare(
     'SELECT * FROM resilience_events ORDER BY created_at DESC LIMIT ?'
-  ).all(limit).map(r => cast<ResilienceEvent>(r));
+  ).all(limit).map((r: any) => cast<ResilienceEvent>(r));
 }
 
 /** Check if any non-terminal job has work_dir set to the given path. */
@@ -343,5 +343,5 @@ export function getActiveClaimsForWorkflow(workflowId: string): FileClaim[] {
   const db = getDb();
   return db.prepare(
     'SELECT * FROM workflow_file_claims WHERE workflow_id = ? AND released_at IS NULL'
-  ).all(workflowId).map(r => cast<FileClaim>(r));
+  ).all(workflowId).map((r: any) => cast<FileClaim>(r));
 }

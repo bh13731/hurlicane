@@ -122,13 +122,13 @@ export function searchOutputs(query: string, limit = 50): SearchResult[] {
   `;
   try {
     const rows = db.prepare(sql).all(query, limit);
-    return rows.map(r => cast<SearchResult>({ ...r as DbRow }));
+    return rows.map((r: any) => cast<SearchResult>({ ...r as DbRow }));
   } catch {
     // Invalid FTS query — try as quoted phrase
     try {
       const escaped = `"${query.replace(/"/g, '""')}"`;
       const rows = db.prepare(sql).all(escaped, limit);
-      return rows.map(r => cast<SearchResult>({ ...r as DbRow }));
+      return rows.map((r: any) => cast<SearchResult>({ ...r as DbRow }));
     } catch { return []; }
   }
 }
@@ -140,10 +140,10 @@ export function getAgentOutput(agentId: string, tail?: number): AgentOutput[] {
     const rows = db.prepare(
       'SELECT * FROM (SELECT * FROM agent_output WHERE agent_id = ? ORDER BY seq DESC LIMIT ?) ORDER BY seq ASC'
     ).all(agentId, tail);
-    return rows.map(r => cast<AgentOutput>(r));
+    return rows.map((r: any) => cast<AgentOutput>(r));
   }
   const rows = db.prepare('SELECT * FROM agent_output WHERE agent_id = ? ORDER BY seq ASC').all(agentId);
-  return rows.map(r => cast<AgentOutput>(r));
+  return rows.map((r: any) => cast<AgentOutput>(r));
 }
 
 export function getLatestAgentOutput(agentId: string): AgentOutput | null {
