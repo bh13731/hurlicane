@@ -208,6 +208,7 @@ export function buildWorkflowRepairPrompt(
   phase: 'assess' | 'review',
   cycle: number,
   missingArtifacts: string[],
+  diagnosticContext?: string,
 ): string {
   const planKey = `workflow/${workflow.id}/plan`;
   const contractKey = `workflow/${workflow.id}/contract`;
@@ -216,6 +217,7 @@ export function buildWorkflowRepairPrompt(
     missingArtifacts.includes('plan') ? `- Write or rewrite the plan note: \`write_note("${planKey}", <plan>)\`` : null,
     missingArtifacts.includes('contract') ? `- Write or rewrite the contract note: \`write_note("${contractKey}", <contract>)\`` : null,
   ].filter(Boolean).join('\n');
+  const diagnosticSection = diagnosticContext ? `\n\n## Diagnostic from Previous Attempt\n${diagnosticContext}` : '';
 
   return `# Autonomous Agent Run: Repair Phase (${phase} cycle ${cycle})
 
@@ -229,7 +231,7 @@ ${workflow.task}
 ${workflow.work_dir ?? '(not specified)'}
 
 ## Missing Artifacts
-${artifactList}
+${artifactList}${diagnosticSection}
 
 ## Instructions
 1. Read any existing workflow context first:
@@ -246,6 +248,59 @@ ${writeTargets}
 - Do NOT switch branches.${workflow.worktree_branch ? `
 - **You are on branch \`${workflow.worktree_branch}\`. Do NOT switch branches or checkout main.**` : ''}
 - Call \`report_status\` with what you are repairing.`;
+}
+
+/**
+ * Simplified assess repair prompt used on the third repair attempt.
+ * Skips contract writing and codebase scanning — focuses solely on producing
+ * a valid plan note with at least one unchecked milestone.
+ */
+export function buildSimplifiedAssessRepairPrompt(
+  workflow: Workflow,
+  missingArtifacts: string[],
+  diagnosticContext?: string,
+): string {
+  const planKey = `workflow/${workflow.id}/plan`;
+  const diagnosticSection = diagnosticContext ? `\n\n## Diagnostic from Previous Attempt\n${diagnosticContext}` : '';
+  return `# Autonomous Agent Run: Assess Repair (Simplified — Final Attempt)
+
+Your ONLY task is to write the plan note for this workflow. Do not write the contract, do not scan the codebase, do not implement anything.
+
+## Task
+${workflow.task}
+
+## Working Directory
+${workflow.work_dir ?? '(not specified)'}${diagnosticSection}
+
+## Required Action
+Call \`write_note("${planKey}", <plan>)\` with a valid plan.
+
+The plan must follow this exact format:
+
+\`\`\`
+# Plan
+
+## Goal
+<one-line description of what this autonomous agent run aims to achieve>
+
+## Milestones
+- [ ] **M1: <title>** [S] — <description with clear acceptance criteria>
+- [ ] **M2: <title>** [M] — <description with clear acceptance criteria>
+(add as many as needed)
+
+## Priority Order
+<which milestone to tackle first and why>
+\`\`\`
+
+## Rules
+- Write ONLY the plan note using \`write_note("${planKey}", <plan>)\`.
+- Do NOT write the contract note.
+- Do NOT make code changes.
+- Do NOT switch branches.${workflow.worktree_branch ? `
+- **You are on branch \`${workflow.worktree_branch}\`. Do NOT switch branches or checkout main.**` : ''}
+- The plan MUST contain at least one unchecked milestone (\`- [ ]\`).
+- Skip detailed codebase scanning — use what you know from the task description.
+- Call \`report_status\` when done.`;
 }
 
 export function buildReviewPrompt(workflow: Workflow, cycle: number, inlineContext?: InlineWorkflowContext): string {
