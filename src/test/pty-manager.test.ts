@@ -109,6 +109,33 @@ describe('PtyManager bad work_dir fail-fast', () => {
     expect(tmuxCalls).toHaveLength(0);
     const { spawn: ptySpawnMock } = await import('node-pty');
     expect(ptySpawnMock).not.toHaveBeenCalled();
+
+    // (e) captureWithContext was called once with error containing the bad path
+    const { captureWithContext } = await import('../server/instrument.js');
+    expect(captureWithContext).toHaveBeenCalledTimes(1);
+    expect(captureWithContext).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining(BAD_PATH) }),
+      expect.objectContaining({
+        agent_id: 'bad-workdir-agent',
+        job_id: 'bad-workdir-job',
+        component: 'PtyManager',
+      }),
+    );
+
+    // (f) logResilienceEvent was called once with pty_work_dir_rejected event including the bad path
+    const { logResilienceEvent } = await import('../server/orchestrator/ResilienceLogger.js');
+    expect(logResilienceEvent).toHaveBeenCalledTimes(1);
+    expect(logResilienceEvent).toHaveBeenCalledWith(
+      'pty_work_dir_rejected',
+      'agent',
+      'bad-workdir-agent',
+      expect.objectContaining({
+        job_id: 'bad-workdir-job',
+        rejected_path: BAD_PATH,
+        reason: 'work_dir_does_not_exist',
+        work_dir: BAD_PATH,
+      }),
+    );
   });
 });
 
