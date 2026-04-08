@@ -19,6 +19,7 @@ import { createPrForJob, pushBranchForFailedJob } from './PrCreator.js';
 import type { Job, ClaudeStreamEvent, CodexStreamEvent } from '../../shared/types.js';
 import { isCodexModel, codexModelName, effectiveMaxTurns } from '../../shared/types.js';
 import { buildEyePrompt, isEyeJob, computeAdaptiveEyeInterval } from './EyeConfig.js';
+import { markJobRunning } from './JobLifecycle.js';
 import { ensureCodexTrusted } from './PtyManager.js';
 import { buildNiceSpawn, isNiceAvailable } from './ProcessPriority.js';
 import { registerCompletionHandler } from './JobCompletionNotifier.js';
@@ -306,6 +307,7 @@ export function runAgent(options: RunOptions): void {
   } catch { /* not a git repo or git not available */ }
 
   queries.updateAgent(agentId, { pid: child.pid ?? null, status: 'running' });
+  markJobRunning(job.id);
   const agentWithJob = queries.getAgentWithJob(agentId);
   if (agentWithJob) socket.emitAgentUpdate(agentWithJob);
 

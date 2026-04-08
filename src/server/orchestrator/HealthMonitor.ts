@@ -8,6 +8,7 @@ import * as socket from '../socket/SocketManager.js';
 import { estimateCostUsd } from './CostEstimator.js';
 import { getFileLockRegistry } from './FileLockRegistry.js';
 import { onJobCompleted as debateOnJobCompleted } from './DebateManager.js';
+import { markJobRunning } from './JobLifecycle.js';
 import { onJobCompleted as workflowOnJobCompleted } from './WorkflowManager.js';
 import type { StopMode } from '../../shared/types.js';
 
@@ -227,6 +228,7 @@ function killAgentGracefully(agentId: string, reason: string): void {
   });
 
   // Mark job as done (limit reached is a successful stop, not a failure)
+  markJobRunning(agent.job_id);
   queries.updateJobStatus(agent.job_id, 'done');
 
   // Release all file locks held by this agent

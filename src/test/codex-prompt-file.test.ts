@@ -181,13 +181,15 @@ describe('AgentRunner: Codex prompt file delivery', () => {
       title: 'Test Codex Job',
       description: 'Do something',
       model: 'codex',
-      status: 'queued',
+      status: 'assigned',
     });
 
     const queries = await import('../server/db/queries.js');
     const agent = queries.insertAgent({ id: 'codex-agent-1', job_id: job.id, status: 'running' });
 
     runAgent({ agentId: agent.id, job });
+
+    expect(queries.getJobById(job.id)?.status).toBe('running');
 
     // A prompt file was written
     const promptPath = getPromptPath(agent.id);
@@ -222,13 +224,15 @@ describe('AgentRunner: Codex prompt file delivery', () => {
       title: 'Test Claude Job',
       description: 'Claude task',
       model: 'claude-sonnet-4-6',
-      status: 'queued',
+      status: 'assigned',
     });
 
     const queries = await import('../server/db/queries.js');
     const agent = queries.insertAgent({ id: 'claude-agent-1', job_id: job.id, status: 'running' });
 
     runAgent({ agentId: agent.id, job });
+
+    expect(queries.getJobById(job.id)?.status).toBe('running');
 
     // No prompt file was written for Claude
     const promptPath = getPromptPath(agent.id);

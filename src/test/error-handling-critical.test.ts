@@ -179,6 +179,26 @@ describe('finishJobHandler: idempotency', () => {
     expect(JSON.parse(outputs[0].content).result).toBe('First result');
     expect(JSON.parse(outputs[1].content).result).toBe('Second result');
   });
+
+  it('promotes assigned jobs to running before completing them', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { finishJobHandler } = await import('../server/mcp/tools/finishJob.js');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const job = await insertTestJob({ id: 'finish-assigned-job', status: 'assigned' });
+      const agent = queries.insertAgent({ id: 'finish-assigned-agent', job_id: job.id, status: 'running' });
+
+      const result = await finishJobHandler(agent.id, { result: 'Done from assigned' });
+      expect(JSON.parse(result).ok).toBe(true);
+      expect(queries.getJobById(job.id)?.status).toBe('done');
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("illegal job transition 'assigned' → 'done'"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

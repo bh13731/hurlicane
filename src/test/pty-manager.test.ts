@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanupTestDb, createSocketMock, setupTestDb } from './helpers.js';
+import { cleanupTestDb, createSocketMock, insertTestJob, setupTestDb } from './helpers.js';
 
 const execFileSyncMock = vi.fn((cmd: string, args: string[]) => {
   if (cmd !== 'tmux') return Buffer.from('');
@@ -124,5 +124,38 @@ describe('PtyManager spawning state', () => {
       null,
     );
     expect(handleJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('marks standalone print jobs as running once the tmux session is live', async () => {
+    vi.useFakeTimers();
+    try {
+      const queries = await import('../server/db/queries.js');
+      const { startInteractiveAgent } = await import('../server/orchestrator/PtyManager.js');
+
+      const job = await insertTestJob({
+        id: 'pty-running-job',
+        title: 'Standalone print job',
+        description: 'test',
+        status: 'assigned',
+        model: 'claude-sonnet-4-6',
+        work_dir: process.cwd(),
+        is_interactive: 0,
+      } as any);
+      queries.insertAgent({ id: 'pty-running-agent', job_id: job.id, status: 'starting' });
+
+      startInteractiveAgent({ agentId: 'pty-running-agent', job });
+      await vi.advanceTimersByTimeAsync(4000);
+
+      expect(queries.getJobById(job.id)?.status).toBe('running');
+      expect(startTailingMock).toHaveBeenCalledWith(
+        'pty-running-agent',
+        expect.objectContaining({ id: job.id }),
+        expect.stringContaining('pty-running-agent.ndjson'),
+        0,
+        null,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
