@@ -11,7 +11,7 @@ import type { JobStatus, WorkflowStatus, DebateStatus } from '../../shared/types
 // legitimately skip states.
 
 const JOB_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
-  queued:    ['assigned', 'cancelled'],
+  queued:    ['assigned', 'failed', 'cancelled'],   // failed: cascade-fail (deps failed/cancelled)
   assigned:  ['running', 'failed', 'cancelled'],
   running:   ['done', 'failed', 'cancelled'],
   done:      [],

@@ -17,6 +17,7 @@ describe('StateTransitions', () => {
   describe('legal transitions', () => {
     it.each([
       ['job', 'queued', 'assigned'],
+      ['job', 'queued', 'failed'],
       ['job', 'queued', 'cancelled'],
       ['job', 'assigned', 'running'],
       ['job', 'assigned', 'failed'],
