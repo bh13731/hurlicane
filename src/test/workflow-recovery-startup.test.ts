@@ -10,6 +10,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const reconcileBlockedPRsSpy = vi.fn().mockResolvedValue(undefined);
 const reconcileRunningWorkflowsSpy = vi.fn();
 const workflowOnJobCompletedSpy = vi.fn();
+const listAllRunningAgentsSpy = vi.fn(() => []);
+const getAgentWithJobSpy = vi.fn();
+const getJobByIdSpy = vi.fn();
+const updateAgentSpy = vi.fn();
+const updateJobStatusSpy = vi.fn();
+const releaseLocksForAgentSpy = vi.fn();
+const getPendingQuestionSpy = vi.fn(() => null);
+const updateQuestionSpy = vi.fn();
+const scheduleRepeatJobSpy = vi.fn();
 
 vi.mock('../server/orchestrator/WorkflowManager.js', () => ({
   reconcileBlockedPRs: reconcileBlockedPRsSpy,
@@ -18,15 +27,15 @@ vi.mock('../server/orchestrator/WorkflowManager.js', () => ({
 }));
 
 vi.mock('../server/db/queries.js', () => ({
-  listAllRunningAgents: vi.fn(() => []),
-  getAgentWithJob: vi.fn(),
-  getJobById: vi.fn(),
-  updateAgent: vi.fn(),
-  updateJobStatus: vi.fn(),
-  releaseLocksForAgent: vi.fn(),
-  getPendingQuestion: vi.fn(() => null),
-  updateQuestion: vi.fn(),
-  scheduleRepeatJob: vi.fn(),
+  listAllRunningAgents: listAllRunningAgentsSpy,
+  getAgentWithJob: getAgentWithJobSpy,
+  getJobById: getJobByIdSpy,
+  updateAgent: updateAgentSpy,
+  updateJobStatus: updateJobStatusSpy,
+  releaseLocksForAgent: releaseLocksForAgentSpy,
+  getPendingQuestion: getPendingQuestionSpy,
+  updateQuestion: updateQuestionSpy,
+  scheduleRepeatJob: scheduleRepeatJobSpy,
   getDb: vi.fn(),
 }));
 
@@ -38,6 +47,7 @@ vi.mock('../server/orchestrator/AgentRunner.js', () => ({
 vi.mock('../server/orchestrator/PtyManager.js', () => ({
   isTmuxSessionAlive: vi.fn(() => false),
   attachPty: vi.fn(),
+  resolveStandalonePrintJobOutcome: vi.fn(() => null),
 }));
 
 vi.mock('../server/orchestrator/DebateManager.js', () => ({
@@ -70,8 +80,9 @@ vi.mock('../server/instrument.js', () => ({
 
 describe('recovery.ts: startup wiring for reconcileBlockedPRs', () => {
   beforeEach(() => {
-    reconcileBlockedPRsSpy.mockClear();
-    reconcileRunningWorkflowsSpy.mockClear();
+    vi.clearAllMocks();
+    listAllRunningAgentsSpy.mockReturnValue([]);
+    getPendingQuestionSpy.mockReturnValue(null);
   });
 
   it('(f) runRecovery calls reconcileBlockedPRs as fire-and-forget', async () => {
@@ -93,5 +104,46 @@ describe('recovery.ts: startup wiring for reconcileBlockedPRs', () => {
 
     // Clean up the dangling promise so the test doesn't leak
     resolveBlocked();
+  });
+
+  it('does not rewrite a job that already finished before startup recovery runs', async () => {
+    const queries = await import('../server/db/queries.js');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    listAllRunningAgentsSpy.mockReturnValue([
+      { id: 'agent-1', job_id: 'job-1', status: 'running', pid: null },
+    ] as any);
+    getAgentWithJobSpy.mockReturnValue({
+      id: 'agent-1',
+      job_id: 'job-1',
+      status: 'running',
+      job: {
+        id: 'job-1',
+        status: 'done',
+        is_interactive: false,
+        model: 'claude-sonnet-4-6',
+        repeat_interval_ms: null,
+      },
+    } as any);
+    getJobByIdSpy.mockReturnValue({
+      id: 'job-1',
+      status: 'done',
+      is_interactive: false,
+      model: 'claude-sonnet-4-6',
+      repeat_interval_ms: null,
+    } as any);
+
+    const { runRecovery } = await import('../server/orchestrator/recovery.js');
+    runRecovery();
+
+    expect(queries.updateJobStatus).not.toHaveBeenCalled();
+    expect(queries.updateAgent).toHaveBeenCalledWith(
+      'agent-1',
+      expect.objectContaining({ status: 'done' }),
+    );
+    expect(workflowOnJobCompletedSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("illegal job transition 'done' → 'failed'"),
+    );
+    warnSpy.mockRestore();
   });
 });
