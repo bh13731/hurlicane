@@ -14,8 +14,9 @@ import {
   createSocketMock,
 } from './helpers.js';
 
-// Track all execSync calls for assertion
+// Track all execSync / execFileSync calls for assertion
 const execSyncCalls: Array<{ cmd: string; opts?: any }> = [];
+const execFileSyncCalls: Array<{ file: string; args: string[]; opts?: any }> = [];
 
 vi.mock('child_process', () => ({
   exec: vi.fn(),
@@ -40,6 +41,53 @@ vi.mock('child_process', () => ({
     // gh pr create
     if (cmd.includes('gh pr create')) {
       return Buffer.from('https://github.com/test/repo/pull/42\n');
+    }
+    return Buffer.from('');
+  }),
+  execFileSync: vi.fn((file: string, args?: string[], opts?: any) => {
+    execFileSyncCalls.push({ file, args: args ?? [], opts });
+    const joined = [file, ...(args ?? [])].join(' ');
+    // rev-parse for ensureWorktreeBranch
+    if (file === 'git' && args?.[0] === 'rev-parse' && args?.includes('HEAD')) {
+      return Buffer.from('workflow/test-branch\n');
+    }
+    // symbolic-ref for getRemoteDefaultBranch
+    if (file === 'git' && args?.[0] === 'symbolic-ref') {
+      return Buffer.from('refs/remotes/origin/main\n');
+    }
+    // rev-parse --verify for base ref existence check
+    if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
+      return Buffer.from('abc1234\n');
+    }
+    // rev-list for commit count
+    if (file === 'git' && args?.[0] === 'rev-list') {
+      return Buffer.from('3\n');
+    }
+    // git push
+    if (file === 'git' && args?.[0] === 'push') {
+      return Buffer.from('');
+    }
+    // gh label create
+    if (file === 'gh' && args?.[0] === 'label') {
+      return Buffer.from('');
+    }
+    // merge-base
+    if (file === 'git' && args?.[0] === 'merge-base') {
+      return Buffer.from('\n');
+    }
+    // gh pr view (no existing PR by default)
+    if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') {
+      const err = new Error('no PRs found') as any;
+      err.status = 1;
+      throw err;
+    }
+    // gh pr create
+    if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') {
+      return Buffer.from('https://github.com/test/repo/pull/42\n');
+    }
+    // git worktree remove
+    if (file === 'git' && args?.[0] === 'worktree') {
+      return Buffer.from('');
     }
     return Buffer.from('');
   }),
@@ -74,7 +122,7 @@ vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
 }));
 
 import type { Workflow } from '../shared/types.js';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { insertTestWorkflow } from './helpers.js';
 
 function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
@@ -115,6 +163,7 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
 describe('pushAndCreatePr: partial label', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -274,6 +323,7 @@ describe('pushAndCreatePr: partial label', () => {
 describe('finalizeWorkflow: worktree preservation on PR failure', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -365,6 +415,7 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
 describe('finalizeWorkflow: blocked status on PR failure', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -475,6 +526,7 @@ describe('finalizeWorkflow: blocked status on PR failure', () => {
 describe('getPrCreationOutcome: git error handling (Fix-C7b)', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -529,6 +581,7 @@ describe('getPrCreationOutcome: git error handling (Fix-C7b)', () => {
 describe('pushAndCreatePr: rev-list error handling (Fix-C8a)', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -595,6 +648,7 @@ describe('pushAndCreatePr: rev-list error handling (Fix-C8a)', () => {
 describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -824,6 +878,7 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
 describe('Fix-C11a: transient rev-parse errors propagate to callers via countBranchCommits', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -926,6 +981,7 @@ describe('Fix-C11a: transient rev-parse errors propagate to callers via countBra
 describe('finalizeWorkflow: retry and fallback behavior', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -1071,6 +1127,7 @@ describe('finalizeWorkflow: retry and fallback behavior', () => {
 describe('reconcileBlockedPRs: startup recovery', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -1166,5 +1223,223 @@ describe('reconcileBlockedPRs: startup recovery', () => {
 
     // A warning was logged for the skipped malformed workflow (single-string form)
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('wf-malformed-e'));
+  });
+});
+
+describe('pushAndCreatePr: shell metacharacter safety (M1-regression)', () => {
+  beforeEach(async () => {
+    execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+    vi.restoreAllMocks();
+  });
+
+  it('current code embeds backtick-containing titles unsafely in shell command strings', async () => {
+    // This test documents the existing vulnerability: JSON.stringify does NOT escape
+    // backticks or $() in shell command strings. In a real shell, `broken` would be
+    // executed as a command and $(echo pwned) would be substituted.
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({
+      title: 'Fix `broken` code with $(echo pwned) and backtick `test`',
+    });
+
+    const prUrl = pushAndCreatePr(wf, false);
+    expect(prUrl).toBeTruthy();
+
+    // Verify the command was routed through execSync (shell string) — the vulnerable path
+    const prCreateCall = execSyncCalls.find(c => c.cmd.includes('gh pr create'));
+    if (prCreateCall) {
+      // Backticks and $() survive JSON.stringify and appear raw in the shell string.
+      // In a real shell, /bin/sh would try to execute them, causing:
+      //   /bin/sh: -c: line 0: unexpected EOF while looking for matching `'
+      expect(prCreateCall.cmd).toContain('`broken`');
+      expect(prCreateCall.cmd).toContain('$(echo pwned)');
+    } else {
+      // If code has been refactored to execFileSync (M2), verify args array safety instead
+      const prCreateFileCall = execFileSyncCalls.find(
+        c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'create'
+      );
+      expect(prCreateFileCall).toBeDefined();
+      const titleIdx = prCreateFileCall!.args.indexOf('--title');
+      expect(titleIdx).toBeGreaterThan(-1);
+      // With execFileSync, the title is a separate array element — never shell-interpreted
+      expect(prCreateFileCall!.args[titleIdx + 1]).toContain('`broken`');
+      expect(prCreateFileCall!.args[titleIdx + 1]).toContain('$(echo pwned)');
+    }
+  });
+
+  // Enable after M2 refactors pushAndCreatePr from execSync to execFileSync
+  it.skip('uses execFileSync argument arrays (not shell strings) for gh pr create [M2-target]', async () => {
+    // This test verifies the M2 fix: pushAndCreatePr must use execFileSync with argument
+    // arrays so that shell metacharacters are never interpreted by /bin/sh.
+    const mockedExecFileSync = vi.mocked(execFileSync);
+    mockedExecFileSync.mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.includes('HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
+        return Buffer.from('refs/remotes/origin/main\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
+        return Buffer.from('abc1234\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-list') {
+        return Buffer.from('3\n');
+      }
+      if (file === 'git' && args?.[0] === 'push') {
+        return Buffer.from('');
+      }
+      if (file === 'git' && args?.[0] === 'merge-base') {
+        return Buffer.from('\n');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') {
+        throw new Error('no PRs found');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') {
+        return Buffer.from('https://github.com/test/repo/pull/42\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const shellTitle = 'Fix `broken` code with $(echo pwned) and $USER';
+    const wf = makeWorkflow({ title: shellTitle });
+
+    const prUrl = pushAndCreatePr(wf, false);
+    expect(prUrl).toBe('https://github.com/test/repo/pull/42');
+
+    // gh pr create MUST be called via execFileSync (argument array), NOT execSync (shell string)
+    const prCreateShell = execSyncCalls.find(c => c.cmd.includes('gh pr create'));
+    expect(prCreateShell).toBeUndefined();
+
+    const prCreateSafe = execFileSyncCalls.find(
+      c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'create'
+    );
+    expect(prCreateSafe).toBeDefined();
+
+    // The title must be passed as a separate array element, preserving metacharacters verbatim
+    const titleIdx = prCreateSafe!.args.indexOf('--title');
+    expect(titleIdx).toBeGreaterThan(-1);
+    const actualTitle = prCreateSafe!.args[titleIdx + 1];
+    expect(actualTitle).toContain('`broken`');
+    expect(actualTitle).toContain('$(echo pwned)');
+    expect(actualTitle).toContain('$USER');
+  });
+
+  // Enable after M2 refactors pushAndCreatePr from execSync to execFileSync
+  it.skip('uses execFileSync argument arrays for gh pr view fallback [M2-target]', async () => {
+    // When gh pr create fails with "already exists", the fallback gh pr view must
+    // also use execFileSync to avoid shell injection via the branch name.
+    const mockedExecFileSync = vi.mocked(execFileSync);
+    const callLog: Array<{ file: string; args: string[] }> = [];
+    mockedExecFileSync.mockImplementation((file: any, args?: any, opts?: any) => {
+      callLog.push({ file, args: args ?? [] });
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.includes('HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
+        return Buffer.from('refs/remotes/origin/main\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
+        return Buffer.from('abc1234\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-list') {
+        return Buffer.from('3\n');
+      }
+      if (file === 'git' && args?.[0] === 'push') {
+        return Buffer.from('');
+      }
+      if (file === 'git' && args?.[0] === 'merge-base') {
+        return Buffer.from('\n');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') {
+        return Buffer.from('https://github.com/test/repo/pull/99\n');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') {
+        const err = new Error('a]ready exists') as any;
+        err.stderr = Buffer.from('already exists');
+        throw err;
+      }
+      return Buffer.from('');
+    });
+
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({
+      title: 'Fix `backtick` issue',
+      worktree_branch: 'workflow/$(injected)-branch',
+    });
+
+    const prUrl = pushAndCreatePr(wf, false);
+    expect(prUrl).toBe('https://github.com/test/repo/pull/99');
+
+    // The gh pr view fallback must use execFileSync with the branch as an array element
+    const prViewShell = execSyncCalls.find(c => c.cmd.includes('gh pr view'));
+    expect(prViewShell).toBeUndefined();
+
+    const prViewSafe = execFileSyncCalls.filter(
+      c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view'
+    );
+    expect(prViewSafe.length).toBeGreaterThan(0);
+    // Branch name with $() must appear as a direct arg, not interpolated into a shell string
+    const lastView = prViewSafe[prViewSafe.length - 1];
+    expect(lastView.args).toContain('workflow/$(injected)-branch');
+  });
+
+  // Enable after M2 refactors pushAndCreatePr from execSync to execFileSync
+  it.skip('passes draft flag and label as separate args, not concatenated into shell string [M2-target]', async () => {
+    const mockedExecFileSync = vi.mocked(execFileSync);
+    mockedExecFileSync.mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.includes('HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
+        return Buffer.from('refs/remotes/origin/main\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
+        return Buffer.from('abc1234\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-list') {
+        return Buffer.from('3\n');
+      }
+      if (file === 'git' && args?.[0] === 'push') {
+        return Buffer.from('');
+      }
+      if (file === 'git' && args?.[0] === 'merge-base') {
+        return Buffer.from('\n');
+      }
+      if (file === 'gh' && args?.[0] === 'label') {
+        return Buffer.from('');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') {
+        throw new Error('no PRs found');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') {
+        return Buffer.from('https://github.com/test/repo/pull/42\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({ title: 'Draft with `backticks`' });
+
+    const prUrl = pushAndCreatePr(wf, true);
+    expect(prUrl).toBe('https://github.com/test/repo/pull/42');
+
+    const prCreate = execFileSyncCalls.find(
+      c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'create'
+    );
+    expect(prCreate).toBeDefined();
+
+    // --draft and --label must be separate args, not part of a concatenated string
+    expect(prCreate!.args).toContain('--draft');
+    expect(prCreate!.args).toContain('--label');
+    expect(prCreate!.args).toContain('partial');
   });
 });
