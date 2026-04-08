@@ -107,6 +107,102 @@ describe('StuckJobWatchdog terminal guards', () => {
     await cleanupTestDb();
   });
 
+  it('idle-timeout does not rewrite a job that completed between the initial read and the terminal write', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { _invokeWatchdogCheckForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    const { isTmuxSessionAlive } = await import('../server/orchestrator/PtyManager.js') as any;
+    const { onJobCompleted: workflowOnJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { handleRetry } = await import('../server/orchestrator/RetryManager.js');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      // Job is running but will be "completed by finish_job" before watchdog writes
+      const job = await insertTestJob({
+        id: 'idle-already-done-job',
+        status: 'running',
+        model: 'claude-sonnet-4-6',
+      });
+      // Agent idle for 25 minutes (past 20-min threshold)
+      const agent = queries.insertAgent({
+        id: 'idle-already-done-agent',
+        job_id: job.id,
+        status: 'running',
+        updated_at: Date.now() - 25 * 60 * 1000,
+      });
+
+      // Tmux session is alive so the idle-timeout branch fires
+      (isTmuxSessionAlive as any).mockImplementation((id: string) => id === agent.id);
+
+      // Simulate finish_job completing the job between the initial read and
+      // the re-read that guards the terminal write. The first getJobById call
+      // (isStuckCandidate check) sees 'running'; the second (guard re-read)
+      // sees 'done' because we intercept it.
+      let callCount = 0;
+      const originalGetJobById = queries.getJobById.bind(queries);
+      const spy = vi.spyOn(queries, 'getJobById').mockImplementation((id: string) => {
+        if (id === job.id) {
+          callCount++;
+          if (callCount === 1) {
+            // First read: job is still running (triggers idle-timeout)
+            return originalGetJobById(id);
+          }
+          // Second read (guard): simulate that finish_job completed it
+          queries.updateJobStatus(job.id, 'done');
+          return originalGetJobById(id);
+        }
+        return originalGetJobById(id);
+      });
+
+      _invokeWatchdogCheckForTest();
+
+      // Job must still be 'done', not overwritten to 'failed'
+      spy.mockRestore();
+      expect(queries.getJobById(job.id)?.status).toBe('done');
+      // No workflow/retry side effects should fire
+      expect(workflowOnJobCompleted).not.toHaveBeenCalled();
+      expect(handleRetry).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("illegal job transition 'done' → 'failed'"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('idle-timeout correctly fails a still-running job and fires side effects', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { _invokeWatchdogCheckForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    const { isTmuxSessionAlive } = await import('../server/orchestrator/PtyManager.js') as any;
+    const { onJobCompleted: workflowOnJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { handleRetry } = await import('../server/orchestrator/RetryManager.js');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const job = await insertTestJob({
+        id: 'idle-still-running-job',
+        status: 'running',
+        model: 'claude-sonnet-4-6',
+      });
+      const agent = queries.insertAgent({
+        id: 'idle-still-running-agent',
+        job_id: job.id,
+        status: 'running',
+        updated_at: Date.now() - 25 * 60 * 1000,
+      });
+
+      (isTmuxSessionAlive as any).mockImplementation((id: string) => id === agent.id);
+
+      _invokeWatchdogCheckForTest();
+
+      expect(queries.getJobById(job.id)?.status).toBe('failed');
+      expect(queries.getAgentById(agent.id)?.status).toBe('failed');
+      expect(workflowOnJobCompleted).toHaveBeenCalled();
+      expect(handleRetry).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('cleans up a stale running agent without rewriting a job that is already done', async () => {
     const queries = await import('../server/db/queries.js');
     const { _invokeWatchdogCheckForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');

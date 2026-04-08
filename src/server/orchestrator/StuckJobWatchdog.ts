@@ -142,7 +142,13 @@ function check(): void {
             error_message: `Agent idle ${Math.round(idleMs / 60000)}min without MCP activity; watchdog killed.`,
             finished_at: Date.now(),
           });
-          queries.updateJobStatus(agent.job_id, 'failed');
+          // Re-read the job immediately before terminalizing — another path
+          // (e.g. finish_job) may have completed it since our initial check.
+          const idleJobNow = queries.getJobById(agent.job_id);
+          const idleJobStillRunning = idleJobNow?.status === 'running';
+          if (idleJobStillRunning) {
+            queries.updateJobStatus(agent.job_id, 'failed');
+          }
           getFileLockRegistry().releaseAll(agent.id);
           disconnectedAgents.delete(agent.id);
           const pendingQ = queries.getPendingQuestion(agent.id);
@@ -155,20 +161,22 @@ function check(): void {
           }
           const updatedAgent2 = queries.getAgentWithJob(agent.id);
           if (updatedAgent2) socket.emitAgentUpdate(updatedAgent2);
-          const idleJobFresh = queries.getJobById(agent.job_id);
-          if (idleJobFresh) {
-            try { socket.emitJobUpdate(idleJobFresh); } catch { /* ignore */ }
-            try { workflowOnJobCompleted(idleJobFresh); } catch { /* ignore */ }
-            if (idleJobFresh.repeat_interval_ms) {
-              try {
-                const nextJob = queries.scheduleRepeatJob(idleJobFresh);
-                socket.emitJobNew(nextJob);
-                nudgeQueue();
-                console.log(`[watchdog] scheduled next repeat for idle job "${idleJobFresh.title}"`);
-              } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
-            }
-            if (idleJobFresh.status === 'failed') {
-              try { handleRetry(idleJobFresh, agent.id); } catch (err) { console.error(`[watchdog] handleRetry error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
+          if (idleJobStillRunning) {
+            const idleJobFresh = queries.getJobById(agent.job_id);
+            if (idleJobFresh) {
+              try { socket.emitJobUpdate(idleJobFresh); } catch { /* ignore */ }
+              try { workflowOnJobCompleted(idleJobFresh); } catch { /* ignore */ }
+              if (idleJobFresh.repeat_interval_ms) {
+                try {
+                  const nextJob = queries.scheduleRepeatJob(idleJobFresh);
+                  socket.emitJobNew(nextJob);
+                  nudgeQueue();
+                  console.log(`[watchdog] scheduled next repeat for idle job "${idleJobFresh.title}"`);
+                } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
+              }
+              if (idleJobFresh.status === 'failed') {
+                try { handleRetry(idleJobFresh, agent.id); } catch (err) { console.error(`[watchdog] handleRetry error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
+              }
             }
           }
         }
