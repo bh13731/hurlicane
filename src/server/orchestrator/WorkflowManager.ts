@@ -123,6 +123,15 @@ function _onJobCompleted(job: Job): void {
       // Fallback-eligible failures (launch_environment, rate_limit, etc.) are operational —
       // exhausting all fallback models is expected during shutdown or provider outages.
       updateAndEmit(workflow.id, { status: 'blocked', current_phase: job.workflow_phase ?? 'idle', blocked_reason: noFallbackReason }, { operationalBlock: true });
+      // Write an operational-block note so reconcileRunningWorkflows can identify
+      // and auto-recover this workflow when models become available again (e.g. after restart).
+      queries.upsertNote(`workflow/${workflow.id}/operational-block`, JSON.stringify({
+        phase,
+        cycle,
+        model: currentModel,
+        failureKind,
+        ts: Date.now(),
+      }), null);
       return;
     }
     // Transient CLI crashes (e.g. Codex stdin hang) — retry same model, not a provider issue.
@@ -1203,6 +1212,65 @@ export function reconcileRunningWorkflows(): void {
         });
       }
     }
+  }
+
+  // Second pass: recover operationally-blocked workflows whose models are now available.
+  // These are workflows blocked by fallback-eligible failures (launch_environment, rate_limit, etc.)
+  // that wrote an operational-block note. On restart, in-memory rate-limit state is cleared,
+  // so models that were previously unavailable are likely available again.
+  for (const workflow of queries.listWorkflows()) {
+    if (workflow.status !== 'blocked') continue;
+
+    const opBlockNote = queries.getNote(`workflow/${workflow.id}/operational-block`);
+    if (!opBlockNote) continue;
+
+    const phase = workflow.current_phase as WorkflowPhase;
+    if (phase === 'idle') continue;
+
+    // Find the failed job that caused the operational block
+    const jobs = queries.getJobsForWorkflow(workflow.id);
+    const expectedCycle = phase === 'assess' ? 0 : workflow.current_cycle;
+    const failedJob = jobs
+      .filter(j => j.workflow_phase === phase && j.workflow_cycle === expectedCycle && j.status === 'failed')
+      .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0];
+    if (!failedJob) continue;
+
+    const originalModel = failedJob.model ?? (phase === 'review' ? workflow.reviewer_model : workflow.implementer_model);
+
+    // Check if the original model or any fallback is now available
+    const originalAvailable = getAvailableModel(originalModel);
+    let spawnModel: string | undefined;
+
+    if (originalAvailable === originalModel) {
+      // Original model is available again — use it (no override needed)
+      spawnModel = undefined;
+    } else {
+      // Try fallback candidates
+      const fallback = getWorkflowFallbackModel(workflow, phase, originalModel);
+      if (fallback) {
+        spawnModel = fallback;
+      } else {
+        continue; // Still no model available — stay blocked
+      }
+    }
+
+    // Model available — recover the workflow
+    const recoveryModel = spawnModel ?? originalModel;
+    console.log(`[workflow-gap] recovering operationally-blocked workflow ${workflow.id.slice(0, 8)}: model ${recoveryModel} now available`);
+
+    // Clean up the operational-block note to prevent duplicate recovery
+    queries.deleteNote(`workflow/${workflow.id}/operational-block`);
+
+    // Unblock and respawn the phase
+    updateAndEmit(workflow.id, { status: 'running', blocked_reason: null });
+    spawnPhaseJob(queries.getWorkflowById(workflow.id)!, phase, expectedCycle, spawnModel);
+
+    logResilienceEvent('operational_block_recovery', 'workflow', workflow.id, {
+      phase,
+      cycle: expectedCycle,
+      model: recoveryModel,
+      previous_reason: workflow.blocked_reason,
+    });
   }
 }
 

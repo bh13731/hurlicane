@@ -229,4 +229,231 @@ describe('WorkflowManager: launch_environment + no-fallback Sentry path (issue 7
     // Operational — Sentry should NOT fire
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
+
+  it('writes an operational-block note when blocking for no-fallback', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+    const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    // Restore mock after the negative-control test overrides it to 'unknown'
+    vi.mocked(classifyJobFailure).mockReturnValue('launch_environment');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 1,
+      implementer_model: 'codex',
+    });
+    queries.upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'failed',
+      model: 'codex',
+    });
+
+    onJobCompleted(job);
+
+    // The operational-block note should be present for recovery
+    const note = queries.getNote(`workflow/${workflow.id}/operational-block`);
+    expect(note).not.toBeNull();
+    const parsed = JSON.parse(note!.value);
+    expect(parsed.phase).toBe('implement');
+    expect(parsed.cycle).toBe(1);
+    expect(parsed.model).toBe('codex');
+    expect(parsed.failureKind).toBe('launch_environment');
+  });
+});
+
+describe('WorkflowManager: operational-block recovery in reconcileRunningWorkflows', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+    await resetManagerState();
+    vi.clearAllMocks();
+    // Restore default mock implementations that individual tests may override
+    const { getAvailableModel } = await import('../server/orchestrator/ModelClassifier.js');
+    vi.mocked(getAvailableModel).mockImplementation(() => null);
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('recovers a blocked workflow when the original model becomes available', async () => {
+    const { reconcileRunningWorkflows } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+    const { getAvailableModel } = await import('../server/orchestrator/ModelClassifier.js');
+    const socket = await import('../server/socket/SocketManager.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'blocked',
+      current_phase: 'implement',
+      current_cycle: 1,
+      implementer_model: 'codex',
+    });
+    queries.upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+    queries.upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    // The failed job that caused the block
+    await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'failed',
+      model: 'codex',
+    });
+
+    // Write the operational-block note (as _onJobCompleted would)
+    queries.upsertNote(`workflow/${workflow.id}/operational-block`, JSON.stringify({
+      phase: 'implement',
+      cycle: 1,
+      model: 'codex',
+      failureKind: 'launch_environment',
+      ts: Date.now(),
+    }), null);
+
+    // Simulate model becoming available again (e.g. after restart clears rate limits)
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => model);
+
+    reconcileRunningWorkflows();
+
+    const updated = queries.getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('running');
+    expect(updated.blocked_reason).toBeNull();
+
+    // A new phase job should have been spawned
+    expect(vi.mocked(socket.emitJobNew).mock.calls.length).toBeGreaterThan(0);
+    const newJob = vi.mocked(socket.emitJobNew).mock.calls[0][0];
+    expect(newJob.workflow_phase).toBe('implement');
+
+    // The operational-block note should be cleaned up
+    expect(queries.getNote(`workflow/${workflow.id}/operational-block`)).toBeNull();
+  });
+
+  it('stays blocked when no model is available yet', async () => {
+    const { reconcileRunningWorkflows } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'blocked',
+      current_phase: 'implement',
+      current_cycle: 1,
+      implementer_model: 'codex',
+    });
+
+    await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'failed',
+      model: 'codex',
+    });
+
+    queries.upsertNote(`workflow/${workflow.id}/operational-block`, JSON.stringify({
+      phase: 'implement',
+      cycle: 1,
+      model: 'codex',
+      failureKind: 'launch_environment',
+      ts: Date.now(),
+    }), null);
+
+    // All models still unavailable (default mock returns null for codex)
+    reconcileRunningWorkflows();
+
+    const updated = queries.getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('blocked');
+    // Note should remain for future recovery attempts
+    expect(queries.getNote(`workflow/${workflow.id}/operational-block`)).not.toBeNull();
+  });
+
+  it('does not touch blocked workflows without an operational-block note', async () => {
+    const { reconcileRunningWorkflows } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+    const { getAvailableModel } = await import('../server/orchestrator/ModelClassifier.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'blocked',
+      current_phase: 'implement',
+      current_cycle: 1,
+      implementer_model: 'codex',
+    });
+
+    await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'failed',
+      model: 'codex',
+    });
+
+    // No operational-block note — this is a non-operational block (e.g. code failure)
+
+    // Even if models are available, the workflow should not be recovered
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => model);
+
+    reconcileRunningWorkflows();
+
+    const updated = queries.getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('blocked');
+  });
+
+  it('recovers with a fallback model when original is still unavailable', async () => {
+    const { reconcileRunningWorkflows } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+    const { getAvailableModel } = await import('../server/orchestrator/ModelClassifier.js');
+    const socket = await import('../server/socket/SocketManager.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'blocked',
+      current_phase: 'implement',
+      current_cycle: 1,
+      implementer_model: 'codex',
+    });
+    queries.upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+    queries.upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'failed',
+      model: 'codex',
+    });
+
+    queries.upsertNote(`workflow/${workflow.id}/operational-block`, JSON.stringify({
+      phase: 'implement',
+      cycle: 1,
+      model: 'codex',
+      failureKind: 'launch_environment',
+      ts: Date.now(),
+    }), null);
+
+    // Original model (codex) still unavailable, but Claude is available as fallback
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => {
+      if (model === 'codex') return null;
+      return model;
+    });
+
+    reconcileRunningWorkflows();
+
+    const updated = queries.getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('running');
+
+    // Should have spawned with a fallback model (not codex)
+    expect(vi.mocked(socket.emitJobNew).mock.calls.length).toBeGreaterThan(0);
+    const newJob = vi.mocked(socket.emitJobNew).mock.calls[0][0];
+    expect(newJob.workflow_phase).toBe('implement');
+    expect(newJob.model).not.toBe('codex');
+  });
 });
