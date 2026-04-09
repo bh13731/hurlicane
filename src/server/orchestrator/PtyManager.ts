@@ -9,6 +9,7 @@ import * as socket from '../socket/SocketManager.js';
 import { SYSTEM_PROMPT, HOOK_SETTINGS, handleJobCompletion, cancelledAgents, startTailing, stopTailing, readClaudeMd, buildMemorySection } from './AgentRunner.js';
 import type { Job } from '../../shared/types.js';
 import { isCodexModel, codexModelName, isAutoExitJob } from '../../shared/types.js';
+import { markJobRunning } from './JobLifecycle.js';
 import { wrapExecLineWithNice } from './ProcessPriority.js';
 import { logResilienceEvent } from './ResilienceLogger.js';
 
@@ -445,6 +446,11 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
     } catch {
       const msg = `work_dir does not exist: ${job.work_dir}`;
       console.warn(`[pty ${agentId}] ${msg} — marking job failed`);
+      captureWithContext(new Error(msg), { agent_id: agentId, job_id: job.id, component: 'PtyManager' });
+      logPtyLifecycleEvent('pty_work_dir_rejected', agentId, job, {
+        reason: 'work_dir_does_not_exist',
+        rejected_path: job.work_dir,
+      });
       queries.updateAgent(agentId, { status: 'failed', error_message: msg, finished_at: Date.now() });
       queries.updateJobStatus(job.id, 'failed');
       const updated = queries.getAgentWithJob(agentId);
@@ -698,6 +704,7 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
       if (currentAgent && TERMINAL.includes(currentAgent.status)) return;
 
       queries.updateAgent(agentId, { status: 'running' });
+      markJobRunning(job.id);
       const updated = queries.getAgentWithJob(agentId);
       if (updated) socket.emitAgentUpdate(updated);
       logPtyLifecycleEvent('pty_agent_running', agentId, job, {
@@ -834,6 +841,7 @@ export async function attachPty(agentId: string, job: Job, cols = 100, rows = 50
 
   if (!isTmuxSessionAlive(agentId)) {
     console.warn(`[pty ${agentId}] tmux session not alive, cannot attach`);
+    markJobRunning(job.id);
     queries.updateAgent(agentId, { status: 'done', finished_at: Date.now() });
     queries.updateJobStatus(job.id, 'done');
     const updated = queries.getAgentWithJob(agentId);

@@ -19,6 +19,7 @@ import { createPrForJob, pushBranchForFailedJob } from './PrCreator.js';
 import type { Job, ClaudeStreamEvent, CodexStreamEvent } from '../../shared/types.js';
 import { isCodexModel, codexModelName, effectiveMaxTurns } from '../../shared/types.js';
 import { buildEyePrompt, isEyeJob, computeAdaptiveEyeInterval } from './EyeConfig.js';
+import { getJobIfStatus, markJobRunning } from './JobLifecycle.js';
 import { ensureCodexTrusted } from './PtyManager.js';
 import { buildNiceSpawn, isNiceAvailable } from './ProcessPriority.js';
 import { registerCompletionHandler } from './JobCompletionNotifier.js';
@@ -306,6 +307,7 @@ export function runAgent(options: RunOptions): void {
   } catch { /* not a git repo or git not available */ }
 
   queries.updateAgent(agentId, { pid: child.pid ?? null, status: 'running' });
+  markJobRunning(job.id);
   const agentWithJob = queries.getAgentWithJob(agentId);
   if (agentWithJob) socket.emitAgentUpdate(agentWithJob);
 
@@ -622,8 +624,24 @@ export async function handleJobCompletion(
   }
 
   // ── Critical path: finalize status, release locks, trigger state-machine callbacks ──
-  queries.updateJobStatus(job.id, finalStatus);
-  if (finalStatus === 'done') clearRecoveryState(job);
+  // Accept both 'running' and 'assigned' — recovery may finalize jobs that
+  // never reached 'running' (e.g. agent crashed during startup window).
+  const activeJob = getJobIfStatus(job.id, ['running', 'assigned']);
+  if (!activeJob) {
+    const currentJob = queries.getJobById(job.id);
+    console.log(
+      `[agent ${agentId}] skipping late completion for job ${job.id}: ` +
+      `current status is ${currentJob?.status ?? 'missing'}`
+    );
+    if (currentJob?.status === 'done') clearRecoveryState(currentJob);
+    getFileLockRegistry().releaseAll(agentId);
+    const updatedAgent = queries.getAgentWithJob(agentId);
+    if (updatedAgent) socket.emitAgentUpdate(updatedAgent);
+    return;
+  }
+
+  queries.updateJobStatus(activeJob.id, finalStatus);
+  if (finalStatus === 'done') clearRecoveryState(activeJob);
   getFileLockRegistry().releaseAll(agentId);
 
   // Triage any learnings the agent reported
@@ -636,7 +654,7 @@ export async function handleJobCompletion(
 
   const updated = queries.getAgentWithJob(agentId);
   if (updated) socket.emitAgentUpdate(updated);
-  const updatedJob = queries.getJobById(job.id);
+  const updatedJob = queries.getJobById(activeJob.id);
   if (updatedJob) {
     try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' }); }
     // If this job is part of a debate, check if the round is complete
@@ -788,7 +806,11 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
       const waitedJobs = waitedIds.map(id => queries.getJobById(id));
       const stillPending = waitedJobs.filter(j => j && !TERMINAL_S.includes(j.status));
       if (stillPending.length > 0) {
-        if (!claimRecovery(job, 'premature-done-auto-resume')) return;
+        const restartCandidate = getJobIfStatus(job.id, ['running']);
+        if (!restartCandidate) return;
+        if (!claimRecovery(restartCandidate, 'premature-done-auto-resume')) return;
+        const restartJob = getJobIfStatus(job.id, ['running']);
+        if (!restartJob) return;
         console.log(`[agent ${agentId}] marked done but ${stillPending.length} sub-jobs still pending: [${stillPending.map(j => j!.id).join(', ')}] — auto-resuming`);
         const agentRec2 = queries.getAgentById(agentId);
         const sessionId = agentRec2?.session_id ?? null;
@@ -803,15 +825,15 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
         getFileLockRegistry().releaseAll(agentId);
 
         const newAgentId = randomUUID();
-        queries.insertAgent({ id: newAgentId, job_id: job.id, status: 'starting' });
-        queries.updateJobStatus(job.id, 'assigned');
+        queries.insertAgent({ id: newAgentId, job_id: restartJob.id, status: 'starting' });
+        queries.updateJobStatus(restartJob.id, 'assigned');
 
         const newAgentWithJob = queries.getAgentWithJob(newAgentId);
         if (newAgentWithJob) socket.emitAgentNew(newAgentWithJob);
-        const updatedJob2 = queries.getJobById(job.id);
+        const updatedJob2 = queries.getJobById(restartJob.id);
         if (updatedJob2) socket.emitJobUpdate(updatedJob2);
 
-        runAgent({ agentId: newAgentId, job, resumeSessionId: sessionId ?? undefined });
+        runAgent({ agentId: newAgentId, job: restartJob, resumeSessionId: sessionId ?? undefined });
         return;
       }
     }
@@ -826,8 +848,12 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
       const waitedJobs = waitedIds.map(id => queries.getJobById(id));
       const allDone = waitedJobs.every(j => j && j.status === 'done');
       if (allDone) {
-        if (!claimRecovery(job, 'wait-for-jobs-auto-resume')) return;
-        console.log(`[agent ${agentId}] died in wait_for_jobs with all deps done — auto-resuming job ${job.id}`);
+        const restartCandidate = getJobIfStatus(job.id, ['running']);
+        if (!restartCandidate) return;
+        if (!claimRecovery(restartCandidate, 'wait-for-jobs-auto-resume')) return;
+        const restartJob = getJobIfStatus(job.id, ['running']);
+        if (!restartJob) return;
+        console.log(`[agent ${agentId}] died in wait_for_jobs with all deps done — auto-resuming job ${restartJob.id}`);
         const agentRec2 = queries.getAgentById(agentId);
         const sessionId = agentRec2?.session_id ?? null;
 
@@ -841,15 +867,15 @@ function handleAgentExit(agentId: string, job: Job, exitCode: number | null): vo
         getFileLockRegistry().releaseAll(agentId);
 
         const newAgentId = randomUUID();
-        queries.insertAgent({ id: newAgentId, job_id: job.id, status: 'starting' });
-        queries.updateJobStatus(job.id, 'assigned');
+        queries.insertAgent({ id: newAgentId, job_id: restartJob.id, status: 'starting' });
+        queries.updateJobStatus(restartJob.id, 'assigned');
 
         const newAgentWithJob = queries.getAgentWithJob(newAgentId);
         if (newAgentWithJob) socket.emitAgentNew(newAgentWithJob);
-        const updatedJob = queries.getJobById(job.id);
+        const updatedJob = queries.getJobById(restartJob.id);
         if (updatedJob) socket.emitJobUpdate(updatedJob);
 
-        runAgent({ agentId: newAgentId, job, resumeSessionId: sessionId ?? undefined });
+        runAgent({ agentId: newAgentId, job: restartJob, resumeSessionId: sessionId ?? undefined });
         return;
       } else {
         const stillPending = waitedJobs.filter(j => j && !TERMINAL_S.includes(j.status)).map(j => j!.id);

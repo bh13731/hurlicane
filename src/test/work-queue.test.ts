@@ -144,4 +144,55 @@ describe('WorkQueueManager — capacity-aware dispatch', () => {
 
     stopWorkQueue();
   });
+
+  it('cascade-fail marks queued jobs as failed when dependencies fail (queued → failed)', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { _tickForTest } = await import('../server/orchestrator/WorkQueueManager.js');
+
+    // Insert a parent job and mark it failed
+    queries.insertJob({ id: 'parent-1', title: 'Parent Job', description: 'dep', context: null, priority: 0, model: 'claude-sonnet-4-6', work_dir: '/tmp' });
+    queries.updateJobStatus('parent-1', 'assigned');
+    queries.updateJobStatus('parent-1', 'running');
+    queries.updateJobStatus('parent-1', 'failed');
+
+    // Insert a child that depends on the parent — still queued
+    queries.insertJob({ id: 'child-1', title: 'Child Job', description: 'depends on parent', context: null, priority: 0, model: 'claude-sonnet-4-6', work_dir: '/tmp', depends_on: JSON.stringify(['parent-1']) });
+
+    const child = queries.getJobById('child-1');
+    expect(child!.status).toBe('queued');
+
+    // Spy on console.warn to verify no illegal-transition warning is emitted
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await _tickForTest();
+
+    // Child should be cascade-failed to 'failed'
+    const updated = queries.getJobById('child-1');
+    expect(updated!.status).toBe('failed');
+
+    // The queued → failed transition should NOT trigger an illegal warning
+    const illegalWarnings = warnSpy.mock.calls.filter(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('illegal') && c[0].includes('child-1'.slice(0, 8)),
+    );
+    expect(illegalWarnings).toHaveLength(0);
+
+    warnSpy.mockRestore();
+  });
+
+  it('cascade-fail handles cancelled dependency the same as failed', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { _tickForTest } = await import('../server/orchestrator/WorkQueueManager.js');
+
+    // Parent cancelled
+    queries.insertJob({ id: 'parent-c', title: 'Cancelled Parent', description: 'dep', context: null, priority: 0, model: 'claude-sonnet-4-6', work_dir: '/tmp' });
+    queries.updateJobStatus('parent-c', 'cancelled');
+
+    // Child depends on cancelled parent
+    queries.insertJob({ id: 'child-c', title: 'Child of Cancelled', description: 'depends on cancelled', context: null, priority: 0, model: 'claude-sonnet-4-6', work_dir: '/tmp', depends_on: JSON.stringify(['parent-c']) });
+
+    await _tickForTest();
+
+    const updated = queries.getJobById('child-c');
+    expect(updated!.status).toBe('failed');
+  });
 });
