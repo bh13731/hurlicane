@@ -1651,4 +1651,136 @@ describe('WorkflowManager: Sentry gating on phase-failure blocks', () => {
     // rate_limit is operational → Sentry must NOT fire
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
+
+  it('DOES call Sentry.captureException when blocked with "failed (task_failure)"', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { getWorkflowById } = await import('../server/db/queries.js');
+    const { Sentry } = await import('../server/instrument.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 2,
+    });
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 2,
+      workflow_phase: 'implement',
+      status: 'failed',
+    });
+
+    // task_failure is classified but NOT operational — must still report
+    vi.mocked(classifyJobFailure).mockReturnValue('task_failure');
+
+    onJobCompleted(job);
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('blocked');
+    expect(updated.blocked_reason).toMatch(/failed \(task_failure\)/);
+
+    // task_failure is non-operational → Sentry MUST fire
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const err = vi.mocked(Sentry.captureException).mock.calls[0][0] as Error;
+    expect(err.name).toBe('WorkflowBlocked');
+    expect(err.message).toContain('task_failure');
+  });
+
+  it('DOES call Sentry.captureException for unrecognized "failed (validation_error)" token', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { getWorkflowById } = await import('../server/db/queries.js');
+    const { Sentry } = await import('../server/instrument.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+    });
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'failed',
+    });
+
+    // Return 'unknown' from classifyJobFailure — the blocked_reason will say
+    // "failed (unknown)" but 'unknown' is a known kind that is non-operational.
+    // To truly test an *unrecognized* token we need the blocked_reason to contain
+    // a token that isKnownFailureKind() rejects. We achieve this by making
+    // classifyJobFailure return a value that the _onJobCompleted code path
+    // uses literally in the blocked_reason string.
+    //
+    // The blocked_reason format is: "Phase 'assess' job <id8> failed (<failureKind>)"
+    // The failureKind in the reason comes from classifyJobFailure's return value.
+    // We use 'unknown' which IS a known kind but is NOT operational.
+    // However, the milestone asks for an *unrecognized* token like 'validation_error'.
+    // Since classifyJobFailure is mocked, we can return any string — the code just
+    // interpolates it. But isKnownFailureKind in the Sentry gate will reject it.
+    vi.mocked(classifyJobFailure).mockReturnValue('validation_error' as any);
+
+    onJobCompleted(job);
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('blocked');
+    expect(updated.blocked_reason).toMatch(/failed \(validation_error\)/);
+
+    // validation_error is not a known FailureKind → isKnownFailureKind returns false
+    // → the reason is treated as non-operational → Sentry MUST fire
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const err = vi.mocked(Sentry.captureException).mock.calls[0][0] as Error;
+    expect(err.name).toBe('WorkflowBlocked');
+    expect(err.message).toContain('validation_error');
+  });
+
+  it('DOES call Sentry.captureException for worktree branch verification failure blocks', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { upsertNote, getWorkflowById, updateWorkflow } = await import('../server/db/queries.js');
+    const { execSync } = await import('child_process');
+    const { Sentry } = await import('../server/instrument.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+    });
+    updateWorkflow(workflow.id, {
+      worktree_path: '/tmp/test-wt',
+      worktree_branch: 'workflow/test-branch',
+    } as any);
+    upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1\n- [ ] M2', null);
+    upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    // Mock: ensureWorktreeBranch → branch drifted, checkout fails → blocks
+    vi.mocked(execSync)
+      .mockReturnValueOnce(Buffer.from('main\n'))    // rev-parse --abbrev-ref HEAD → wrong branch
+      .mockImplementationOnce(() => { throw new Error('cannot checkout: conflict'); });
+
+    const assessJob = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'done',
+    });
+    onJobCompleted(assessJob);
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('blocked');
+    expect(updated.blocked_reason).toContain('Worktree branch verification failed');
+
+    // Worktree blocks are NOT in OPERATIONAL_BLOCK_PATTERNS and don't match
+    // the "failed (<kind>)" regex → Sentry MUST fire
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const err = vi.mocked(Sentry.captureException).mock.calls[0][0] as Error;
+    expect(err.name).toBe('WorkflowBlocked');
+    expect(err.message).toContain('Worktree branch verification failed');
+  });
 });
