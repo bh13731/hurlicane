@@ -8,6 +8,7 @@ import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import { disconnectAgent, isTmuxSessionAlive, saveSnapshot } from '../orchestrator/PtyManager.js';
 import { createAutonomousAgentRun } from '../orchestrator/AutonomousAgentRunManager.js';
 import type { CreateAutonomousAgentRunRequest, WorkflowPhase } from '../../shared/types.js';
+import { createWorkflowSchema, resumeWorkflowSchema, validateBody } from './validation.js';
 
 const router = Router();
 
@@ -55,7 +56,12 @@ router.get('/:id/jobs', (req, res) => {
 
 // POST /api/workflows — create + start a new workflow
 router.post('/', (req, res) => {
-  const body = req.body as CreateAutonomousAgentRunRequest;
+  const parsed = validateBody(createWorkflowSchema, req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  const body = parsed.data as CreateAutonomousAgentRunRequest;
   try {
     const result = createAutonomousAgentRun(body);
     socket.emitWorkflowNew(result.workflow);
@@ -250,6 +256,11 @@ router.post('/:id/wrap-up', (req, res) => {
 router.post('/:id/resume', (req, res) => {
   let workflow = queries.getWorkflowById(req.params.id);
   if (!workflow) { res.status(404).json({ error: 'not found' }); return; }
+
+  if (req.body && Object.keys(req.body).length > 0) {
+    const parsed = validateBody(resumeWorkflowSchema, req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error }); return; }
+  }
 
   const force = req.body?.force === true;
 

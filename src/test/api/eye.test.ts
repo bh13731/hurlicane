@@ -41,6 +41,7 @@ vi.mock('child_process', () => ({
     return { on: vi.fn() };
   }),
   execSync: vi.fn(() => '[]'),
+  execFileSync: vi.fn(() => '[]'),
   execFile: vi.fn(),
   spawn: vi.fn(),
 }));

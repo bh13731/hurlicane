@@ -16,8 +16,8 @@ const FAKE_REPO_DIR = '/fake/myrepo';
 const REPO_NAME = path.basename(FAKE_REPO_DIR); // 'myrepo'
 
 // ── Capture execSync calls so we can inspect arguments ───────────────────────
-const execSyncMock = vi.fn((cmd: string) => {
-  if (cmd.startsWith('git rev-parse --show-toplevel')) {
+const execFileSyncMock = vi.fn((cmd: string, args?: string[]) => {
+  if (cmd === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--show-toplevel') {
     return Buffer.from(`${FAKE_REPO_DIR}\n`);
   }
   // All other git commands succeed silently (worktree add, tag, rev-parse --git-dir)
@@ -26,7 +26,7 @@ const execSyncMock = vi.fn((cmd: string) => {
 
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>();
-  return { ...actual, execSync: execSyncMock };
+  return { ...actual, execFileSync: execFileSyncMock };
 });
 
 // ── Mock fs so mkdirSync and existsSync don't touch the real filesystem ───────
@@ -72,8 +72,8 @@ describe('WorkQueueManager — namespaced standalone worktree paths', () => {
     await resetManagerState();
     vi.clearAllMocks();
     // Re-apply the mock implementation after clearAllMocks resets it
-    execSyncMock.mockImplementation((cmd: string) => {
-      if (cmd.startsWith('git rev-parse --show-toplevel')) {
+    execFileSyncMock.mockImplementation((cmd: string, args?: string[]) => {
+      if (cmd === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--show-toplevel') {
         return Buffer.from(`${FAKE_REPO_DIR}\n`);
       }
       return Buffer.from('');
@@ -104,17 +104,12 @@ describe('WorkQueueManager — namespaced standalone worktree paths', () => {
     await _tickForTest();
 
     // 1. Find the `git worktree add` call
-    const worktreeAddCall = execSyncMock.mock.calls.find(([cmd]) =>
-      typeof cmd === 'string' && cmd.includes('git worktree add'),
+    const worktreeAddCall = execFileSyncMock.mock.calls.find(([cmd, args]) =>
+      cmd === 'git' && Array.isArray(args) && args[0] === 'worktree' && args[1] === 'add',
     );
     expect(worktreeAddCall, 'git worktree add should have been called').toBeTruthy();
-
-    const worktreeAddCmd = worktreeAddCall![0] as string;
-
-    // Extract the target path from `git worktree add "<path>" -b "<branch>"`
-    const targetMatch = worktreeAddCmd.match(/git worktree add "([^"]+)"/);
-    expect(targetMatch, 'git worktree add target should be a quoted path').toBeTruthy();
-    const worktreePath = targetMatch![1];
+    const worktreeArgs = worktreeAddCall![1] as string[];
+    const worktreePath = worktreeArgs[2];
 
     // 2. Path must contain <repoName>/<shortId>, not flat <shortId>
     expect(worktreePath).toContain(`.orchestrator-worktrees/${REPO_NAME}/`);
@@ -157,12 +152,11 @@ describe('WorkQueueManager — namespaced standalone worktree paths', () => {
 
     await _tickForTest();
 
-    const worktreeAddCall = execSyncMock.mock.calls.find(([cmd]) =>
-      typeof cmd === 'string' && cmd.includes('git worktree add'),
+    const worktreeAddCall = execFileSyncMock.mock.calls.find(([cmd, args]) =>
+      cmd === 'git' && Array.isArray(args) && args[0] === 'worktree' && args[1] === 'add',
     );
-    const worktreeAddCmd = worktreeAddCall![0] as string;
-    const targetMatch = worktreeAddCmd.match(/git worktree add "([^"]+)"/);
-    const worktreePath = targetMatch![1];
+    const worktreeArgs = worktreeAddCall![1] as string[];
+    const worktreePath = worktreeArgs[2];
 
     // The old flat path would be `.orchestrator-worktrees/<shortId>` with no repoName segment
     // This assertion verifies we are NOT on the old path.

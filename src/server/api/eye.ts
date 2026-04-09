@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { cancelledAgents } from '../orchestrator/AgentRunner.js';
@@ -11,6 +11,7 @@ import { getGitHubPollerStatus } from '../integrations/GitHubPoller.js';
 import { nudgeQueue } from '../orchestrator/WorkQueueManager.js';
 import { updateJobRepeatInterval } from '../db/queries.js';
 import { Sentry } from '../instrument.js';
+import { eyeStartSchema, eyeConfigSchema, eyeDiscussionSchema, eyeMessageSchema, eyePrReviewDeleteSchema, validateBody } from './validation.js';
 
 const router = Router();
 
@@ -150,7 +151,15 @@ router.post('/start', (req, res) => {
     maxTurns = 100,
     model = 'claude-opus-4-6',
     workDir,
-  } = req.body ?? {};
+  const startParsed = validateBody(eyeStartSchema, req.body ?? {});
+  if (!startParsed.success) { res.status(400).json({ error: startParsed.error }); return; }
+
+  const {
+    repeatIntervalMs = getConfiguredRepeatIntervalMs(),
+    maxTurns = 100,
+    model = 'claude-opus-4-6',
+    workDir,
+  } = startParsed.data;
 
   const eyeProjectId = findOrCreateEyeProject();
 
@@ -253,7 +262,9 @@ router.get('/config', (_req, res) => {
 });
 
 router.put('/config', (req, res) => {
-  const { targets, linearApiKey, scriptsPath, repoPath, prompt, repeatIntervalMs } = req.body;
+  const configParsed = validateBody(eyeConfigSchema, req.body);
+  if (!configParsed.success) { res.status(400).json({ error: configParsed.error }); return; }
+  const { targets, linearApiKey, scriptsPath, repoPath, prompt, repeatIntervalMs } = configParsed.data;
   if (targets !== undefined) {
     if (!Array.isArray(targets)) {
       res.status(400).json({ error: 'targets must be an array' });
@@ -268,7 +279,7 @@ router.put('/config', (req, res) => {
   if (scriptsPath !== undefined) setConfigVal('scriptsPath', scriptsPath);
   if (repoPath !== undefined) setConfigVal('repoPath', repoPath);
   if (prompt !== undefined) queries.upsertNote('setting:eye:prompt', prompt ?? '', null);
-  if (req.body.addendum !== undefined) queries.upsertNote('setting:eye:addendum', req.body.addendum ?? '', null);
+  if (configParsed.data.addendum !== undefined) queries.upsertNote('setting:eye:addendum', configParsed.data.addendum ?? '', null);
   if (repeatIntervalMs !== undefined) {
     const ms = parseInt(String(repeatIntervalMs), 10);
     if (!isNaN(ms) && ms > 0) {
@@ -351,10 +362,7 @@ router.post('/prs/refresh', (_req, res) => {
     const ghPrMap = new Map<string, { state: string; isDraft: boolean }>();
     for (const repo of repos) {
       try {
-        const result = execSync(
-          `gh pr list --repo ${repo} --state all --json number,state,isDraft --limit 200`,
-          { encoding: 'utf-8', timeout: 15_000 }
-        );
+        const result = execFileSync('gh', ['pr', 'list', '--repo', repo, '--state', 'all', '--json', 'number,state,isDraft', '--limit', '200'], { encoding: 'utf-8', timeout: 15_000 });
         const ghPrs = JSON.parse(result);
         for (const ghPr of ghPrs) {
           ghPrMap.set(`${repo}#${ghPr.number}`, { state: ghPr.state, isDraft: ghPr.isDraft });
@@ -377,7 +385,7 @@ router.post('/prs/refresh', (_req, res) => {
           }
         }
         // Fallback: individual fetch if not found in bulk results
-        const result = execSync(`gh pr view ${JSON.stringify(pr.url)} --json state,isDraft`, { encoding: 'utf-8', timeout: 10_000 });
+        const result = execFileSync('gh', ['pr', 'view', pr.url, '--json', 'state,isDraft'], { encoding: 'utf-8', timeout: 10_000 });
         const { state, isDraft } = JSON.parse(result);
         const updated = { ...pr, status: ghStatusToLocal(state, isDraft) };
         queries.upsertNote(`pr:${pr.id}`, JSON.stringify(updated), null);
@@ -410,8 +418,9 @@ router.get('/pr-reviews/:id/messages', (req, res) => {
 });
 
 router.post('/pr-reviews/:id/messages', (req, res) => {
-  const { content } = req.body;
-  if (!content?.trim()) { res.status(400).json({ error: 'content required' }); return; }
+  const prMsgParsed = validateBody(eyeMessageSchema, req.body);
+  if (!prMsgParsed.success) { res.status(400).json({ error: prMsgParsed.error }); return; }
+  const { content } = prMsgParsed.data;
   const review = queries.getPrReviewById(req.params.id);
   if (!review) { res.status(404).json({ error: 'not found' }); return; }
   const msg = queries.insertPrReviewMessage({ id: randomUUID(), review_id: review.id, role: 'user', content: content.trim() });
@@ -431,10 +440,7 @@ router.post('/pr-reviews/:id/submit', (req, res) => {
   if (!owner || !repoName) { res.status(400).json({ error: 'Invalid repo format' }); return; }
 
   try {
-    execSync(
-      `gh api --method POST /repos/${owner}/${repoName}/pulls/${review.pr_number}/reviews/${review.github_review_id}/events -f event=COMMENT`,
-      { encoding: 'utf-8', timeout: 30_000 }
-    );
+    execFileSync('gh', ['api', '--method', 'POST', `/repos/${owner}/${repoName}/pulls/${review.pr_number}/reviews/${review.github_review_id}/events`, '-f', 'event=COMMENT'], { encoding: 'utf-8', timeout: 30_000 });
     queries.updatePrReview(review.id, { status: 'submitted' });
     const updated = queries.getPrReviewById(review.id)!;
     socket.emitPrReviewUpdate(updated);
@@ -447,17 +453,16 @@ router.post('/pr-reviews/:id/submit', (req, res) => {
 router.delete('/pr-reviews/:id', (req, res) => {
   const review = queries.getPrReviewById(req.params.id);
   if (!review) { res.status(404).json({ error: 'not found' }); return; }
-  const { reason } = req.body ?? {};
+  const delParsed = validateBody(eyePrReviewDeleteSchema, req.body ?? {});
+  if (!delParsed.success) { res.status(400).json({ error: delParsed.error }); return; }
+  const { reason } = delParsed.data;
 
   // Delete the pending GitHub review if it exists
   if (review.github_review_id && review.status === 'draft') {
     const [owner, repoName] = (review.repo as string).split('/');
     if (owner && repoName) {
       try {
-        execSync(
-          `gh api --method DELETE /repos/${owner}/${repoName}/pulls/${review.pr_number}/reviews/${review.github_review_id}`,
-          { encoding: 'utf-8', timeout: 30_000 }
-        );
+        execFileSync('gh', ['api', '--method', 'DELETE', `/repos/${owner}/${repoName}/pulls/${review.pr_number}/reviews/${review.github_review_id}`], { encoding: 'utf-8', timeout: 30_000 });
       } catch { /* review may already be dismissed or submitted */ }
     }
   }
@@ -487,8 +492,9 @@ router.get('/discussions', (_req, res) => {
 });
 
 router.post('/discussions', (req, res) => {
-  const { content } = req.body;
-  if (!content?.trim()) { res.status(400).json({ error: 'content required' }); return; }
+  const discParsed = validateBody(eyeDiscussionSchema, req.body);
+  if (!discParsed.success) { res.status(400).json({ error: discParsed.error }); return; }
+  const { content } = discParsed.data;
 
   const disc = queries.insertDiscussion({
     id: randomUUID(),
@@ -525,8 +531,9 @@ router.get('/discussions/:id/messages', (req, res) => {
 });
 
 router.post('/discussions/:id/messages', (req, res) => {
-  const { content } = req.body;
-  if (!content?.trim()) { res.status(400).json({ error: 'content required' }); return; }
+  const msgParsed = validateBody(eyeMessageSchema, req.body);
+  if (!msgParsed.success) { res.status(400).json({ error: msgParsed.error }); return; }
+  const { content } = msgParsed.data;
 
   const disc = queries.getDiscussionById(req.params.id);
   if (!disc) { res.status(404).json({ error: 'not found' }); return; }
@@ -589,8 +596,9 @@ router.get('/proposals/:id/messages', (req, res) => {
 });
 
 router.post('/proposals/:id/messages', (req, res) => {
-  const { content } = req.body;
-  if (!content?.trim()) { res.status(400).json({ error: 'content required' }); return; }
+  const propMsgParsed = validateBody(eyeMessageSchema, req.body);
+  if (!propMsgParsed.success) { res.status(400).json({ error: propMsgParsed.error }); return; }
+  const { content } = propMsgParsed.data;
 
   const prop = queries.getProposalById(req.params.id);
   if (!prop) { res.status(404).json({ error: 'not found' }); return; }

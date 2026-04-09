@@ -544,11 +544,9 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
     `unset SENTRY_DSN`,
     `unset SENTRY_RELEASE`,
     `unset SENTRY_ENVIRONMENT`,
-    // Pass through Anthropic API key so agents use the API instead of OAuth
-    // (avoids hitting CLI per-user rate limits when an API key is available).
-    ...(process.env.ANTHROPIC_API_KEY
-      ? [`export ANTHROPIC_API_KEY=${JSON.stringify(process.env.ANTHROPIC_API_KEY)}`]
-      : []),
+    // ANTHROPIC_API_KEY is inherited from the tmux session's process environment
+    // (set via tmux setenv after session creation) — not written to the script
+    // to avoid persisting secrets on disk.
     // Always cd to the working directory and fail hard if it doesn't exist.
     // Without this, the agent runs in the wrong directory and can't find files.
     `cd ${JSON.stringify(workDir)} || { echo "[agent] FATAL: working directory does not exist: ${workDir}" >&2; exit 1; }`,
@@ -640,7 +638,13 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
       execFileSync(TMUX, ['set-option', '-t', sessionName(agentId), 'mouse', 'on'], { stdio: 'pipe' });
     } catch { /* ignore — older tmux may not support per-session mouse */ }
 
-  } catch (err) {
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        execFileSync(TMUX, ['setenv', '-t', sessionName(agentId), 'ANTHROPIC_API_KEY', process.env.ANTHROPIC_API_KEY], { stdio: 'pipe' });
+      } catch { /* non-fatal */ }
+    }
+
+  } catch (err: any) {
     _spawningAgents.delete(agentId);
     console.error(`[pty ${agentId}] failed to create tmux session:`, errMsg(err));
     captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'PtyManager' });
