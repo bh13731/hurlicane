@@ -16,34 +16,48 @@ import {
 
 // Track all execSync calls for assertion
 const execSyncCalls: Array<{ cmd: string; opts?: any }> = [];
+// Track raw execFileSync calls (file + discrete args) for argv-safety assertions
+const execFileSyncCalls: Array<{ file: string; args: string[]; opts?: any }> = [];
 
-vi.mock('child_process', () => ({
-  exec: vi.fn(),
-  execSync: vi.fn((cmd: string, opts?: any) => {
-    execSyncCalls.push({ cmd, opts });
-    // rev-parse for ensureWorktreeBranch
-    if (cmd.includes('rev-parse --abbrev-ref HEAD')) {
-      return Buffer.from('workflow/test-branch\n');
-    }
-    // rev-list for commit count check
-    if (cmd.includes('rev-list --count')) {
-      return Buffer.from('3\n');
-    }
-    // git push
-    if (cmd.startsWith('git push')) {
+vi.mock('child_process', () => {
+  const mod = {
+    exec: vi.fn(),
+    execSync: vi.fn((cmd: string, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      // rev-parse for ensureWorktreeBranch
+      if (cmd.includes('rev-parse --abbrev-ref HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      // rev-list for commit count check
+      if (cmd.includes('rev-list --count')) {
+        return Buffer.from('3\n');
+      }
+      // git push
+      if (cmd.startsWith('git push')) {
+        return Buffer.from('');
+      }
+      // gh label create — default success
+      if (cmd.includes('gh label create')) {
+        return Buffer.from('');
+      }
+      // gh pr create
+      if (cmd.includes('gh pr create')) {
+        return Buffer.from('https://github.com/test/repo/pull/42\n');
+      }
       return Buffer.from('');
-    }
-    // gh label create — default success
-    if (cmd.includes('gh label create')) {
-      return Buffer.from('');
-    }
-    // gh pr create
-    if (cmd.includes('gh pr create')) {
-      return Buffer.from('https://github.com/test/repo/pull/42\n');
-    }
-    return Buffer.from('');
-  }),
-}));
+    }),
+    // execFileSync records raw argv calls, then delegates to execSync for existing test overrides
+    execFileSync: vi.fn((file: string, args?: string[], opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      const quotedArgs = (args ?? []).map(a =>
+        /[\s"'`$()\\]/.test(a) ? JSON.stringify(a) : a
+      );
+      const cmd = [file, ...quotedArgs].join(' ');
+      return mod.execSync(cmd, opts);
+    }),
+  };
+  return mod;
+});
 
 vi.mock('../server/socket/SocketManager.js', () => createSocketMock());
 
@@ -74,7 +88,7 @@ vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
 }));
 
 import type { Workflow } from '../shared/types.js';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { insertTestWorkflow } from './helpers.js';
 
 function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
@@ -115,6 +129,7 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
 describe('pushAndCreatePr: partial label', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -274,6 +289,7 @@ describe('pushAndCreatePr: partial label', () => {
 describe('finalizeWorkflow: worktree preservation on PR failure', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -365,6 +381,7 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
 describe('finalizeWorkflow: blocked status on PR failure', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -475,6 +492,7 @@ describe('finalizeWorkflow: blocked status on PR failure', () => {
 describe('getPrCreationOutcome: git error handling (Fix-C7b)', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -529,6 +547,7 @@ describe('getPrCreationOutcome: git error handling (Fix-C7b)', () => {
 describe('pushAndCreatePr: rev-list error handling (Fix-C8a)', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -595,6 +614,7 @@ describe('pushAndCreatePr: rev-list error handling (Fix-C8a)', () => {
 describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -824,6 +844,7 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
 describe('Fix-C11a: transient rev-parse errors propagate to callers via countBranchCommits', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -926,6 +947,7 @@ describe('Fix-C11a: transient rev-parse errors propagate to callers via countBra
 describe('finalizeWorkflow: retry and fallback behavior', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -1071,6 +1093,7 @@ describe('finalizeWorkflow: retry and fallback behavior', () => {
 describe('reconcileBlockedPRs: startup recovery', () => {
   beforeEach(async () => {
     execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
     await setupTestDb();
   });
 
@@ -1166,5 +1189,312 @@ describe('reconcileBlockedPRs: startup recovery', () => {
 
     // A warning was logged for the skipped malformed workflow (single-string form)
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('wf-malformed-e'));
+  });
+});
+
+describe('argv-safety regression: raw execFileSync assertions (M4)', () => {
+  beforeEach(async () => {
+    execSyncCalls.length = 0;
+    execFileSyncCalls.length = 0;
+    await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+    vi.restoreAllMocks();
+  });
+
+  it('preserves shell metacharacters in title/body as discrete argv elements [M4-target]', async () => {
+    // Title and body contain backticks, $(), and $USER — shell-dangerous values.
+    // If the code regressed to execSync shell strings, these would be interpreted.
+    const mockedExecFileSync = vi.mocked(execFileSync);
+    const callLog: Array<{ file: string; args: string[] }> = [];
+    mockedExecFileSync.mockImplementation((file: any, args?: any, opts?: any) => {
+      callLog.push({ file, args: args ?? [] });
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.includes('HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
+        return Buffer.from('refs/remotes/origin/main\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
+        return Buffer.from('abc123\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-list') {
+        return Buffer.from('3\n');
+      }
+      if (file === 'git' && args?.[0] === 'push') {
+        return Buffer.from('');
+      }
+      if (file === 'git' && args?.[0] === 'merge-base') {
+        return Buffer.from('\n');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') {
+        throw new Error('no PRs found');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') {
+        return Buffer.from('https://github.com/test/repo/pull/42\n');
+      }
+      return Buffer.from('');
+    });
+
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const shellTitle = 'Fix `broken` code with $(echo pwned) and $USER';
+    const wf = makeWorkflow({ title: shellTitle });
+
+    const prUrl = pushAndCreatePr(wf, false);
+    expect(prUrl).toBe('https://github.com/test/repo/pull/42');
+
+    // gh pr create MUST be called via execFileSync (argument array), NOT execSync (shell string)
+    const prCreateShell = execSyncCalls.find(c => c.cmd.includes('gh pr create'));
+    expect(prCreateShell).toBeUndefined(); // no shell-string call
+
+    const prCreateSafe = callLog.find(
+      c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'create'
+    );
+    expect(prCreateSafe).toBeDefined();
+
+    // The title must be passed as a separate array element, preserving metacharacters verbatim
+    const titleIdx = prCreateSafe!.args.indexOf('--title');
+    expect(titleIdx).toBeGreaterThan(-1);
+    const actualTitle = prCreateSafe!.args[titleIdx + 1];
+    expect(actualTitle).toContain('`broken`');
+    expect(actualTitle).toContain('$(echo pwned)');
+    expect(actualTitle).toContain('$USER');
+  });
+
+  it('uses execFileSync argument arrays for gh pr view fallback on "already exists" [M4-target]', async () => {
+    // When gh pr create fails with "already exists", the fallback gh pr view must
+    // also use execFileSync argv arrays, not shell-string execution.
+    const mockedExecFileSync = vi.mocked(execFileSync);
+    const callLog: Array<{ file: string; args: string[] }> = [];
+    mockedExecFileSync.mockImplementation((file: any, args?: any, opts?: any) => {
+      callLog.push({ file, args: args ?? [] });
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.includes('HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
+        return Buffer.from('refs/remotes/origin/main\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
+        return Buffer.from('abc123\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-list') {
+        return Buffer.from('3\n');
+      }
+      if (file === 'git' && args?.[0] === 'push') {
+        return Buffer.from('');
+      }
+      if (file === 'git' && args?.[0] === 'merge-base') {
+        return Buffer.from('\n');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') {
+        // Pre-create check: no PR yet; fallback after "already exists": return URL
+        const prViewCount = callLog.filter(
+          c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view'
+        ).length;
+        if (prViewCount <= 1) throw new Error('no PRs found');
+        return Buffer.from('https://github.com/test/repo/pull/99\n');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') {
+        const err = new Error('already exists');
+        (err as any).stderr = Buffer.from('already exists');
+        throw err;
+      }
+      return Buffer.from('');
+    });
+
+    const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow();
+
+    const prUrl = pushAndCreatePr(wf, false);
+    expect(prUrl).toBe('https://github.com/test/repo/pull/99');
+
+    // The fallback gh pr view must be argv-based
+    const prViewCalls = callLog.filter(
+      c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view'
+    );
+    expect(prViewCalls.length).toBeGreaterThanOrEqual(2);
+
+    // Verify the fallback call passes branch as a discrete arg
+    const fallbackCall = prViewCalls[prViewCalls.length - 1];
+    expect(fallbackCall.args).toContain('workflow/test-branch');
+    expect(fallbackCall.args).toContain('--json');
+    expect(fallbackCall.args).toContain('url');
+  });
+
+  it('uses execFileSync argument arrays for finalizeWorkflow retry git push [M4-target]', async () => {
+    vi.useFakeTimers();
+    const mockedExecFileSync = vi.mocked(execFileSync);
+    const callLog: Array<{ file: string; args: string[] }> = [];
+    mockedExecFileSync.mockImplementation((file: any, args?: any, opts?: any) => {
+      callLog.push({ file, args: args ?? [] });
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.includes('HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
+        return Buffer.from('refs/remotes/origin/main\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
+        return Buffer.from('abc123\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-list') {
+        return Buffer.from('3\n');
+      }
+      if (file === 'git' && args?.[0] === 'push') {
+        return Buffer.from('');
+      }
+      if (file === 'git' && args?.[0] === 'merge-base') {
+        return Buffer.from('\n');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') {
+        throw new Error('no PRs found');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') {
+        // Fail first attempt, succeed on second
+        const createCount = callLog.filter(
+          c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'create'
+        ).length;
+        if (createCount <= 1) {
+          throw Object.assign(new Error('transient'), { stderr: Buffer.from('transient') });
+        }
+        return Buffer.from('https://github.com/test/repo/pull/60\n');
+      }
+      // worktree cleanup
+      if (file === 'git' && args?.[0] === 'status') return Buffer.from('');
+      if (file === 'git' && args?.[0] === 'worktree') return Buffer.from('');
+      return Buffer.from('');
+    });
+    // Also handle execSync for calls that haven't been converted to execFileSync
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd === 'string') {
+        if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+        if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
+        if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
+        if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
+        if (cmd.includes('git worktree remove')) return Buffer.from('');
+        if (cmd.includes('git status --porcelain')) return Buffer.from('');
+      }
+      return Buffer.from('');
+    });
+
+    const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
+    const dbWf = await insertTestWorkflow({ id: 'wf-retry-push-m4', status: 'complete', use_worktree: 1 });
+    updateWorkflow(dbWf.id, { worktree_path: '/tmp/wt', worktree_branch: 'workflow/test-branch' });
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({ id: 'wf-retry-push-m4', status: 'complete' });
+
+    const promise = finalizeWorkflow(wf);
+    await vi.runAllTimersAsync();
+    await promise;
+    vi.useRealTimers();
+
+    // The retry-loop git push must use execFileSync argv, not execSync shell string
+    const gitPushCalls = callLog.filter(
+      c => c.file === 'git' && c.args[0] === 'push'
+    );
+    // At least 2 pushes: initial + retry
+    expect(gitPushCalls.length).toBeGreaterThanOrEqual(2);
+
+    // Each push must pass branch as a discrete arg
+    for (const push of gitPushCalls) {
+      expect(push.args).toEqual(['push', '-u', 'origin', 'workflow/test-branch']);
+    }
+
+    // No shell-string git push calls
+    const shellPush = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.startsWith('git push'));
+    expect(shellPush).toBeUndefined();
+  });
+
+  it('uses execFileSync argument arrays for finalizeWorkflow post-retry gh pr view fallback [M4-target]', async () => {
+    vi.useFakeTimers();
+    const mockedExecFileSync = vi.mocked(execFileSync);
+    const callLog: Array<{ file: string; args: string[] }> = [];
+    mockedExecFileSync.mockImplementation((file: any, args?: any, opts?: any) => {
+      callLog.push({ file, args: args ?? [] });
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.includes('HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
+        return Buffer.from('refs/remotes/origin/main\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
+        return Buffer.from('abc123\n');
+      }
+      if (file === 'git' && args?.[0] === 'rev-list') {
+        return Buffer.from('3\n');
+      }
+      if (file === 'git' && args?.[0] === 'push') {
+        return Buffer.from('');
+      }
+      if (file === 'git' && args?.[0] === 'merge-base') {
+        return Buffer.from('\n');
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') {
+        throw Object.assign(new Error('fail'), { stderr: Buffer.from('fail') });
+      }
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') {
+        // All pushAndCreatePr pre-create checks fail; the post-retry fallback succeeds
+        const viewCount = callLog.filter(
+          c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view'
+        ).length;
+        // First 3 are from pushAndCreatePr's pre-check (one per attempt); 4th is the fallback
+        if (viewCount <= 3) throw new Error('no PR');
+        return Buffer.from('https://github.com/test/repo/pull/77\n');
+      }
+      // worktree cleanup
+      if (file === 'git' && args?.[0] === 'status') return Buffer.from('');
+      if (file === 'git' && args?.[0] === 'worktree') return Buffer.from('');
+      return Buffer.from('');
+    });
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd === 'string') {
+        if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+        if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
+        if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
+        if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
+        if (cmd.includes('git worktree remove')) return Buffer.from('');
+        if (cmd.includes('git status --porcelain')) return Buffer.from('');
+      }
+      return Buffer.from('');
+    });
+
+    const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
+    const dbWf = await insertTestWorkflow({ id: 'wf-fallback-m4', status: 'complete', use_worktree: 1 });
+    updateWorkflow(dbWf.id, { worktree_path: '/tmp/wt', worktree_branch: 'workflow/test-branch' });
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({ id: 'wf-fallback-m4', status: 'complete' });
+
+    const promise = finalizeWorkflow(wf);
+    await vi.runAllTimersAsync();
+    await promise;
+    vi.useRealTimers();
+
+    const updated = getWorkflowById('wf-fallback-m4');
+    expect(updated!.pr_url).toBe('https://github.com/test/repo/pull/77');
+
+    // The post-retry fallback gh pr view must be argv-based
+    const prViewCalls = callLog.filter(
+      c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view'
+    );
+    // At least 4: 3 from pushAndCreatePr pre-checks + 1 from finalizeWorkflow fallback
+    expect(prViewCalls.length).toBeGreaterThanOrEqual(4);
+
+    // The fallback call passes branch and flags as discrete args
+    const fallbackCall = prViewCalls[prViewCalls.length - 1];
+    expect(fallbackCall.file).toBe('gh');
+    expect(fallbackCall.args).toEqual(['pr', 'view', 'workflow/test-branch', '--json', 'url', '-q', '.url']);
+
+    // No shell-string gh pr view calls
+    const shellPrView = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('gh pr view'));
+    expect(shellPrView).toBeUndefined();
   });
 });
