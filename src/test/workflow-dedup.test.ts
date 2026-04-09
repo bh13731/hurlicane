@@ -85,6 +85,19 @@ vi.mock('../server/orchestrator/ModelClassifier.js', () => ({
   _resetForTest: vi.fn(),
 }));
 
+// Mock Sentry instrument so we can assert captureException call counts
+vi.mock('../server/instrument.js', () => ({
+  captureWithContext: vi.fn(),
+  Sentry: { captureException: vi.fn() },
+}));
+
+const KNOWN_OPERATIONAL_KINDS = new Set([
+  'rate_limit', 'provider_overload', 'provider_capability', 'provider_billing',
+  'launch_environment', 'mcp_disconnect', 'timeout', 'out_of_memory',
+  'disk_full', 'auth_failure', 'context_overflow', 'codex_cli_crash',
+]);
+const ALL_KNOWN_KINDS = new Set([...KNOWN_OPERATIONAL_KINDS, 'task_failure', 'unknown']);
+
 vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
   classifyJobFailure: vi.fn(() => 'unknown'),
   isFallbackEligibleFailure: vi.fn((kind: string) =>
@@ -98,6 +111,8 @@ vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
   isSameModelRetryEligible: vi.fn((kind: string) =>
     kind === 'codex_cli_crash'
   ),
+  isKnownFailureKind: vi.fn((value: string) => ALL_KNOWN_KINDS.has(value)),
+  isOperationalFailureKind: vi.fn((kind: string) => KNOWN_OPERATIONAL_KINDS.has(kind)),
   shouldMarkProviderUnavailable: vi.fn((kind: string) =>
     kind === 'rate_limit'
       || kind === 'provider_overload'
@@ -1541,5 +1556,99 @@ describe('WorkflowManager: worktree branch verification (M5)', () => {
     const { getWorkflowById } = await import('../server/db/queries.js');
     const after = getWorkflowById(workflow.id);
     expect(after!.status).toBe('blocked');
+  });
+});
+
+/**
+ * Sentry gating on the phase-failure / _onJobCompleted blocking path.
+ *
+ * These tests drive onJobCompleted() with a failed phase job so that
+ * updateAndEmit() is called with status='blocked'. They then assert
+ * whether Sentry.captureException was called or suppressed based on
+ * the operational/non-operational classification of the blocked_reason.
+ */
+describe('WorkflowManager: Sentry gating on phase-failure blocks', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+    await resetManagerState();
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('does NOT call Sentry.captureException when blocked with "failed (timeout)"', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { getWorkflowById } = await import('../server/db/queries.js');
+    const { Sentry } = await import('../server/instrument.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+    });
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'failed',
+    });
+
+    // Classify as timeout — not fallback-eligible, not same-model-retry-eligible
+    // so it falls through to the generic block at line 158-160
+    vi.mocked(classifyJobFailure).mockReturnValue('timeout');
+
+    onJobCompleted(job);
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('blocked');
+    expect(updated.blocked_reason).toMatch(/failed \(timeout\)/);
+
+    // timeout is operational → Sentry must NOT fire
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it('does NOT call Sentry.captureException when blocked with "no fallback model available" for rate_limit', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { classifyJobFailure } = await import('../server/orchestrator/FailureClassifier.js');
+    const { getAvailableModel, getFallbackModel } = await import('../server/orchestrator/ModelClassifier.js');
+    const { getWorkflowById } = await import('../server/db/queries.js');
+    const { Sentry } = await import('../server/instrument.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'review',
+      current_cycle: 2,
+      reviewer_model: 'claude-sonnet-4-6',
+    });
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 2,
+      workflow_phase: 'review',
+      status: 'failed',
+      model: 'claude-sonnet-4-6',
+    });
+
+    vi.mocked(classifyJobFailure).mockReturnValue('rate_limit');
+    // All models rate-limited — no fallback available
+    vi.mocked(getAvailableModel).mockReturnValue(null);
+    vi.mocked(getFallbackModel).mockReturnValue('claude-sonnet-4-6');
+
+    onJobCompleted(job);
+
+    const updated = getWorkflowById(workflow.id)!;
+    expect(updated.status).toBe('blocked');
+    expect(updated.blocked_reason).toMatch(/rate_limit.*no fallback model available/);
+
+    // rate_limit is operational → Sentry must NOT fire
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 });
