@@ -1912,6 +1912,8 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
       'Reached max cycles',
       'no milestone progress',
       'Diminishing returns',
+      'PR creation failed',
+      'Draft PR creation failed',
     ];
     const isOperational = OPERATIONAL_BLOCK_PATTERNS.some(p => reason.includes(p));
     if (!isOperational) {
