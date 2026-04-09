@@ -95,7 +95,8 @@ export function runRecovery(): void {
             `marking ${finalStatus}${logStatus ? ' (from log)' : ' (no result in log)'}`
           );
 
-          const runningJob = getJobIfStatus(agent.job_id, ['running']);
+          // Accept 'assigned' too — agent may have crashed before reaching 'running'
+          const activeJob = getJobIfStatus(agent.job_id, ['running', 'assigned']);
           const currentJob = queries.getJobById(agent.job_id);
           const agentStatus = currentJob?.status === 'done' ? 'done' : finalStatus;
           queries.updateAgent(agent.id, {
@@ -103,7 +104,7 @@ export function runRecovery(): void {
             error_message: agentStatus === 'done' ? null : (logStatus ? null : 'Agent process not found on restart.'),
             finished_at: Date.now(),
           });
-          if (runningJob) queries.updateJobStatus(runningJob.id, finalStatus);
+          if (activeJob) queries.updateJobStatus(activeJob.id, finalStatus);
           queries.releaseLocksForAgent(agent.id);
 
           const pendingQ = queries.getPendingQuestion(agent.id);
@@ -116,7 +117,7 @@ export function runRecovery(): void {
           }
 
           // For repeat jobs, schedule the next run
-          if (runningJob && job.repeat_interval_ms) {
+          if (activeJob && job.repeat_interval_ms) {
             try {
               queries.scheduleRepeatJob(job);
               nudgeQueue();
@@ -125,7 +126,7 @@ export function runRecovery(): void {
           }
 
           // If failed, invoke retry policy (independent of repeat scheduling)
-          if (runningJob && finalStatus === 'failed') {
+          if (activeJob && finalStatus === 'failed') {
             try {
               const freshJob = queries.getJobById(agent.job_id);
               if (freshJob) handleRetry(freshJob, agent.id);
@@ -163,7 +164,8 @@ export function runRecovery(): void {
               execFileSync('tmux', ['kill-session', '-t', `orchestrator-${agent.id}`], { stdio: 'pipe' });
             } catch { /* session may already be gone */ }
 
-            const runningJob = getJobIfStatus(agent.job_id, ['running']);
+            // Accept 'assigned' too — agent may have crashed before reaching 'running'
+            const activeJob = getJobIfStatus(agent.job_id, ['running', 'assigned']);
             const currentJob = queries.getJobById(agent.job_id);
             const agentStatus = currentJob?.status === 'done' ? 'done' : 'failed';
             queries.updateAgent(agent.id, {
@@ -171,12 +173,12 @@ export function runRecovery(): void {
               error_message: agentStatus === 'done' ? null : 'MCP session lost on server restart.',
               finished_at: Date.now(),
             });
-            if (runningJob) queries.updateJobStatus(runningJob.id, 'failed');
+            if (activeJob) queries.updateJobStatus(activeJob.id, 'failed');
             queries.releaseLocksForAgent(agent.id);
 
             // For repeat jobs (e.g. Eye cycles), schedule the next run immediately
             // so the agent resumes without manual intervention.
-            if (runningJob && job.repeat_interval_ms) {
+            if (activeJob && job.repeat_interval_ms) {
               try {
                 queries.scheduleRepeatJob(job);
                 nudgeQueue();
@@ -188,7 +190,7 @@ export function runRecovery(): void {
             }
 
             // Invoke retry policy for the failed job
-            if (runningJob) {
+            if (activeJob) {
               try {
                 const freshJob = queries.getJobById(agent.job_id);
                 if (freshJob) handleRetry(freshJob, agent.id);
@@ -236,7 +238,8 @@ export function runRecovery(): void {
             (standaloneResolution ? ` (${standaloneResolution.source})` : '')
           );
 
-          const runningJob = getJobIfStatus(agent.job_id, ['running']);
+          // Accept 'assigned' too — agent may have crashed before reaching 'running'
+          const activeJob = getJobIfStatus(agent.job_id, ['running', 'assigned']);
           const currentJob = queries.getJobById(agent.job_id);
           const agentStatus = currentJob?.status === 'done' ? 'done' : finalStatus;
           queries.updateAgent(agent.id, {
@@ -249,7 +252,7 @@ export function runRecovery(): void {
                 ),
             finished_at: Date.now(),
           });
-          if (runningJob) queries.updateJobStatus(runningJob.id, finalStatus);
+          if (activeJob) queries.updateJobStatus(activeJob.id, finalStatus);
           queries.releaseLocksForAgent(agent.id);
 
           const pendingQ = queries.getPendingQuestion(agent.id);
@@ -268,7 +271,7 @@ export function runRecovery(): void {
             detail: standaloneResolution?.detail,
             job_id: agent.job_id,
           });
-          if (runningJob && finalStatus === 'done') {
+          if (activeJob && finalStatus === 'done') {
             const doneJob = queries.getJobById(agent.job_id);
             if (doneJob) {
               try { debateOnJobCompleted(doneJob); } catch (err) { console.error(`[recovery] debateOnJobCompleted error for agent ${agent.id}:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'recovery' }); }
@@ -277,7 +280,7 @@ export function runRecovery(): void {
             tmuxRecovered++;
           } else {
             // For repeat jobs (e.g. Eye cycles), schedule the next run
-            if (runningJob && job.repeat_interval_ms) {
+            if (activeJob && job.repeat_interval_ms) {
               try {
                 queries.scheduleRepeatJob(job);
                 nudgeQueue();
@@ -286,14 +289,14 @@ export function runRecovery(): void {
             }
 
             // Invoke retry policy for the failed job
-            if (runningJob) {
+            if (activeJob) {
               try {
                 const freshJob = queries.getJobById(agent.job_id);
                 if (freshJob) handleRetry(freshJob, agent.id);
               } catch (err) { console.error(`[recovery] handleRetry error for job ${agent.job_id}:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'recovery' }); }
             }
 
-            if (runningJob) tmuxFailed++;
+            if (activeJob) tmuxFailed++;
           }
         }
       }

@@ -624,8 +624,10 @@ export async function handleJobCompletion(
   }
 
   // ── Critical path: finalize status, release locks, trigger state-machine callbacks ──
-  const runningJob = getJobIfStatus(job.id, ['running']);
-  if (!runningJob) {
+  // Accept both 'running' and 'assigned' — recovery may finalize jobs that
+  // never reached 'running' (e.g. agent crashed during startup window).
+  const activeJob = getJobIfStatus(job.id, ['running', 'assigned']);
+  if (!activeJob) {
     const currentJob = queries.getJobById(job.id);
     console.log(
       `[agent ${agentId}] skipping late completion for job ${job.id}: ` +
@@ -638,8 +640,8 @@ export async function handleJobCompletion(
     return;
   }
 
-  queries.updateJobStatus(runningJob.id, finalStatus);
-  if (finalStatus === 'done') clearRecoveryState(runningJob);
+  queries.updateJobStatus(activeJob.id, finalStatus);
+  if (finalStatus === 'done') clearRecoveryState(activeJob);
   getFileLockRegistry().releaseAll(agentId);
 
   // Triage any learnings the agent reported
@@ -652,7 +654,7 @@ export async function handleJobCompletion(
 
   const updated = queries.getAgentWithJob(agentId);
   if (updated) socket.emitAgentUpdate(updated);
-  const updatedJob = queries.getJobById(runningJob.id);
+  const updatedJob = queries.getJobById(activeJob.id);
   if (updatedJob) {
     try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[agent ${agentId}] emitJobUpdate error:`, err); captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' }); }
     // If this job is part of a debate, check if the round is complete
