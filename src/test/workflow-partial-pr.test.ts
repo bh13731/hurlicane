@@ -26,10 +26,6 @@ vi.mock('child_process', () => ({
     if (cmd.includes('rev-parse --abbrev-ref HEAD')) {
       return Buffer.from('workflow/test-branch\n');
     }
-    // git push (_removeWorktree — M4 scope)
-    if (cmd.startsWith('git push')) {
-      return Buffer.from('');
-    }
     return Buffer.from('');
   }),
   execFileSync: vi.fn((file: string, args?: string[], opts?: any) => {
@@ -50,6 +46,18 @@ vi.mock('child_process', () => ({
     // rev-list for commit count
     if (file === 'git' && args?.[0] === 'rev-list') {
       return Buffer.from('3\n');
+    }
+    // git status --porcelain (_removeWorktree: no uncommitted work by default)
+    if (file === 'git' && args?.[0] === 'status' && args?.includes('--porcelain')) {
+      return Buffer.from('');
+    }
+    // git add (_removeWorktree)
+    if (file === 'git' && args?.[0] === 'add') {
+      return Buffer.from('');
+    }
+    // git commit (_removeWorktree)
+    if (file === 'git' && args?.[0] === 'commit') {
+      return Buffer.from('');
     }
     // git push
     if (file === 'git' && args?.[0] === 'push') {
@@ -130,6 +138,15 @@ function defaultExecFileSyncMock(file: any, args?: any, opts?: any) {
   }
   if (file === 'git' && args?.[0] === 'rev-list') {
     return Buffer.from('3\n');
+  }
+  if (file === 'git' && args?.[0] === 'status' && args?.includes('--porcelain')) {
+    return Buffer.from('');
+  }
+  if (file === 'git' && args?.[0] === 'add') {
+    return Buffer.from('');
+  }
+  if (file === 'git' && args?.[0] === 'commit') {
+    return Buffer.from('');
   }
   if (file === 'git' && args?.[0] === 'push') {
     return Buffer.from('');
@@ -412,7 +429,7 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
   });
 
   it('removes worktree when pushAndCreatePr succeeds', async () => {
-    // execSync: ensureWorktreeBranch + _removeWorktree
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string') {
@@ -420,20 +437,20 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
       }
       return Buffer.from('');
     });
-    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) — PR succeeds
+    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) + _removeWorktree (M4)
 
     const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
     const wf = makeWorkflow();
 
     await finalizeWorkflow(wf);
 
-    // Worktree removal SHOULD have been called (still via execSync in _removeWorktree)
-    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    // Worktree removal SHOULD have been called via execFileSync (M4)
+    const removeCall = execFileSyncCalls.find(c => c.file === 'git' && c.args[0] === 'worktree' && c.args[1] === 'remove');
     expect(removeCall).toBeDefined();
   });
 
   it('removes worktree when no publishable commits exist', async () => {
-    // execSync: ensureWorktreeBranch + _removeWorktree
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string') {
@@ -441,14 +458,16 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
       }
       return Buffer.from('');
     });
-    // countBranchCommits returns 0 (no commits) via execFileSync (M3)
+    // countBranchCommits returns 0 (no commits) via execFileSync (M3); _removeWorktree via execFileSync (M4)
     vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
       execFileSyncCalls.push({ file, args: args ?? [], opts });
       if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
       if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc1234\n');
       if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('0\n');
+      if (file === 'git' && args?.[0] === 'status' && args?.includes('--porcelain')) return Buffer.from('');
       if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
       if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
+      if (file === 'git' && args?.[0] === 'worktree') return Buffer.from('');
       if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') throw new Error('no PRs found');
       if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') return Buffer.from('https://github.com/test/repo/pull/42\n');
       return Buffer.from('');
@@ -459,8 +478,8 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
 
     await finalizeWorkflow(wf);
 
-    // Worktree removal SHOULD have been called (no commits to preserve)
-    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    // Worktree removal SHOULD have been called via execFileSync (M4)
+    const removeCall = execFileSyncCalls.find(c => c.file === 'git' && c.args[0] === 'worktree' && c.args[1] === 'remove');
     expect(removeCall).toBeDefined();
   });
 });
@@ -535,13 +554,15 @@ describe('finalizeWorkflow: blocked status on PR failure', () => {
     expect(updated!.blocked_reason).toContain('PR creation failed');
     expect(updated!.blocked_reason).toContain('/tmp/wt');
 
-    // Worktree should NOT have been removed (preserved for retry)
-    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
-    expect(removeCall).toBeUndefined();
+    // Worktree should NOT have been removed (preserved for retry) — check both execSync and execFileSync
+    const removeCallSync = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    expect(removeCallSync).toBeUndefined();
+    const removeCallFile = execFileSyncCalls.find(c => c.file === 'git' && c.args[0] === 'worktree' && c.args[1] === 'remove');
+    expect(removeCallFile).toBeUndefined();
   });
 
   it('does NOT set blocked when PR succeeds', async () => {
-    // execSync: ensureWorktreeBranch + _removeWorktree
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string') {
@@ -549,7 +570,7 @@ describe('finalizeWorkflow: blocked status on PR failure', () => {
       }
       return Buffer.from('');
     });
-    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) — PR succeeds
+    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) + _removeWorktree (M4)
 
     const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
     const dbWf = await insertTestWorkflow({
@@ -1069,23 +1090,23 @@ describe('finalizeWorkflow: retry and fallback behavior', () => {
   it('(a) succeeds on the second retry attempt when the first fails', async () => {
     vi.useFakeTimers();
     let ghPrCreateCount = 0;
-    // execSync: ensureWorktreeBranch + _removeWorktree
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd !== 'string') return Buffer.from('');
       if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-      if (cmd.includes('git status --porcelain')) return Buffer.from('');
-      if (cmd.includes('git worktree remove')) return Buffer.from('');
       return Buffer.from('');
     });
-    // execFileSync: countBranchCommits (M3), retry push (M3), fallback pr-view (M3), pushAndCreatePr (M2)
+    // execFileSync: countBranchCommits (M3), retry push (M3), fallback pr-view (M3), pushAndCreatePr (M2), _removeWorktree (M4)
     vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
       execFileSyncCalls.push({ file, args: args ?? [], opts });
       if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
       if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc123\n');
       if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('3\n');
+      if (file === 'git' && args?.[0] === 'status' && args?.includes('--porcelain')) return Buffer.from('');
       if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
       if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
+      if (file === 'git' && args?.[0] === 'worktree') return Buffer.from('');
       if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') throw new Error('no PR');
       if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') {
         ghPrCreateCount++;
@@ -1116,32 +1137,32 @@ describe('finalizeWorkflow: retry and fallback behavior', () => {
     expect(updated!.pr_url).toBe('https://github.com/test/repo/pull/55');
     expect(updated!.status).not.toBe('blocked');
 
-    // Worktree was cleaned up after successful PR (_removeWorktree still via execSync)
-    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    // Worktree was cleaned up after successful PR via execFileSync (M4)
+    const removeCall = execFileSyncCalls.find(c => c.file === 'git' && c.args[0] === 'worktree' && c.args[1] === 'remove');
     expect(removeCall).toBeDefined();
   });
 
   it('(b) uses gh pr view fallback when all 3 PR creation attempts fail', async () => {
     vi.useFakeTimers();
     let prCreateCount = 0;
-    // execSync: ensureWorktreeBranch + _removeWorktree
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd !== 'string') return Buffer.from('');
       if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-      if (cmd.includes('git status --porcelain')) return Buffer.from('');
-      if (cmd.includes('git worktree remove')) return Buffer.from('');
       return Buffer.from('');
     });
-    // execFileSync: countBranchCommits (M3), retry push (M3), fallback pr-view (M3), pushAndCreatePr (M2)
+    // execFileSync: countBranchCommits (M3), retry push (M3), fallback pr-view (M3), pushAndCreatePr (M2), _removeWorktree (M4)
     // pr create always fails; after all 3 attempts, finalizeWorkflow fallback pr-view finds existing PR
     vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
       execFileSyncCalls.push({ file, args: args ?? [], opts });
       if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
       if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc123\n');
       if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('3\n');
+      if (file === 'git' && args?.[0] === 'status' && args?.includes('--porcelain')) return Buffer.from('');
       if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
       if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
+      if (file === 'git' && args?.[0] === 'worktree') return Buffer.from('');
       if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') {
         // After all 3 pr create attempts exhausted, the finalizeWorkflow fallback finds the PR
         if (prCreateCount >= 3) {
@@ -1170,8 +1191,8 @@ describe('finalizeWorkflow: retry and fallback behavior', () => {
 
     const updated = getWorkflowById('wf-fallback-b');
     expect(updated!.pr_url).toBe('https://github.com/test/repo/pull/77');
-    // gh pr view fallback found a PR → outcome is 'created' → worktree removed
-    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    // gh pr view fallback found a PR → outcome is 'created' → worktree removed via execFileSync (M4)
+    const removeCall = execFileSyncCalls.find(c => c.file === 'git' && c.args[0] === 'worktree' && c.args[1] === 'remove');
     expect(removeCall).toBeDefined();
   });
 
@@ -1237,16 +1258,14 @@ describe('reconcileBlockedPRs: startup recovery', () => {
   });
 
   it('(d) recovers a blocked workflow when PR creation succeeds on retry', async () => {
-    // execSync: ensureWorktreeBranch + _removeWorktree
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd !== 'string') return Buffer.from('');
       if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-      if (cmd.includes('git status --porcelain')) return Buffer.from('');
-      if (cmd.includes('git worktree remove')) return Buffer.from('');
       return Buffer.from('');
     });
-    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) — PR succeeds
+    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) + _removeWorktree (M4)
 
     const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
     const dbWf = await insertTestWorkflow({ id: 'wf-reconcile-d', status: 'blocked', use_worktree: 1 });
@@ -1264,22 +1283,20 @@ describe('reconcileBlockedPRs: startup recovery', () => {
     expect(updated!.pr_url).toBe('https://github.com/test/repo/pull/42');
     expect(updated!.blocked_reason).toBeNull();
 
-    // Worktree was removed after recovery
-    const removeCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('git worktree remove'));
+    // Worktree was removed after recovery via execFileSync (M4)
+    const removeCall = execFileSyncCalls.find(c => c.file === 'git' && c.args[0] === 'worktree' && c.args[1] === 'remove');
     expect(removeCall).toBeDefined();
   });
 
   it('(e) skips malformed workflows (null worktree_path) without aborting reconciliation', async () => {
-    // execSync: ensureWorktreeBranch + _removeWorktree
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd !== 'string') return Buffer.from('');
       if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-      if (cmd.includes('git status --porcelain')) return Buffer.from('');
-      if (cmd.includes('git worktree remove')) return Buffer.from('');
       return Buffer.from('');
     });
-    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) — PR succeeds
+    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) + _removeWorktree (M4)
 
     const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
 

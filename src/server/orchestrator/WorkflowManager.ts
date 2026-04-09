@@ -1815,20 +1815,20 @@ function _removeWorktree(workflow: Workflow): void {
   if (!worktree_path || !work_dir) return;
   // Auto-save uncommitted work before destroying the worktree
   try {
-    const status = execSync('git status --porcelain', {
+    const status = execFileSync('git', ['status', '--porcelain'], {
       cwd: worktree_path, stdio: 'pipe', timeout: 5000,
     }).toString().trim();
     if (status) {
       console.log(`[workflow ${workflow.id}] saving uncommitted work before worktree removal`);
-      execSync('git add -A', { cwd: worktree_path, stdio: 'pipe', timeout: 10000 });
-      execSync('git commit -m "wip: auto-saved uncommitted work before worktree cleanup"', {
+      execFileSync('git', ['add', '-A'], { cwd: worktree_path, stdio: 'pipe', timeout: 10000 });
+      execFileSync('git', ['commit', '-m', 'wip: auto-saved uncommitted work before worktree cleanup'], {
         cwd: worktree_path, stdio: 'pipe', timeout: 10000,
       });
       // Best-effort push so the work survives worktree deletion
       const branch = workflow.worktree_branch;
       if (branch) {
         try {
-          execSync(`git push origin ${JSON.stringify(branch)}`, {
+          execFileSync('git', ['push', 'origin', branch], {
             cwd: worktree_path, stdio: 'pipe', timeout: 30000,
           });
         } catch { /* push failed — work is still in local branch */ }
@@ -1836,10 +1836,10 @@ function _removeWorktree(workflow: Workflow): void {
     }
   } catch { /* status/commit failed — proceed with removal anyway */ }
   try {
-    execSync(`git worktree remove --force ${JSON.stringify(worktree_path)}`, {
+    execFileSync('git', ['worktree', 'remove', '--force', worktree_path], {
       cwd: work_dir, stdio: 'pipe', timeout: 15000,
     });
-    execSync('git worktree prune', { cwd: work_dir, stdio: 'pipe', timeout: 10000 });
+    execFileSync('git', ['worktree', 'prune'], { cwd: work_dir, stdio: 'pipe', timeout: 10000 });
     console.log(`[workflow ${workflow.id}] worktree removed`);
   } catch (err: any) {
     console.warn(`[workflow ${workflow.id}] worktree removal failed:`, err.message);
