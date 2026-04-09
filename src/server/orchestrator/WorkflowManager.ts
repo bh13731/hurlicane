@@ -120,7 +120,9 @@ function _onJobCompleted(job: Job): void {
         ? `Phase '${job.workflow_phase}' model-fallback recovery already spawned — duplicate completion skipped`
         : `Phase '${job.workflow_phase}' failed on ${currentModel} (${failureKind}) — no fallback model available`;
       console.log(`[workflow ${workflow.id}] ${noFallbackReason}`);
-      updateAndEmit(workflow.id, { status: 'blocked', current_phase: job.workflow_phase ?? 'idle', blocked_reason: noFallbackReason });
+      // Fallback-eligible failures (launch_environment, rate_limit, etc.) are operational —
+      // exhausting all fallback models is expected during shutdown or provider outages.
+      updateAndEmit(workflow.id, { status: 'blocked', current_phase: job.workflow_phase ?? 'idle', blocked_reason: noFallbackReason }, { operationalBlock: true });
       return;
     }
     // Transient CLI crashes (e.g. Codex stdin hang) — retry same model, not a provider issue.
@@ -1884,7 +1886,7 @@ export function _resetForTest(): void {
   _processedJobs.clear();
 }
 
-function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkflow>[1]): void {
+function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkflow>[1], opts?: { operationalBlock?: boolean }): void {
   let previousStatus: string | undefined;
   if (fields.status) {
     const current = queries.getWorkflowById(id);
@@ -1915,7 +1917,7 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
       'PR creation failed',
       'Draft PR creation failed',
     ];
-    const isOperational = OPERATIONAL_BLOCK_PATTERNS.some(p => reason.includes(p));
+    const isOperational = opts?.operationalBlock || OPERATIONAL_BLOCK_PATTERNS.some(p => reason.includes(p));
     if (!isOperational) {
       const err = new Error(`Workflow blocked: ${updated.title} — ${reason}`);
       err.name = 'WorkflowBlocked';

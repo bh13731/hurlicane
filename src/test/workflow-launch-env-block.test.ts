@@ -3,13 +3,9 @@
  *
  * Reproduces the exact path: a workflow phase fails with `launch_environment`
  * classification (e.g. during graceful shutdown), no fallback model is
- * available, and `updateAndEmit` blocks the workflow. The blocked reason
- * ("no fallback model available") is not in OPERATIONAL_BLOCK_PATTERNS,
- * so Sentry.captureException fires — which is the noisy error this issue
- * tracks.
- *
- * This test pins that current behavior so M2 can change the gating logic
- * and flip the assertion from `toHaveBeenCalled` to `not.toHaveBeenCalled`.
+ * available, and `updateAndEmit` blocks the workflow. The `operationalBlock`
+ * flag on `updateAndEmit` ensures fallback-eligible failure exhaustion is
+ * treated as operational, suppressing the noisy Sentry error.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
@@ -165,7 +161,7 @@ describe('WorkflowManager: launch_environment + no-fallback Sentry path (issue 7
     expect(updated.blocked_reason).toContain('codex');
   });
 
-  it('fires Sentry.captureException for launch_environment no-fallback block (current behavior — to be fixed in M2)', async () => {
+  it('does NOT fire Sentry for launch_environment no-fallback block (operational — fixed by M2)', async () => {
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
     const queries = await import('../server/db/queries.js');
     const { Sentry } = await import('../server/instrument.js');
@@ -190,16 +186,10 @@ describe('WorkflowManager: launch_environment + no-fallback Sentry path (issue 7
 
     onJobCompleted(job);
 
-    // Current behavior: launch_environment + no-fallback is NOT in OPERATIONAL_BLOCK_PATTERNS,
-    // so Sentry fires. This is the bug tracked by issue 7398855174.
-    // M2 will fix this and flip the assertion to `not.toHaveBeenCalled`.
-    expect(Sentry.captureException).toHaveBeenCalled();
-
-    // Verify the error shape matches what Sentry received
-    const call = vi.mocked(Sentry.captureException).mock.calls[0];
-    const err = call[0] as Error;
-    expect(err.name).toBe('WorkflowBlocked');
-    expect(err.message).toContain('no fallback model available');
+    // Fallback-eligible failures (launch_environment, rate_limit, etc.) that exhaust all
+    // fallback models are operational — they happen during shutdown or provider outages.
+    // The operationalBlock flag on updateAndEmit suppresses Sentry for these.
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   it('does NOT fire Sentry for operational blocks like max-cycles (negative control)', async () => {
