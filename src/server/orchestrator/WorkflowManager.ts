@@ -1722,7 +1722,7 @@ export async function finalizeWorkflow(workflow: Workflow): Promise<void> {
       await new Promise<void>(resolve => setTimeout(resolve, _FINALIZE_RETRY_DELAY_MS));
       // Re-push branch before next attempt to ensure remote is up to date
       try {
-        execSync(`git push -u origin ${JSON.stringify(workflow.worktree_branch)}`, {
+        execFileSync('git', ['push', '-u', 'origin', workflow.worktree_branch], {
           cwd: workflow.worktree_path, stdio: 'pipe', timeout: 30000,
         });
       } catch (pushErr: any) {
@@ -1734,8 +1734,8 @@ export async function finalizeWorkflow(workflow: Workflow): Promise<void> {
   // After all attempts, fall back to gh pr view in case the PR already exists remotely
   if (!prUrl && workflow.worktree_branch && workflow.worktree_path) {
     try {
-      const existing = execSync(
-        `gh pr view ${JSON.stringify(workflow.worktree_branch)} --json url -q .url`,
+      const existing = execFileSync(
+        'gh', ['pr', 'view', workflow.worktree_branch, '--json', 'url', '-q', '.url'],
         { cwd: workflow.worktree_path, stdio: 'pipe', timeout: 15000 },
       ).toString().trim();
       if (existing) {
