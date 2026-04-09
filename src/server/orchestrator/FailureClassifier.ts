@@ -110,8 +110,6 @@ const CODEX_CLI_CRASH_PATTERNS = [
   /\breading prompt from stdin\b/i,
 ];
 
-const SESSIONSTART_SYSTEM_TYPE_PATTERN = /"type"\s*:\s*"system"/i;
-const SESSIONSTART_HOOK_STARTED_PATTERN = /"subtype"\s*:\s*"hook_started"/i;
 const SESSIONSTART_EVENT_PATTERN = /"hook_event"\s*:\s*"SessionStart"/i;
 const SESSIONSTART_HOOK_NAME_PATTERN = /"hook_name"\s*:\s*"SessionStart:startup"/i;
 const STARTUP_TOOL_IDENTIFIER_PATTERN = /\bmcp__[\w:-]+\b/g;
@@ -122,14 +120,14 @@ const _warnedUnclassified = new Set<string>();
 const WARN_DEDUP_CAP = 100;
 
 function isSessionStartLifecycleNoise(text: string): boolean {
-  const hasSystemType = SESSIONSTART_SYSTEM_TYPE_PATTERN.test(text);
-  const hasHookStarted = SESSIONSTART_HOOK_STARTED_PATTERN.test(text);
   const hasSessionStartEvent = SESSIONSTART_EVENT_PATTERN.test(text);
   const hasSessionStartHookName = SESSIONSTART_HOOK_NAME_PATTERN.test(text);
 
-  return hasSessionStartHookName
-    || (hasHookStarted && hasSessionStartEvent)
-    || (hasSystemType && (hasHookStarted || hasSessionStartEvent));
+  // Match only when we can confirm this is a SessionStart lifecycle event.
+  // Requires explicit "hook_name":"SessionStart:startup" or "hook_event":"SessionStart" —
+  // never match on generic "type":"system" + "subtype":"hook_started" alone,
+  // which would hide failures from non-SessionStart hooks.
+  return hasSessionStartHookName || hasSessionStartEvent;
 }
 
 function isStartupToolListNoise(text: string): boolean {
