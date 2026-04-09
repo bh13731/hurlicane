@@ -9,8 +9,7 @@ import type { Job, Workflow, WorkflowPhase, StopMode } from '../../shared/types.
 import { effectiveMaxTurns, isCodexModel } from '../../shared/types.js';
 import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildWorkflowRepairPrompt, buildSimplifiedAssessRepairPrompt, type InlineWorkflowContext } from './WorkflowPrompts.js';
 import { getAvailableModel, getFallbackModel, getAlternateProviderModel, getModelProvider, markModelRateLimited, markProviderRateLimited } from './ModelClassifier.js';
-import { classifyJobFailure, isFallbackEligibleFailure, isSameModelRetryEligible, isOperationalFailureKind, shouldMarkProviderUnavailable } from './FailureClassifier.js';
-import type { FailureKind } from './FailureClassifier.js';
+import { classifyJobFailure, isFallbackEligibleFailure, isSameModelRetryEligible, isKnownFailureKind, isOperationalFailureKind, shouldMarkProviderUnavailable } from './FailureClassifier.js';
 import { nudgeQueue } from './WorkQueueManager.js';
 import { logResilienceEvent } from './ResilienceLogger.js';
 import { validateTransition } from './StateTransitions.js';
@@ -1922,11 +1921,12 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
     // phase-failure path. Matches both shapes:
     //   "Phase 'X' job Y failed (timeout)"
     //   "Phase 'X' failed on model (rate_limit) — no fallback model available"
-    // Only task_failure and unknown are considered non-operational (novel).
+    // Unrecognized tokens (not valid FailureKind values) are ignored so they
+    // default to Sentry reporting. Only known operational kinds are suppressed.
     if (!isOperational) {
       const kindMatch = reason.match(/\bfailed\b[^)]*\((\w+)\)/);
-      if (kindMatch) {
-        isOperational = isOperationalFailureKind(kindMatch[1] as FailureKind);
+      if (kindMatch && isKnownFailureKind(kindMatch[1])) {
+        isOperational = isOperationalFailureKind(kindMatch[1]);
       }
     }
     if (!isOperational) {

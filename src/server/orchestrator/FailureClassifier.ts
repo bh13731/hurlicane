@@ -205,17 +205,48 @@ export function isSameModelRetryEligible(kind: FailureKind): boolean {
 }
 
 /**
+ * Runtime check that a string is a known FailureKind value.
+ * Use this before casting regex-extracted tokens to FailureKind —
+ * TypeScript's `as` cast does not validate at runtime.
+ */
+const FAILURE_KIND_VALUES: ReadonlySet<string> = new Set<string>([
+  'rate_limit', 'provider_overload', 'provider_capability', 'provider_billing',
+  'launch_environment', 'mcp_disconnect', 'timeout', 'out_of_memory',
+  'disk_full', 'auth_failure', 'context_overflow', 'codex_cli_crash',
+  'task_failure', 'unknown',
+]);
+
+export function isKnownFailureKind(value: string): value is FailureKind {
+  return FAILURE_KIND_VALUES.has(value);
+}
+
+/**
  * Whether a classified failure kind represents infrastructure/operational issues
  * rather than novel application bugs. Used by Sentry gating to suppress expected
  * workflow blocks that result from exhausted recovery attempts.
+ *
+ * Uses an explicit allowlist so that newly added FailureKind values default to
+ * being reported (non-operational) until explicitly opted in here.
  */
 export function isOperationalFailureKind(kind: FailureKind): boolean {
   switch (kind) {
+    case 'rate_limit':
+    case 'provider_overload':
+    case 'provider_capability':
+    case 'provider_billing':
+    case 'launch_environment':
+    case 'mcp_disconnect':
+    case 'timeout':
+    case 'out_of_memory':
+    case 'disk_full':
+    case 'auth_failure':
+    case 'context_overflow':
+    case 'codex_cli_crash':
+      return true;
     case 'task_failure':
     case 'unknown':
-      return false;
     default:
-      return true;
+      return false;
   }
 }
 
