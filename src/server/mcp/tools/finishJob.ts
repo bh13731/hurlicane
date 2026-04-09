@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import * as queries from '../../db/queries.js';
+import { markJobRunning } from '../../orchestrator/JobLifecycle.js';
 import { runJobCompletion } from '../../orchestrator/JobCompletionNotifier.js';
 import { disconnectAgent } from '../../orchestrator/PtyManager.js';
 
@@ -35,6 +36,8 @@ export async function finishJobHandler(
   if (TERMINAL.includes(agentWithJob.status)) {
     return JSON.stringify({ ok: true, message: 'Already completed.' });
   }
+
+  markJobRunning(job.id);
 
   // Mark agent done before running post-processing
   queries.updateAgent(agentId, { status: 'done', finished_at: Date.now() });

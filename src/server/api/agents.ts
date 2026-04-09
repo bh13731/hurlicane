@@ -4,6 +4,7 @@ import { execFileSync } from 'child_process';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { runAgent, cancelledAgents } from '../orchestrator/AgentRunner.js';
+import { markJobRunning } from '../orchestrator/JobLifecycle.js';
 import { disconnectAgent, disconnectAll, getPtyBuffer, getSnapshot, attachPty, isTmuxSessionAlive, saveSnapshot, startInteractiveAgent } from '../orchestrator/PtyManager.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import { nudgeQueue } from '../orchestrator/WorkQueueManager.js';
@@ -49,6 +50,7 @@ router.delete('/disconnect-all', (_req, res) => {
   for (const agentId of agentIds) {
     const agent = queries.getAgentById(agentId);
     if (!agent) continue;
+    markJobRunning(agent.job_id);
     queries.updateAgent(agentId, { status: 'done', finished_at: Date.now() });
     queries.updateJobStatus(agent.job_id, 'done');
     const updated = queries.getAgentWithJob(agentId);
@@ -316,6 +318,7 @@ router.delete('/:id/disconnect', (req, res) => {
 
   disconnectAgent(req.params.id);
   getFileLockRegistry().releaseAll(req.params.id);
+  markJobRunning(agent.job_id);
   queries.updateAgent(req.params.id, { status: 'done', finished_at: Date.now() });
   queries.updateJobStatus(agent.job_id, 'done');
 

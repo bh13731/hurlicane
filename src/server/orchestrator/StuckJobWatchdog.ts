@@ -34,6 +34,7 @@ import { markModelRateLimited, getFallbackModel, getModelProvider, markProviderR
 import { claimRecovery } from './RecoveryLedger.js';
 import { classifyFailureText, isFallbackEligibleFailure, shouldMarkProviderUnavailable } from './FailureClassifier.js';
 import { nudgeQueue } from './WorkQueueManager.js';
+import { getJobIfStatus } from './JobLifecycle.js';
 import { parseMilestones, writeBlockedDiagnostic } from './WorkflowManager.js';
 import { logResilienceEvent } from './ResilienceLogger.js';
 
@@ -127,7 +128,7 @@ function check(): void {
       const IDLE_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
       if ((tmuxAlive || pidAlive) && !agent.pending_wait_ids) {
         const idleJob = queries.getJobById(agent.job_id);
-        const isStuckCandidate = idleJob && !idleJob.is_interactive && !isAutoExitJob(idleJob);
+        const isStuckCandidate = idleJob && idleJob.status === 'running' && !idleJob.is_interactive && !isAutoExitJob(idleJob);
         const idleMs = Date.now() - agent.updated_at;
         if (isStuckCandidate && idleMs > IDLE_THRESHOLD_MS) {
           console.warn(`[watchdog] non-interactive agent ${agent.id} idle ${Math.round(idleMs / 60000)}min without MCP activity — killing`);
@@ -141,7 +142,13 @@ function check(): void {
             error_message: `Agent idle ${Math.round(idleMs / 60000)}min without MCP activity; watchdog killed.`,
             finished_at: Date.now(),
           });
-          queries.updateJobStatus(agent.job_id, 'failed');
+          // Re-read the job immediately before terminalizing — another path
+          // (e.g. finish_job) may have completed it since our initial check.
+          const idleJobNow = queries.getJobById(agent.job_id);
+          const idleJobStillRunning = idleJobNow?.status === 'running';
+          if (idleJobStillRunning) {
+            queries.updateJobStatus(agent.job_id, 'failed');
+          }
           getFileLockRegistry().releaseAll(agent.id);
           disconnectedAgents.delete(agent.id);
           const pendingQ = queries.getPendingQuestion(agent.id);
@@ -154,20 +161,22 @@ function check(): void {
           }
           const updatedAgent2 = queries.getAgentWithJob(agent.id);
           if (updatedAgent2) socket.emitAgentUpdate(updatedAgent2);
-          const idleJobFresh = queries.getJobById(agent.job_id);
-          if (idleJobFresh) {
-            try { socket.emitJobUpdate(idleJobFresh); } catch { /* ignore */ }
-            try { workflowOnJobCompleted(idleJobFresh); } catch { /* ignore */ }
-            if (idleJobFresh.repeat_interval_ms) {
-              try {
-                const nextJob = queries.scheduleRepeatJob(idleJobFresh);
-                socket.emitJobNew(nextJob);
-                nudgeQueue();
-                console.log(`[watchdog] scheduled next repeat for idle job "${idleJobFresh.title}"`);
-              } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
-            }
-            if (idleJobFresh.status === 'failed') {
-              try { handleRetry(idleJobFresh, agent.id); } catch (err) { console.error(`[watchdog] handleRetry error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
+          if (idleJobStillRunning) {
+            const idleJobFresh = queries.getJobById(agent.job_id);
+            if (idleJobFresh) {
+              try { socket.emitJobUpdate(idleJobFresh); } catch { /* ignore */ }
+              try { workflowOnJobCompleted(idleJobFresh); } catch { /* ignore */ }
+              if (idleJobFresh.repeat_interval_ms) {
+                try {
+                  const nextJob = queries.scheduleRepeatJob(idleJobFresh);
+                  socket.emitJobNew(nextJob);
+                  nudgeQueue();
+                  console.log(`[watchdog] scheduled next repeat for idle job "${idleJobFresh.title}"`);
+                } catch (err) { console.error(`[watchdog] scheduleRepeatJob error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
+              }
+              if (idleJobFresh.status === 'failed') {
+                try { handleRetry(idleJobFresh, agent.id); } catch (err) { console.error(`[watchdog] handleRetry error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
+              }
             }
           }
         }
@@ -177,6 +186,8 @@ function check(): void {
 
     const job = queries.getJobById(agent.job_id);
 
+    let jobFinalizedHere = false;
+
     // For legacy PID-based agents (Codex batch): check log and attempt auto-resume
     if (agent.pid != null) {
       const logStatus = statusFromLog(agent.id);
@@ -184,11 +195,14 @@ function check(): void {
       if (!logStatus || logStatus === 'failed') {
         const waitedIds = findLastWaitForJobsIds(agent.id);
         if (waitedIds && waitedIds.length > 0) {
-          const waitedJobs = waitedIds.map(id => queries.getJobById(id));
+            const waitedJobs = waitedIds.map(id => queries.getJobById(id));
           const allDone = waitedJobs.every(j => j && j.status === 'done');
-          if (allDone && job && !TERMINAL.includes(job.status)) {
-            if (!claimRecovery(job, 'watchdog-wait-for-jobs-auto-resume')) continue;
-            console.log(`[watchdog] agent ${agent.id} died in wait_for_jobs with all deps done — auto-resuming job ${job.id}`);
+          const restartCandidate = allDone ? getJobIfStatus(agent.job_id, ['running']) : null;
+          if (restartCandidate) {
+            if (!claimRecovery(restartCandidate, 'watchdog-wait-for-jobs-auto-resume')) continue;
+            const restartJob = getJobIfStatus(agent.job_id, ['running']);
+            if (!restartJob) continue;
+            console.log(`[watchdog] agent ${agent.id} died in wait_for_jobs with all deps done — auto-resuming job ${restartJob.id}`);
             queries.updateAgent(agent.id, {
               status: 'failed',
               error_message: 'Process died during wait_for_jobs; watchdog auto-resumed.',
@@ -206,16 +220,16 @@ function check(): void {
             }
 
             const newAgentId = randomUUID();
-            queries.insertAgent({ id: newAgentId, job_id: job.id, status: 'starting' });
-            queries.updateJobStatus(job.id, 'assigned');
+            queries.insertAgent({ id: newAgentId, job_id: restartJob.id, status: 'starting' });
+            queries.updateJobStatus(restartJob.id, 'assigned');
 
             const newAgentWithJob = queries.getAgentWithJob(newAgentId);
             if (newAgentWithJob) socket.emitAgentNew(newAgentWithJob);
-            const updatedJob = queries.getJobById(job.id);
+            const updatedJob = queries.getJobById(restartJob.id);
             if (updatedJob) socket.emitJobUpdate(updatedJob);
 
-            runAgent({ agentId: newAgentId, job, resumeSessionId: agent.session_id ?? undefined });
-            console.log(`[watchdog] re-spawned agent ${newAgentId} for job ${job.id} with resume session ${agent.session_id ?? '(none)'}`);
+            runAgent({ agentId: newAgentId, job: restartJob, resumeSessionId: agent.session_id ?? undefined });
+            console.log(`[watchdog] re-spawned agent ${newAgentId} for job ${restartJob.id} with resume session ${agent.session_id ?? '(none)'}`);
             continue;
           } else if (!allDone) {
             const stillPending = waitedJobs
@@ -227,17 +241,23 @@ function check(): void {
       }
 
       const finalStatus = logStatus ?? 'failed';
+      const currentJob = queries.getJobById(agent.job_id);
+      const runningJob = currentJob?.status === 'running' ? currentJob : null;
+      const agentStatus = currentJob?.status === 'done' ? 'done' : finalStatus;
       console.log(
         `[watchdog] agent ${agent.id} (pid-based) — PID ${agent.pid} dead, ` +
         `marking ${finalStatus}${logStatus ? ' (from log)' : ' (no result in log)'}`
       );
 
       queries.updateAgent(agent.id, {
-        status: finalStatus,
-        error_message: logStatus ? null : 'Agent process died unexpectedly.',
+        status: agentStatus,
+        error_message: agentStatus === 'done' ? null : (logStatus ? null : 'Agent process died unexpectedly.'),
         finished_at: Date.now(),
       });
-      queries.updateJobStatus(agent.job_id, finalStatus);
+      if (runningJob) {
+        queries.updateJobStatus(runningJob.id, finalStatus);
+        jobFinalizedHere = true;
+      }
     } else {
       // Tmux-based agent: session ended without finish_job being called.
       // Interactive or debate-stage → done; other non-interactive → failed.
@@ -245,18 +265,28 @@ function check(): void {
       const isStandalonePrint = !!job && !job.is_interactive && !isDebateStage;
       const standaloneResolution = isStandalonePrint && job ? resolveStandalonePrintJobOutcome(agent.id, job) : null;
       const finalStatus = standaloneResolution?.status ?? ((job?.is_interactive || isDebateStage) ? 'done' : 'failed');
+      const currentJob = queries.getJobById(agent.job_id);
+      const runningJob = currentJob?.status === 'running' ? currentJob : null;
+      const agentStatus = currentJob?.status === 'done' ? 'done' : finalStatus;
       console.log(
         `[watchdog] agent ${agent.id} (tmux-based) — session gone, marking ${finalStatus}` +
         (standaloneResolution ? ` (${standaloneResolution.source})` : '')
       );
 
       queries.updateAgent(agent.id, {
-        status: finalStatus,
-        error_message: standaloneResolution?.errorMessage
-          ?? (finalStatus === 'failed' ? 'Agent session ended without calling finish_job.' : null),
+        status: agentStatus,
+        error_message: agentStatus === 'done'
+          ? null
+          : (
+              standaloneResolution?.errorMessage
+              ?? (finalStatus === 'failed' ? 'Agent session ended without calling finish_job.' : null)
+            ),
         finished_at: Date.now(),
       });
-      queries.updateJobStatus(agent.job_id, finalStatus);
+      if (runningJob) {
+        queries.updateJobStatus(runningJob.id, finalStatus);
+        jobFinalizedHere = true;
+      }
 
       if (standaloneResolution) {
         logResilienceEvent('watchdog_terminal_resolution', 'agent', agent.id, {
@@ -284,7 +314,7 @@ function check(): void {
 
     // Trigger debate/workflow state machines for the completed job
     const updatedJob = queries.getJobById(agent.job_id);
-    if (updatedJob) {
+    if (updatedJob && jobFinalizedHere) {
       try { socket.emitJobUpdate(updatedJob); } catch (err) { console.error(`[watchdog] emitJobUpdate error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
       try { debateOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] debateOnJobCompleted error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
       try { workflowOnJobCompleted(updatedJob); } catch (err) { console.error(`[watchdog] workflowOnJobCompleted error:`, err); captureWithContext(err, { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog' }); }
@@ -344,7 +374,9 @@ function check(): void {
     const stuckMs = Date.now() - orphan.disconnected_at;
     console.warn(`[watchdog] agent ${agentId} stuck after MCP disconnect (${stuckMs}ms), all sub-jobs terminal — restarting job ${job.id}`);
     orphanedWaits.delete(agentId);
-    if (!claimRecovery(job, 'watchdog-orphaned-wait-restart')) continue;
+    const restartCandidate = getJobIfStatus(job.id, ['running']);
+    if (!restartCandidate) continue;
+    if (!claimRecovery(restartCandidate, 'watchdog-orphaned-wait-restart')) continue;
 
     // Capture a snapshot before killing the stuck tmux session
     if (isTmuxSessionAlive(agentId)) {
@@ -375,21 +407,23 @@ function check(): void {
     if (updatedAgent) socket.emitAgentUpdate(updatedAgent);
 
     // Re-queue with a new agent
+    const restartJob = getJobIfStatus(job.id, ['running']);
+    if (!restartJob) continue;
     const newAgentId = randomUUID();
-    queries.insertAgent({ id: newAgentId, job_id: job.id, status: 'starting' });
-    queries.updateJobStatus(job.id, 'assigned');
+    queries.insertAgent({ id: newAgentId, job_id: restartJob.id, status: 'starting' });
+    queries.updateJobStatus(restartJob.id, 'assigned');
 
     const newAgentWithJob = queries.getAgentWithJob(newAgentId);
     if (newAgentWithJob) socket.emitAgentNew(newAgentWithJob);
-    const updatedJob = queries.getJobById(job.id);
+    const updatedJob = queries.getJobById(restartJob.id);
     if (updatedJob) socket.emitJobUpdate(updatedJob);
 
-    if (job.is_interactive) {
-      startInteractiveAgent({ agentId: newAgentId, job });
+    if (restartJob.is_interactive) {
+      startInteractiveAgent({ agentId: newAgentId, job: restartJob });
     } else {
-      runAgent({ agentId: newAgentId, job, resumeSessionId: agent.session_id ?? undefined });
+      runAgent({ agentId: newAgentId, job: restartJob, resumeSessionId: agent.session_id ?? undefined });
     }
-    console.log(`[watchdog] re-spawned agent ${newAgentId} for job ${job.id}`);
+    console.log(`[watchdog] re-spawned agent ${newAgentId} for job ${restartJob.id}`);
   }
 
   // ── Check 3: MCP-disconnected agents (not in wait_for_jobs) ────────────────
@@ -421,7 +455,9 @@ function check(): void {
     const stuckMs = Date.now() - disconnectedAt;
     console.warn(`[watchdog] agent ${agentId} MCP-disconnected ${Math.round(stuckMs / 1000)}s without reconnecting — killing and restarting job ${job.id}`);
     disconnectedAgents.delete(agentId);
-    if (!claimRecovery(job, 'watchdog-mcp-disconnect-restart')) continue;
+    const restartCandidate = getJobIfStatus(job.id, ['running']);
+    if (!restartCandidate) continue;
+    if (!claimRecovery(restartCandidate, 'watchdog-mcp-disconnect-restart')) continue;
 
     // Kill the session/process
     if (isTmuxSessionAlive(agentId)) {
@@ -436,7 +472,6 @@ function check(): void {
       error_message: `MCP connection lost (not in wait_for_jobs); watchdog restarted after ${Math.round(stuckMs / 1000)}s.`,
       finished_at: Date.now(),
     });
-    queries.updateJobStatus(agent.job_id, 'failed');
     getFileLockRegistry().releaseAll(agent.id);
 
     const pendingQ = queries.getPendingQuestion(agent.id);
@@ -452,21 +487,23 @@ function check(): void {
     if (updatedAgent) socket.emitAgentUpdate(updatedAgent);
 
     // Re-queue with a new agent
+    const restartJob = getJobIfStatus(job.id, ['running']);
+    if (!restartJob) continue;
     const newAgentId = randomUUID();
-    queries.insertAgent({ id: newAgentId, job_id: job.id, status: 'starting' });
-    queries.updateJobStatus(job.id, 'assigned');
+    queries.insertAgent({ id: newAgentId, job_id: restartJob.id, status: 'starting' });
+    queries.updateJobStatus(restartJob.id, 'assigned');
 
     const newAgentWithJob = queries.getAgentWithJob(newAgentId);
     if (newAgentWithJob) socket.emitAgentNew(newAgentWithJob);
-    const updatedJob = queries.getJobById(job.id);
+    const updatedJob = queries.getJobById(restartJob.id);
     if (updatedJob) socket.emitJobUpdate(updatedJob);
 
-    if (job.is_interactive) {
-      startInteractiveAgent({ agentId: newAgentId, job });
+    if (restartJob.is_interactive) {
+      startInteractiveAgent({ agentId: newAgentId, job: restartJob });
     } else {
-      runAgent({ agentId: newAgentId, job, resumeSessionId: agent.session_id ?? undefined });
+      runAgent({ agentId: newAgentId, job: restartJob, resumeSessionId: agent.session_id ?? undefined });
     }
-    console.log(`[watchdog] re-spawned agent ${newAgentId} for job ${job.id} (MCP disconnect recovery)`);
+    console.log(`[watchdog] re-spawned agent ${newAgentId} for job ${restartJob.id} (MCP disconnect recovery)`);
   }
 
   // ── Check 4: Job/agent inconsistency ───────────────────────────────────────
