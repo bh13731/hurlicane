@@ -26,21 +26,9 @@ vi.mock('child_process', () => ({
     if (cmd.includes('rev-parse --abbrev-ref HEAD')) {
       return Buffer.from('workflow/test-branch\n');
     }
-    // rev-list for commit count check
-    if (cmd.includes('rev-list --count')) {
-      return Buffer.from('3\n');
-    }
-    // git push
+    // git push (_removeWorktree — M4 scope)
     if (cmd.startsWith('git push')) {
       return Buffer.from('');
-    }
-    // gh label create — default success
-    if (cmd.includes('gh label create')) {
-      return Buffer.from('');
-    }
-    // gh pr create
-    if (cmd.includes('gh pr create')) {
-      return Buffer.from('https://github.com/test/repo/pull/42\n');
     }
     return Buffer.from('');
   }),
@@ -258,21 +246,21 @@ describe('pushAndCreatePr: partial label', () => {
   });
 
   it('includes conflict warning in PR body when merge conflicts detected (M14/6D)', async () => {
-    // execSync still handles ensureWorktreeBranch + countBranchCommits
+    // execSync handles ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string' && cmd.includes('rev-parse --abbrev-ref HEAD')) {
         return Buffer.from('workflow/test-branch\n');
       }
-      if (typeof cmd === 'string' && cmd.includes('rev-list --count')) {
-        return Buffer.from('3\n');
-      }
       return Buffer.from('');
     });
-    // execFileSync handles the pushAndCreatePr commands (M2 refactor)
+    // execFileSync handles countBranchCommits (M3) + pushAndCreatePr commands (M2)
     let capturedPrArgs: string[] = [];
     vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
       execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc1234\n');
+      if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('3\n');
       if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
       if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('abc123\n');
       if (file === 'git' && args?.[0] === 'merge-tree') {
@@ -302,19 +290,16 @@ describe('pushAndCreatePr: partial label', () => {
   });
 
   it('creates PR without conflict warning when no conflicts (M14/6D)', async () => {
-    // execSync for ensureWorktreeBranch + countBranchCommits
+    // execSync for ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string' && cmd.includes('rev-parse --abbrev-ref HEAD')) {
         return Buffer.from('workflow/test-branch\n');
       }
-      if (typeof cmd === 'string' && cmd.includes('rev-list --count')) {
-        return Buffer.from('3\n');
-      }
       return Buffer.from('');
     });
 
-    // Default execFileSync mock handles push, merge-base (returns '\n' → skip), pr view (throws), pr create (returns URL)
+    // Default execFileSync mock handles countBranchCommits (M3) + push, merge-base, pr view, pr create
 
     const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
     const wf = makeWorkflow();
@@ -329,20 +314,20 @@ describe('pushAndCreatePr: partial label', () => {
   });
 
   it('proceeds with PR creation even if label creation fails', async () => {
-    // execSync for ensureWorktreeBranch + countBranchCommits
+    // execSync for ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string' && cmd.includes('rev-parse --abbrev-ref HEAD')) {
         return Buffer.from('workflow/test-branch\n');
       }
-      if (typeof cmd === 'string' && cmd.includes('rev-list --count')) {
-        return Buffer.from('3\n');
-      }
       return Buffer.from('');
     });
-    // Override execFileSync to throw on label creation (now via execFileSync)
+    // Override execFileSync: countBranchCommits (M3) + pushAndCreatePr with label failure
     vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
       execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc1234\n');
+      if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('3\n');
       if (file === 'gh' && args?.[0] === 'label') {
         throw new Error('label already exists');
       }
@@ -389,22 +374,20 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
 
   it('does NOT remove worktree when pushAndCreatePr fails but commits exist', async () => {
     vi.useFakeTimers();
-    // execSync: ensureWorktreeBranch, countBranchCommits, finalizeWorkflow retry push/pr-view, _removeWorktree
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string') {
         if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-        if (cmd.includes('rev-list --count')) return Buffer.from('5\n');
-        // finalizeWorkflow retry push (M3 — still execSync)
-        if (cmd.startsWith('git push')) return Buffer.from('');
-        // finalizeWorkflow fallback pr view (M3 — still execSync)
-        if (cmd.includes('gh pr view')) throw new Error('no PRs found');
       }
       return Buffer.from('');
     });
-    // execFileSync: pushAndCreatePr commands (M2 refactor)
+    // execFileSync: countBranchCommits (M3), retry push (M3), fallback pr-view (M3), pushAndCreatePr (M2)
     vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
       execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc1234\n');
+      if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('5\n');
       if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
       if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
       if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') throw new Error('no PRs found');
@@ -429,16 +412,15 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
   });
 
   it('removes worktree when pushAndCreatePr succeeds', async () => {
-    // execSync: ensureWorktreeBranch, countBranchCommits, _removeWorktree
+    // execSync: ensureWorktreeBranch + _removeWorktree
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string') {
         if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-        if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
       }
       return Buffer.from('');
     });
-    // Default execFileSync mock handles push + pr create (returns URL) — PR succeeds
+    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) — PR succeeds
 
     const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
     const wf = makeWorkflow();
@@ -451,14 +433,24 @@ describe('finalizeWorkflow: worktree preservation on PR failure', () => {
   });
 
   it('removes worktree when no publishable commits exist', async () => {
-    // pushAndCreatePr returns null early (0 commits), so only execSync is used
+    // execSync: ensureWorktreeBranch + _removeWorktree
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string') {
         if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-        // No commits
-        if (cmd.includes('rev-list --count')) return Buffer.from('0\n');
       }
+      return Buffer.from('');
+    });
+    // countBranchCommits returns 0 (no commits) via execFileSync (M3)
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc1234\n');
+      if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('0\n');
+      if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
+      if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') throw new Error('no PRs found');
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') return Buffer.from('https://github.com/test/repo/pull/42\n');
       return Buffer.from('');
     });
 
@@ -488,20 +480,20 @@ describe('finalizeWorkflow: blocked status on PR failure', () => {
 
   it('transitions workflow from complete to blocked when PR creation fails with publishable commits', async () => {
     vi.useFakeTimers();
-    // execSync: ensureWorktreeBranch, countBranchCommits, finalizeWorkflow retry push/pr-view
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string') {
         if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-        if (cmd.includes('rev-list --count')) return Buffer.from('5\n');
-        if (cmd.startsWith('git push')) return Buffer.from('');
-        if (cmd.includes('gh pr view')) throw new Error('no PRs found');
       }
       return Buffer.from('');
     });
-    // execFileSync: pushAndCreatePr commands — PR creation always fails
+    // execFileSync: countBranchCommits (M3), retry push (M3), fallback pr-view (M3), pushAndCreatePr (M2) — all fail
     vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
       execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc1234\n');
+      if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('5\n');
       if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
       if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
       if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') throw new Error('no PRs found');
@@ -549,16 +541,15 @@ describe('finalizeWorkflow: blocked status on PR failure', () => {
   });
 
   it('does NOT set blocked when PR succeeds', async () => {
-    // execSync: ensureWorktreeBranch, countBranchCommits, _removeWorktree
+    // execSync: ensureWorktreeBranch + _removeWorktree
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string') {
         if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-        if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
       }
       return Buffer.from('');
     });
-    // Default execFileSync mock handles push + pr create (returns URL) — PR succeeds
+    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) — PR succeeds
 
     const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
     const dbWf = await insertTestWorkflow({
@@ -603,10 +594,13 @@ describe('getPrCreationOutcome: git error handling (Fix-C7b)', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns failed_with_publishable_commits when execSync throws (preserves worktree)', async () => {
-    const mockedExecSync = vi.mocked(execSync);
-    mockedExecSync.mockImplementation((cmd: any) => {
-      if (typeof cmd === 'string' && cmd.includes('rev-list --count')) {
+  it('returns failed_with_publishable_commits when rev-list throws (preserves worktree)', async () => {
+    // countBranchCommits chain now goes through execFileSync (M3)
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc1234\n');
+      if (file === 'git' && args?.[0] === 'rev-list') {
         throw new Error('fatal: .git/index.lock: File exists');
       }
       return Buffer.from('');
@@ -621,10 +615,12 @@ describe('getPrCreationOutcome: git error handling (Fix-C7b)', () => {
   });
 
   it('returns no_publishable_commits when rev-list returns 0', async () => {
-    vi.mocked(execSync).mockImplementation((cmd: any) => {
-      if (typeof cmd === 'string' && cmd.includes('rev-list --count')) {
-        return Buffer.from('0\n');
-      }
+    // countBranchCommits chain now goes through execFileSync (M3)
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc1234\n');
+      if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('0\n');
       return Buffer.from('');
     });
 
@@ -660,17 +656,27 @@ describe('pushAndCreatePr: rev-list error handling (Fix-C8a)', () => {
   });
 
   it('still attempts push and PR creation when rev-list throws a transient error', async () => {
-    // execSync: ensureWorktreeBranch + countBranchCommits (throws on rev-list)
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd === 'string') {
         if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-        // rev-list throws a transient git error
-        if (cmd.includes('rev-list --count')) throw new Error('fatal: .git/index.lock: File exists');
       }
       return Buffer.from('');
     });
-    // Default execFileSync mock handles push + pr create (returns URL)
+    // execFileSync: countBranchCommits with rev-list throwing transient error (M3)
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc1234\n');
+      if (file === 'git' && args?.[0] === 'rev-list') throw new Error('fatal: .git/index.lock: File exists');
+      if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
+      if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') throw new Error('no PRs found');
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') return Buffer.from('https://github.com/test/repo/pull/42\n');
+      return Buffer.from('');
+    });
+    // Default-like execFileSync handles push + pr create (returns URL)
 
     const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
     const wf = makeWorkflow();
@@ -690,12 +696,12 @@ describe('pushAndCreatePr: rev-list error handling (Fix-C8a)', () => {
   });
 
   it('returns null when rev-list throws and worktree_branch is missing', async () => {
-    const mockedExecSync = vi.mocked(execSync);
-    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
-      execSyncCalls.push({ cmd, opts });
-      if (typeof cmd === 'string') {
-        if (cmd.includes('rev-list --count')) throw new Error('fatal: timeout');
-      }
+    // countBranchCommits chain throws via execFileSync (M3)
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc1234\n');
+      if (file === 'git' && args?.[0] === 'rev-list') throw new Error('fatal: timeout');
       return Buffer.from('');
     });
 
@@ -707,9 +713,11 @@ describe('pushAndCreatePr: rev-list error handling (Fix-C8a)', () => {
 
     expect(prUrl).toBeNull();
 
-    // Push should NOT have been attempted (returned early)
-    const pushCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.startsWith('git push'));
-    expect(pushCall).toBeUndefined();
+    // Push should NOT have been attempted (returned early) — check both execSync and execFileSync
+    const pushCallSync = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.startsWith('git push'));
+    expect(pushCallSync).toBeUndefined();
+    const pushCallFile = execFileSyncCalls.find(c => c.file === 'git' && c.args[0] === 'push');
+    expect(pushCallFile).toBeUndefined();
   });
 });
 
@@ -727,14 +735,12 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
   });
 
   it('returns 0 when origin default-branch metadata and origin/HEAD are both missing', async () => {
-    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
-      execSyncCalls.push({ cmd, opts });
-      if (typeof cmd !== 'string') return Buffer.from('');
-      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
         throw new Error('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref');
       }
-      // rev-parse --verify for origin/HEAD fails (ref doesn't exist)
-      if (cmd === 'git rev-parse --verify "origin/HEAD"') {
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
         throw new Error('fatal: Needed a single revision');
       }
       return Buffer.from('');
@@ -743,24 +749,20 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
     const { countBranchCommits } = await import('../server/orchestrator/WorkflowManager.js');
 
     expect(countBranchCommits('/tmp/wt')).toBe(0);
-    expect(execSyncCalls.map(c => c.cmd)).toEqual([
+    const gitCalls = execFileSyncCalls.map(c => [c.file, ...c.args].join(' '));
+    expect(gitCalls).toEqual([
       'git symbolic-ref refs/remotes/origin/HEAD',
-      'git rev-parse --verify "origin/HEAD"',
+      'git rev-parse --verify origin/HEAD',
     ]);
   });
 
   it('returns 0 when origin/main is missing and origin/HEAD is also unavailable', async () => {
-    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
-      execSyncCalls.push({ cmd, opts });
-      if (typeof cmd !== 'string') return Buffer.from('');
-      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
         return Buffer.from('refs/remotes/origin/main\n');
       }
-      // rev-parse --verify for both candidates fails (refs don't exist)
-      if (cmd === 'git rev-parse --verify "origin/main"') {
-        throw new Error('fatal: Needed a single revision');
-      }
-      if (cmd === 'git rev-parse --verify "origin/HEAD"') {
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
         throw new Error('fatal: Needed a single revision');
       }
       return Buffer.from('');
@@ -769,47 +771,47 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
     const { countBranchCommits } = await import('../server/orchestrator/WorkflowManager.js');
 
     expect(countBranchCommits('/tmp/wt')).toBe(0);
-    expect(execSyncCalls.map(c => c.cmd)).toEqual([
+    const gitCalls = execFileSyncCalls.map(c => [c.file, ...c.args].join(' '));
+    expect(gitCalls).toEqual([
       'git symbolic-ref refs/remotes/origin/HEAD',
-      'git rev-parse --verify "origin/main"',
-      'git rev-parse --verify "origin/HEAD"',
+      'git rev-parse --verify origin/main',
+      'git rev-parse --verify origin/HEAD',
     ]);
   });
 
   it('returns the branch-specific commit count when origin default branch is available', async () => {
-    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
-      execSyncCalls.push({ cmd, opts });
-      if (typeof cmd !== 'string') return Buffer.from('');
-      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
         return Buffer.from('refs/remotes/origin/main\n');
       }
-      if (cmd === 'git rev-parse --verify "origin/main"') {
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
         return Buffer.from('abc1234\n');
       }
-      if (cmd === 'git rev-list --count HEAD "^origin/main"') {
+      if (file === 'git' && args?.[0] === 'rev-list') {
         return Buffer.from('2\n');
       }
-      throw new Error(`Unexpected command: ${cmd}`);
+      throw new Error(`Unexpected execFileSync call: ${file} ${(args ?? []).join(' ')}`);
     });
 
     const { countBranchCommits } = await import('../server/orchestrator/WorkflowManager.js');
 
     expect(countBranchCommits('/tmp/wt')).toBe(2);
-    expect(execSyncCalls.map(c => c.cmd)).toEqual([
+    const gitCalls = execFileSyncCalls.map(c => [c.file, ...c.args].join(' '));
+    expect(gitCalls).toEqual([
       'git symbolic-ref refs/remotes/origin/HEAD',
-      'git rev-parse --verify "origin/main"',
-      'git rev-list --count HEAD "^origin/main"',
+      'git rev-parse --verify origin/main',
+      'git rev-list --count HEAD ^origin/main',
     ]);
   });
 
   it('causes getPrCreationOutcome to treat missing remote metadata as no publishable commits', async () => {
-    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
-      execSyncCalls.push({ cmd, opts });
-      if (typeof cmd !== 'string') return Buffer.from('');
-      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
         throw new Error('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref');
       }
-      if (cmd === 'git rev-parse --verify "origin/HEAD"') {
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
         throw new Error('fatal: Needed a single revision');
       }
       return Buffer.from('');
@@ -822,14 +824,13 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
   });
 
   it('re-throws transient rev-parse errors instead of treating them as missing ref (Fix-C20a)', async () => {
-    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
-      execSyncCalls.push({ cmd, opts });
-      if (typeof cmd !== 'string') return Buffer.from('');
-      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
         return Buffer.from('refs/remotes/origin/main\n');
       }
       // rev-parse --verify throws a transient error (timeout, index.lock, permission)
-      if (cmd === 'git rev-parse --verify "origin/main"') {
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
         throw new Error('Command timed out');
       }
       return Buffer.from('');
@@ -841,18 +842,17 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
   });
 
   it('re-throws rev-list errors when rev-parse succeeds (Fix-C10a)', async () => {
-    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
-      execSyncCalls.push({ cmd, opts });
-      if (typeof cmd !== 'string') return Buffer.from('');
-      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
         return Buffer.from('refs/remotes/origin/main\n');
       }
       // ref exists
-      if (cmd === 'git rev-parse --verify "origin/main"') {
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
         return Buffer.from('abc1234\n');
       }
       // but rev-list fails (e.g. corrupt pack object)
-      if (cmd === 'git rev-list --count HEAD "^origin/main"') {
+      if (file === 'git' && args?.[0] === 'rev-list') {
         throw new Error('fatal: bad object abc1234');
       }
       return Buffer.from('');
@@ -864,17 +864,14 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
   });
 
   it('returns 0 when both candidates throw "not a valid object name" (Fix-C21b)', async () => {
-    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
-      execSyncCalls.push({ cmd, opts });
-      if (typeof cmd !== 'string') return Buffer.from('');
-      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
         return Buffer.from('refs/remotes/origin/main\n');
       }
-      if (cmd === 'git rev-parse --verify "origin/main"') {
-        throw new Error('fatal: not a valid object name origin/main');
-      }
-      if (cmd === 'git rev-parse --verify "origin/HEAD"') {
-        throw new Error('fatal: not a valid object name origin/HEAD');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
+        const ref = args?.[2] ?? '';
+        throw new Error(`fatal: not a valid object name ${ref}`);
       }
       return Buffer.from('');
     });
@@ -882,24 +879,21 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
     const { countBranchCommits } = await import('../server/orchestrator/WorkflowManager.js');
 
     expect(countBranchCommits('/tmp/wt')).toBe(0);
-    expect(execSyncCalls.map(c => c.cmd)).toEqual([
+    const gitCalls = execFileSyncCalls.map(c => [c.file, ...c.args].join(' '));
+    expect(gitCalls).toEqual([
       'git symbolic-ref refs/remotes/origin/HEAD',
-      'git rev-parse --verify "origin/main"',
-      'git rev-parse --verify "origin/HEAD"',
+      'git rev-parse --verify origin/main',
+      'git rev-parse --verify origin/HEAD',
     ]);
   });
 
   it('returns 0 when both candidates throw "unknown revision" (Fix-C21b)', async () => {
-    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
-      execSyncCalls.push({ cmd, opts });
-      if (typeof cmd !== 'string') return Buffer.from('');
-      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
         return Buffer.from('refs/remotes/origin/main\n');
       }
-      if (cmd === 'git rev-parse --verify "origin/main"') {
-        throw new Error('fatal: unknown revision or path not in working tree');
-      }
-      if (cmd === 'git rev-parse --verify "origin/HEAD"') {
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
         throw new Error('fatal: unknown revision or path not in working tree');
       }
       return Buffer.from('');
@@ -908,26 +902,24 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
     const { countBranchCommits } = await import('../server/orchestrator/WorkflowManager.js');
 
     expect(countBranchCommits('/tmp/wt')).toBe(0);
-    expect(execSyncCalls.map(c => c.cmd)).toEqual([
+    const gitCalls = execFileSyncCalls.map(c => [c.file, ...c.args].join(' '));
+    expect(gitCalls).toEqual([
       'git symbolic-ref refs/remotes/origin/HEAD',
-      'git rev-parse --verify "origin/main"',
-      'git rev-parse --verify "origin/HEAD"',
+      'git rev-parse --verify origin/main',
+      'git rev-parse --verify origin/HEAD',
     ]);
   });
 
   it('returns 0 when raw string "not a valid object name" is thrown (Fix-C21a)', async () => {
-    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
-      execSyncCalls.push({ cmd, opts });
-      if (typeof cmd !== 'string') return Buffer.from('');
-      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
         return Buffer.from('refs/remotes/origin/main\n');
       }
-      if (cmd === 'git rev-parse --verify "origin/main"') {
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
+        const ref = args?.[2] ?? '';
         // Raw string throw (no .message property) — tests the ?? err fallback
-        throw 'fatal: not a valid object name origin/main';
-      }
-      if (cmd === 'git rev-parse --verify "origin/HEAD"') {
-        throw 'fatal: not a valid object name origin/HEAD';
+        throw `fatal: not a valid object name ${ref}`;
       }
       return Buffer.from('');
     });
@@ -936,10 +928,11 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
 
     // Without the ?? err fallback, this would throw because the classifier sees ''
     expect(countBranchCommits('/tmp/wt')).toBe(0);
-    expect(execSyncCalls.map(c => c.cmd)).toEqual([
+    const gitCalls = execFileSyncCalls.map(c => [c.file, ...c.args].join(' '));
+    expect(gitCalls).toEqual([
       'git symbolic-ref refs/remotes/origin/HEAD',
-      'git rev-parse --verify "origin/main"',
-      'git rev-parse --verify "origin/HEAD"',
+      'git rev-parse --verify origin/main',
+      'git rev-parse --verify origin/HEAD',
     ]);
   });
 });
@@ -958,23 +951,31 @@ describe('Fix-C11a: transient rev-parse errors propagate to callers via countBra
   });
 
   function mockTransientRevParseFailure() {
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+      return Buffer.from('');
+    });
+    // execFileSync: countBranchCommits chain (M3) with transient rev-parse failure
+    vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
+      execFileSyncCalls.push({ file, args: args ?? [], opts });
       // symbolic-ref succeeds — remote default branch is known
-      if (cmd === 'git symbolic-ref refs/remotes/origin/HEAD') {
+      if (file === 'git' && args?.[0] === 'symbolic-ref') {
         return Buffer.from('refs/remotes/origin/main\n');
       }
       // rev-parse --verify throws a TRANSIENT error (not ref-missing).
       // This propagates immediately out of countCommitsAgainstBaseRef and
       // countBranchCommits — origin/HEAD is never attempted.
-      if (cmd === 'git rev-parse --verify "origin/main"') {
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') {
         throw new Error('fatal: Unable to create /tmp/wt/.git/index.lock: Permission denied');
       }
-      // branch check
-      if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-      if (cmd.startsWith('git push')) return Buffer.from('');
-      if (cmd.includes('gh pr create')) return Buffer.from('https://github.com/test/repo/pull/99\n');
+      // pushAndCreatePr commands
+      if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
+      if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') throw new Error('no PRs found');
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') return Buffer.from('https://github.com/test/repo/pull/42\n');
       return Buffer.from('');
     });
   }
@@ -992,22 +993,24 @@ describe('Fix-C11a: transient rev-parse errors propagate to callers via countBra
     // PR should be created — transient error triggers safe default (hasCommits = true)
     expect(prUrl).toBe('https://github.com/test/repo/pull/42');
 
-    // symbolic-ref was called with worktree_path as cwd, not work_dir (Fix-C13a)
-    const symRefCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('symbolic-ref'));
+    // symbolic-ref was called with worktree_path as cwd, not work_dir (Fix-C13a) — now via execFileSync (M3)
+    const symRefCall = execFileSyncCalls.find(c => c.file === 'git' && c.args[0] === 'symbolic-ref');
     expect(symRefCall).toBeDefined();
     expect(symRefCall!.opts?.cwd).toBe('/tmp/wt');
 
-    // Push was attempted with worktree_path as cwd (Fix-C13a) — now via execFileSync
+    // Push was attempted with worktree_path as cwd (Fix-C13a) — via execFileSync
     const pushCall = execFileSyncCalls.find(c => c.file === 'git' && c.args[0] === 'push');
     expect(pushCall).toBeDefined();
     expect(pushCall!.opts?.cwd).toBe('/tmp/wt');
 
-    // PR creation was attempted (now via execFileSync)
+    // PR creation was attempted (via execFileSync)
     const prCreateCall = execFileSyncCalls.find(c => c.file === 'gh' && c.args[0] === 'pr' && c.args[1] === 'create');
     expect(prCreateCall).toBeDefined();
 
     // Transient error propagates immediately — origin/HEAD fallback was NOT attempted (Fix-C12a)
-    const originHeadCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd === 'git rev-parse --verify "origin/HEAD"');
+    const originHeadCall = execFileSyncCalls.find(c =>
+      c.file === 'git' && c.args[0] === 'rev-parse' && c.args[1] === '--verify' && c.args[2] === 'origin/HEAD'
+    );
     expect(originHeadCall).toBeUndefined();
 
     // Safe-default logging contract verified (Fix-C12b)
@@ -1031,13 +1034,15 @@ describe('Fix-C11a: transient rev-parse errors propagate to callers via countBra
     // which returns 'failed_with_publishable_commits' (preserves worktree)
     expect(outcome).toBe('failed_with_publishable_commits');
 
-    // symbolic-ref was called with worktree_path as cwd, not work_dir (Fix-C13a)
-    const symRefCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd.includes('symbolic-ref'));
+    // symbolic-ref was called with worktree_path as cwd, not work_dir (Fix-C13a) — now via execFileSync (M3)
+    const symRefCall = execFileSyncCalls.find(c => c.file === 'git' && c.args[0] === 'symbolic-ref');
     expect(symRefCall).toBeDefined();
     expect(symRefCall!.opts?.cwd).toBe('/tmp/wt');
 
     // Transient error propagates immediately — origin/HEAD fallback was NOT attempted (Fix-C12a)
-    const originHeadCall = execSyncCalls.find(c => typeof c.cmd === 'string' && c.cmd === 'git rev-parse --verify "origin/HEAD"');
+    const originHeadCall = execFileSyncCalls.find(c =>
+      c.file === 'git' && c.args[0] === 'rev-parse' && c.args[1] === '--verify' && c.args[2] === 'origin/HEAD'
+    );
     expect(originHeadCall).toBeUndefined();
 
     // Safe-default logging contract verified (Fix-C12b)
@@ -1064,23 +1069,21 @@ describe('finalizeWorkflow: retry and fallback behavior', () => {
   it('(a) succeeds on the second retry attempt when the first fails', async () => {
     vi.useFakeTimers();
     let ghPrCreateCount = 0;
-    // execSync: ensureWorktreeBranch, countBranchCommits, finalizeWorkflow retry push, _removeWorktree, fallback pr-view
+    // execSync: ensureWorktreeBranch + _removeWorktree
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd !== 'string') return Buffer.from('');
       if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
-      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
-      if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
-      if (cmd.startsWith('git push')) return Buffer.from('');
       if (cmd.includes('git status --porcelain')) return Buffer.from('');
       if (cmd.includes('git worktree remove')) return Buffer.from('');
-      if (cmd.includes('gh pr view')) throw new Error('no PR');
       return Buffer.from('');
     });
-    // execFileSync: pushAndCreatePr commands — pr create fails first, succeeds second
+    // execFileSync: countBranchCommits (M3), retry push (M3), fallback pr-view (M3), pushAndCreatePr (M2)
     vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
       execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc123\n');
+      if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('3\n');
       if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
       if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
       if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') throw new Error('no PR');
@@ -1120,31 +1123,34 @@ describe('finalizeWorkflow: retry and fallback behavior', () => {
 
   it('(b) uses gh pr view fallback when all 3 PR creation attempts fail', async () => {
     vi.useFakeTimers();
-    // execSync: ensureWorktreeBranch, countBranchCommits, finalizeWorkflow retry push,
-    // finalizeWorkflow fallback pr-view (M3 — still execSync), _removeWorktree
+    let prCreateCount = 0;
+    // execSync: ensureWorktreeBranch + _removeWorktree
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd !== 'string') return Buffer.from('');
       if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
-      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
-      if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
-      if (cmd.startsWith('git push')) return Buffer.from('');
       if (cmd.includes('git status --porcelain')) return Buffer.from('');
       if (cmd.includes('git worktree remove')) return Buffer.from('');
-      // finalizeWorkflow's post-loop fallback gh pr view (M3 — still execSync)
-      if (cmd.includes('gh pr view')) {
-        return Buffer.from('https://github.com/test/repo/pull/77\n');
-      }
       return Buffer.from('');
     });
-    // execFileSync: pushAndCreatePr commands — pr create always fails, pr view always throws
+    // execFileSync: countBranchCommits (M3), retry push (M3), fallback pr-view (M3), pushAndCreatePr (M2)
+    // pr create always fails; after all 3 attempts, finalizeWorkflow fallback pr-view finds existing PR
     vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
       execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc123\n');
+      if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('3\n');
       if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
       if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
-      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') throw new Error('no PR');
+      if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') {
+        // After all 3 pr create attempts exhausted, the finalizeWorkflow fallback finds the PR
+        if (prCreateCount >= 3) {
+          return Buffer.from('https://github.com/test/repo/pull/77\n');
+        }
+        throw new Error('no PR');
+      }
       if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create') {
+        prCreateCount++;
         throw Object.assign(new Error('transient error'), { stderr: Buffer.from('transient') });
       }
       return Buffer.from('');
@@ -1171,21 +1177,19 @@ describe('finalizeWorkflow: retry and fallback behavior', () => {
 
   it('(c) releases workflow claims synchronously before any retry delay', async () => {
     vi.useFakeTimers();
-    // execSync: ensureWorktreeBranch, countBranchCommits, finalizeWorkflow retry push/pr-view
+    // execSync: ensureWorktreeBranch only
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd !== 'string') return Buffer.from('');
       if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
-      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
-      if (cmd.includes('rev-list --count')) return Buffer.from('3\n');
-      if (cmd.startsWith('git push')) return Buffer.from('');
-      if (cmd.includes('gh pr view')) throw new Error('no PR');
       return Buffer.from('');
     });
-    // execFileSync: pushAndCreatePr commands — pr create always fails
+    // execFileSync: countBranchCommits (M3), retry push (M3), fallback pr-view (M3), pushAndCreatePr (M2) — all fail
     vi.mocked(execFileSync).mockImplementation((file: any, args?: any, opts?: any) => {
       execFileSyncCalls.push({ file, args: args ?? [], opts });
+      if (file === 'git' && args?.[0] === 'symbolic-ref') return Buffer.from('refs/remotes/origin/main\n');
+      if (file === 'git' && args?.[0] === 'rev-parse' && args?.[1] === '--verify') return Buffer.from('abc123\n');
+      if (file === 'git' && args?.[0] === 'rev-list') return Buffer.from('3\n');
       if (file === 'git' && args?.[0] === 'push') return Buffer.from('');
       if (file === 'git' && args?.[0] === 'merge-base') return Buffer.from('\n');
       if (file === 'gh' && args?.[0] === 'pr' && args?.[1] === 'view') throw new Error('no PR');
@@ -1233,19 +1237,16 @@ describe('reconcileBlockedPRs: startup recovery', () => {
   });
 
   it('(d) recovers a blocked workflow when PR creation succeeds on retry', async () => {
-    // execSync: ensureWorktreeBranch, countBranchCommits, _removeWorktree
+    // execSync: ensureWorktreeBranch + _removeWorktree
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd !== 'string') return Buffer.from('');
       if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
-      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
-      if (cmd.includes('rev-list --count')) return Buffer.from('2\n');
       if (cmd.includes('git status --porcelain')) return Buffer.from('');
       if (cmd.includes('git worktree remove')) return Buffer.from('');
       return Buffer.from('');
     });
-    // Default execFileSync mock handles push + pr create (returns URL) — PR succeeds
+    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) — PR succeeds
 
     const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
     const dbWf = await insertTestWorkflow({ id: 'wf-reconcile-d', status: 'blocked', use_worktree: 1 });
@@ -1269,19 +1270,16 @@ describe('reconcileBlockedPRs: startup recovery', () => {
   });
 
   it('(e) skips malformed workflows (null worktree_path) without aborting reconciliation', async () => {
-    // execSync: ensureWorktreeBranch, countBranchCommits, _removeWorktree
+    // execSync: ensureWorktreeBranch + _removeWorktree
     vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
       execSyncCalls.push({ cmd, opts });
       if (typeof cmd !== 'string') return Buffer.from('');
       if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
-      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
-      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
-      if (cmd.includes('rev-list --count')) return Buffer.from('2\n');
       if (cmd.includes('git status --porcelain')) return Buffer.from('');
       if (cmd.includes('git worktree remove')) return Buffer.from('');
       return Buffer.from('');
     });
-    // Default execFileSync mock handles push + pr create (returns URL) — PR succeeds
+    // Default execFileSync mock handles countBranchCommits (M3) + push + pr create (returns URL) — PR succeeds
 
     const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
 

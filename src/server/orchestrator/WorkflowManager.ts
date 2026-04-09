@@ -1613,7 +1613,7 @@ export type WorkflowPrCreationOutcome = 'created' | 'failed_with_publishable_com
 
 function getRemoteDefaultBranch(cwd: string): string | null {
   try {
-    const ref = execSync('git symbolic-ref refs/remotes/origin/HEAD', {
+    const ref = execFileSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], {
       cwd,
       stdio: 'pipe',
       timeout: 5000,
@@ -1638,7 +1638,7 @@ function countCommitsAgainstBaseRef(cwd: string, baseRef: string): number | null
   // Verify ref exists before counting — avoids masking real git failures
   // (corrupt objects, ambiguous refs) as "ref missing"
   try {
-    execSync(`git rev-parse --verify ${JSON.stringify(baseRef)}`, {
+    execFileSync('git', ['rev-parse', '--verify', baseRef], {
       cwd, stdio: 'pipe', timeout: 5000,
     });
   } catch (err) {
@@ -1651,8 +1651,8 @@ function countCommitsAgainstBaseRef(cwd: string, baseRef: string): number | null
   }
 
   // ref exists — any rev-list failure is unexpected, let it propagate
-  const count = execSync(
-    `git rev-list --count HEAD ${JSON.stringify(`^${baseRef}`)}`,
+  const count = execFileSync(
+    'git', ['rev-list', '--count', 'HEAD', `^${baseRef}`],
     { cwd, stdio: 'pipe', timeout: 10000 }
   ).toString().trim();
   const parsed = parseInt(count, 10);
@@ -1723,7 +1723,7 @@ export async function finalizeWorkflow(workflow: Workflow): Promise<void> {
       await new Promise<void>(resolve => setTimeout(resolve, _FINALIZE_RETRY_DELAY_MS));
       // Re-push branch before next attempt to ensure remote is up to date
       try {
-        execSync(`git push -u origin ${JSON.stringify(workflow.worktree_branch)}`, {
+        execFileSync('git', ['push', '-u', 'origin', workflow.worktree_branch], {
           cwd: workflow.worktree_path, stdio: 'pipe', timeout: 30000,
         });
       } catch (pushErr: any) {
@@ -1735,8 +1735,8 @@ export async function finalizeWorkflow(workflow: Workflow): Promise<void> {
   // After all attempts, fall back to gh pr view in case the PR already exists remotely
   if (!prUrl && workflow.worktree_branch && workflow.worktree_path) {
     try {
-      const existing = execSync(
-        `gh pr view ${JSON.stringify(workflow.worktree_branch)} --json url -q .url`,
+      const existing = execFileSync(
+        'gh', ['pr', 'view', workflow.worktree_branch, '--json', 'url', '-q', '.url'],
         { cwd: workflow.worktree_path, stdio: 'pipe', timeout: 15000 },
       ).toString().trim();
       if (existing) {
