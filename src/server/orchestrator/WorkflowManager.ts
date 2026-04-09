@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 import { captureWithContext, Sentry } from '../instrument.js';
@@ -1517,8 +1517,8 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
   }
 
   try {
-    // Push branch to remote
-    execSync(`git push -u origin ${JSON.stringify(worktree_branch)}`, {
+    // Push branch to remote (argv-safe — no shell interpolation)
+    execFileSync('git', ['push', '-u', 'origin', worktree_branch], {
       cwd: worktree_path, stdio: 'pipe', timeout: 30000,
     });
 
@@ -1528,24 +1528,25 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
     const title = `[Workflow] ${workflow.title}`;
 
     // For draft (partial) PRs, ensure the "partial" label exists and attach it
-    let labelFlag = '';
     if (isDraft) {
       try {
-        execSync('gh label create partial --description "Partial workflow completion" --color FBCA04', {
+        execFileSync('gh', ['label', 'create', 'partial', '--description', 'Partial workflow completion', '--color', 'FBCA04'], {
           cwd: worktree_path, stdio: 'pipe', timeout: 10000,
         });
       } catch { /* label already exists — fine */ }
-      labelFlag = ' --label partial';
     }
 
     // M14/6D: Merge conflict pre-check before PR creation
     let conflictWarning = '';
     try {
-      const mergeBase = execSync('git merge-base HEAD origin/HEAD 2>/dev/null || echo ""', {
-        cwd: worktree_path, stdio: 'pipe', timeout: 10000,
-      }).toString().trim();
+      let mergeBase = '';
+      try {
+        mergeBase = execFileSync('git', ['merge-base', 'HEAD', 'origin/HEAD'], {
+          cwd: worktree_path, stdio: 'pipe', timeout: 10000,
+        }).toString().trim();
+      } catch { /* merge-base not available — skip conflict check */ }
       if (mergeBase) {
-        const mergeTree = execSync(`git merge-tree ${mergeBase} origin/HEAD HEAD`, {
+        const mergeTree = execFileSync('git', ['merge-tree', mergeBase, 'origin/HEAD', 'HEAD'], {
           cwd: worktree_path, stdio: 'pipe', timeout: 10000,
         }).toString();
         if (mergeTree.includes('<<<<<<<') || mergeTree.includes('changed in both')) {
@@ -1562,8 +1563,8 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
 
     // Check if a PR already exists before trying to create one
     try {
-      const existingUrl = execSync(
-        `gh pr view ${JSON.stringify(worktree_branch)} --json url -q .url`,
+      const existingUrl = execFileSync(
+        'gh', ['pr', 'view', worktree_branch, '--json', 'url', '-q', '.url'],
         { cwd: worktree_path, stdio: 'pipe', timeout: 15000 }
       ).toString().trim();
       if (existingUrl) {
@@ -1573,13 +1574,15 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
       }
     } catch { /* no existing PR — create one */ }
 
-    // Create PR via gh CLI
-    const draftFlag = isDraft ? ' --draft' : '';
+    // Create PR via gh CLI (argv array — title/body/branch passed as discrete elements)
     const finalBody = conflictWarning ? body + conflictWarning : body;
-    const prUrl = execSync(
-      `gh pr create --title ${JSON.stringify(title)} --body ${JSON.stringify(finalBody)} --head ${JSON.stringify(worktree_branch)}${draftFlag}${labelFlag}`,
-      { cwd: worktree_path, stdio: 'pipe', timeout: 30000 }
-    ).toString().trim();
+    const prArgs = ['pr', 'create', '--title', title, '--body', finalBody, '--head', worktree_branch];
+    if (isDraft) {
+      prArgs.push('--draft', '--label', 'partial');
+    }
+    const prUrl = execFileSync('gh', prArgs, {
+      cwd: worktree_path, stdio: 'pipe', timeout: 30000,
+    }).toString().trim();
 
     updateAndEmit(workflow.id, { pr_url: prUrl });
     console.log(`[workflow ${workflow.id}] ${isDraft ? 'draft ' : ''}PR created: ${prUrl}`);
@@ -1589,8 +1592,8 @@ export function pushAndCreatePr(workflow: Workflow, isDraft: boolean): string | 
     // gh CLI returns error if PR already exists — find and use existing
     if (stderr.includes('already exists')) {
       try {
-        const existing = execSync(
-          `gh pr view ${JSON.stringify(worktree_branch)} --json url -q .url`,
+        const existing = execFileSync(
+          'gh', ['pr', 'view', worktree_branch, '--json', 'url', '-q', '.url'],
           { cwd: worktree_path, stdio: 'pipe', timeout: 15000 }
         ).toString().trim();
         if (existing) {

@@ -17,33 +17,44 @@ import {
 // Track all execSync calls for assertion
 const execSyncCalls: Array<{ cmd: string; opts?: any }> = [];
 
-vi.mock('child_process', () => ({
-  exec: vi.fn(),
-  execSync: vi.fn((cmd: string, opts?: any) => {
-    execSyncCalls.push({ cmd, opts });
-    // rev-parse for ensureWorktreeBranch
-    if (cmd.includes('rev-parse --abbrev-ref HEAD')) {
-      return Buffer.from('workflow/test-branch\n');
-    }
-    // rev-list for commit count check
-    if (cmd.includes('rev-list --count')) {
-      return Buffer.from('3\n');
-    }
-    // git push
-    if (cmd.startsWith('git push')) {
+vi.mock('child_process', () => {
+  const mod = {
+    exec: vi.fn(),
+    execSync: vi.fn((cmd: string, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      // rev-parse for ensureWorktreeBranch
+      if (cmd.includes('rev-parse --abbrev-ref HEAD')) {
+        return Buffer.from('workflow/test-branch\n');
+      }
+      // rev-list for commit count check
+      if (cmd.includes('rev-list --count')) {
+        return Buffer.from('3\n');
+      }
+      // git push
+      if (cmd.startsWith('git push')) {
+        return Buffer.from('');
+      }
+      // gh label create — default success
+      if (cmd.includes('gh label create')) {
+        return Buffer.from('');
+      }
+      // gh pr create
+      if (cmd.includes('gh pr create')) {
+        return Buffer.from('https://github.com/test/repo/pull/42\n');
+      }
       return Buffer.from('');
-    }
-    // gh label create — default success
-    if (cmd.includes('gh label create')) {
-      return Buffer.from('');
-    }
-    // gh pr create
-    if (cmd.includes('gh pr create')) {
-      return Buffer.from('https://github.com/test/repo/pull/42\n');
-    }
-    return Buffer.from('');
-  }),
-}));
+    }),
+    // execFileSync delegates to execSync so test overrides apply to both
+    execFileSync: vi.fn((file: string, args?: string[], opts?: any) => {
+      const quotedArgs = (args ?? []).map(a =>
+        /[\s"'`$()\\]/.test(a) ? JSON.stringify(a) : a
+      );
+      const cmd = [file, ...quotedArgs].join(' ');
+      return mod.execSync(cmd, opts);
+    }),
+  };
+  return mod;
+});
 
 vi.mock('../server/socket/SocketManager.js', () => createSocketMock());
 
