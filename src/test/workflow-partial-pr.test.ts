@@ -12,6 +12,9 @@ import {
   setupTestDb,
   cleanupTestDb,
   createSocketMock,
+  resetManagerState,
+  insertTestProject,
+  insertTestJob,
 } from './helpers.js';
 
 // Track all execSync calls for assertion
@@ -71,6 +74,12 @@ vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
   isSameModelRetryEligible: vi.fn(() => false),
   shouldMarkProviderUnavailable: vi.fn(() => false),
   _resetWarnedUnclassifiedForTest: vi.fn(),
+}));
+
+// Mock Sentry instrument so we can assert captureException call counts
+vi.mock('../server/instrument.js', () => ({
+  captureWithContext: vi.fn(),
+  Sentry: { captureException: vi.fn() },
 }));
 
 import type { Workflow } from '../shared/types.js';
@@ -1166,5 +1175,100 @@ describe('reconcileBlockedPRs: startup recovery', () => {
 
     // A warning was logged for the skipped malformed workflow (single-string form)
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('wf-malformed-e'));
+  });
+});
+
+/**
+ * Sentry gating — proves OPERATIONAL_BLOCK_PATTERNS suppresses captureException for
+ * "PR creation failed — worktree preserved for retry" blocks while non-operational
+ * blocks (e.g. missing worktree guard) still report to Sentry.
+ *
+ * Mirrors the pattern in workflow-worktree-guard.test.ts, applied to the finalize path.
+ */
+describe('finalizeWorkflow: Sentry gating on PR failure blocks', () => {
+  beforeEach(async () => {
+    execSyncCalls.length = 0;
+    await setupTestDb();
+    await resetManagerState();
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+    vi.restoreAllMocks();
+  });
+
+  it('does NOT call Sentry.captureException when finalizeWorkflow blocks with "PR creation failed"', async () => {
+    vi.useFakeTimers();
+    vi.mocked(execSync).mockImplementation((cmd: any, opts?: any) => {
+      execSyncCalls.push({ cmd, opts });
+      if (typeof cmd !== 'string') return Buffer.from('');
+      if (cmd.includes('rev-parse --abbrev-ref HEAD')) return Buffer.from('workflow/test-branch\n');
+      if (cmd.includes('symbolic-ref')) return Buffer.from('refs/remotes/origin/main\n');
+      if (cmd.includes('rev-parse --verify')) return Buffer.from('abc123\n');
+      if (cmd.includes('rev-list --count')) return Buffer.from('5\n');
+      if (cmd.startsWith('git push')) return Buffer.from('');
+      if (cmd.includes('gh pr create')) throw new Error('gh: Could not create PR');
+      if (cmd.includes('gh pr view')) throw new Error('no PR found');
+      return Buffer.from('');
+    });
+
+    const { updateWorkflow, getWorkflowById } = await import('../server/db/queries.js');
+    const { Sentry } = await import('../server/instrument.js');
+    const dbWf = await insertTestWorkflow({ id: 'wf-sentry-pr-fail', status: 'complete', use_worktree: 1 });
+    updateWorkflow(dbWf.id, {
+      worktree_path: '/tmp/wt',
+      worktree_branch: 'workflow/test-branch',
+    });
+
+    const { finalizeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const wf = makeWorkflow({ id: 'wf-sentry-pr-fail', status: 'complete' });
+
+    const promise = finalizeWorkflow(wf);
+    await vi.runAllTimersAsync();
+    await promise;
+    vi.useRealTimers();
+
+    // Workflow is blocked with the preserved-worktree reason
+    const updated = getWorkflowById('wf-sentry-pr-fail');
+    expect(updated!.status).toBe('blocked');
+    expect(updated!.blocked_reason).toContain('PR creation failed');
+
+    // This is an operational block — Sentry must NOT be called
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it('DOES call Sentry.captureException for non-operational blocks (worktree guard pattern)', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+    const { Sentry } = await import('../server/instrument.js');
+
+    // Worktree guard: use_worktree=1 but worktree_path is null → non-operational block
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'assess',
+      current_cycle: 0,
+      use_worktree: 1,
+    });
+    queries.upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1\n- [ ] M2', null);
+    queries.upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 0,
+      workflow_phase: 'assess',
+      status: 'done',
+    });
+    onJobCompleted(job);
+
+    // Workflow must be blocked (worktree guard fired)
+    const updated = queries.getWorkflowById(workflow.id);
+    expect(updated!.status).toBe('blocked');
+    expect(updated!.blocked_reason).toContain('worktree_path is null');
+
+    // Non-operational block → Sentry MUST fire
+    expect(Sentry.captureException).toHaveBeenCalled();
   });
 });
