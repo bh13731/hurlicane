@@ -457,3 +457,185 @@ describe('WorkflowManager: operational-block recovery in reconcileRunningWorkflo
     expect(newJob.model).not.toBe('codex');
   });
 });
+
+describe('WorkflowManager: M4 — stale operational-block note cleanup', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+    await resetManagerState();
+    vi.clearAllMocks();
+    const { getAvailableModel } = await import('../server/orchestrator/ModelClassifier.js');
+    vi.mocked(getAvailableModel).mockImplementation(() => null);
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('manual resume clears the operational-block note', async () => {
+    const { onJobCompleted, resumeWorkflow } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 1,
+      implementer_model: 'codex',
+    });
+    queries.upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+    queries.upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    // Trigger the operational block (launch_environment, no fallback)
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'failed',
+      model: 'codex',
+    });
+    onJobCompleted(job);
+
+    // Verify the note was written
+    expect(queries.getNote(`workflow/${workflow.id}/operational-block`)).not.toBeNull();
+    expect(queries.getWorkflowById(workflow.id)!.status).toBe('blocked');
+
+    // Simulate manual resume — make a model available so spawnPhaseJob doesn't fail
+    const { getAvailableModel } = await import('../server/orchestrator/ModelClassifier.js');
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => model);
+
+    const blocked = queries.getWorkflowById(workflow.id)!;
+    resumeWorkflow(blocked);
+
+    // The operational-block note should be cleared
+    expect(queries.getNote(`workflow/${workflow.id}/operational-block`)).toBeNull();
+  });
+
+  it('non-operational block after resume is not auto-recovered by reconcile', async () => {
+    const { onJobCompleted, resumeWorkflow, reconcileRunningWorkflows } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+    const { getAvailableModel, markModelRateLimited } = await import('../server/orchestrator/ModelClassifier.js');
+    const { classifyJobFailure, isFallbackEligibleFailure } = await import('../server/orchestrator/FailureClassifier.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 1,
+      implementer_model: 'codex',
+    });
+    queries.upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+    queries.upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
+
+    // Step 1: Operationally block the workflow
+    const failedJob1 = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'failed',
+      model: 'codex',
+    });
+    onJobCompleted(failedJob1);
+    expect(queries.getWorkflowById(workflow.id)!.status).toBe('blocked');
+    expect(queries.getNote(`workflow/${workflow.id}/operational-block`)).not.toBeNull();
+
+    // Step 2: Manual resume
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => model);
+    resumeWorkflow(queries.getWorkflowById(workflow.id)!);
+    expect(queries.getNote(`workflow/${workflow.id}/operational-block`)).toBeNull();
+
+    // Step 3: Workflow fails again for a non-operational reason (e.g. task_failure)
+    vi.mocked(classifyJobFailure).mockReturnValue('task_failure');
+    vi.mocked(isFallbackEligibleFailure).mockReturnValue(false);
+    const failedJob2 = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'failed',
+      model: 'codex',
+    });
+    onJobCompleted(failedJob2, { force: true });
+    expect(queries.getWorkflowById(workflow.id)!.status).toBe('blocked');
+
+    // Step 4: reconcileRunningWorkflows should NOT auto-recover this
+    // (no operational-block note exists)
+    reconcileRunningWorkflows();
+    expect(queries.getWorkflowById(workflow.id)!.status).toBe('blocked');
+  });
+
+  it('non-operational block clears stale operational-block note via updateAndEmit', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { classifyJobFailure, isFallbackEligibleFailure } = await import('../server/orchestrator/FailureClassifier.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'running',
+      current_phase: 'implement',
+      current_cycle: 1,
+      implementer_model: 'codex',
+    });
+    queries.upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2', null);
+
+    // Manually plant a stale operational-block note (as if from a previous block)
+    queries.upsertNote(`workflow/${workflow.id}/operational-block`, JSON.stringify({
+      phase: 'implement',
+      cycle: 1,
+      model: 'codex',
+      failureKind: 'launch_environment',
+      ts: Date.now(),
+    }), null);
+
+    // Non-operational failure
+    vi.mocked(classifyJobFailure).mockReturnValue('task_failure');
+    vi.mocked(isFallbackEligibleFailure).mockReturnValue(false);
+    const failedJob = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'failed',
+      model: 'codex',
+    });
+
+    onJobCompleted(failedJob);
+
+    expect(queries.getWorkflowById(workflow.id)!.status).toBe('blocked');
+    // The stale operational-block note should have been cleared
+    expect(queries.getNote(`workflow/${workflow.id}/operational-block`)).toBeNull();
+  });
+
+  it('recovery pass ignores stale note with mismatched phase/cycle', async () => {
+    const { reconcileRunningWorkflows } = await import('../server/orchestrator/WorkflowManager.js');
+    const queries = await import('../server/db/queries.js');
+    const { getAvailableModel } = await import('../server/orchestrator/ModelClassifier.js');
+
+    const project = await insertTestProject();
+    const workflow = await insertTestWorkflow({
+      project_id: project.id,
+      status: 'blocked',
+      current_phase: 'review',
+      current_cycle: 2,
+      implementer_model: 'codex',
+    });
+
+    // Stale note from a previous cycle (implement cycle 1)
+    queries.upsertNote(`workflow/${workflow.id}/operational-block`, JSON.stringify({
+      phase: 'implement',
+      cycle: 1,
+      model: 'codex',
+      failureKind: 'launch_environment',
+      ts: Date.now(),
+    }), null);
+
+    // Even with models available, recovery should not trigger (phase/cycle mismatch)
+    vi.mocked(getAvailableModel).mockImplementation((model: string) => model);
+
+    reconcileRunningWorkflows();
+
+    expect(queries.getWorkflowById(workflow.id)!.status).toBe('blocked');
+    // The stale note should have been cleaned up
+    expect(queries.getNote(`workflow/${workflow.id}/operational-block`)).toBeNull();
+  });
+});

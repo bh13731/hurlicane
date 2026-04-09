@@ -1227,6 +1227,23 @@ export function reconcileRunningWorkflows(): void {
     const phase = workflow.current_phase as WorkflowPhase;
     if (phase === 'idle') continue;
 
+    // Validate the note payload matches the current blocked phase/cycle.
+    // If the workflow was resumed and later re-blocked at a different phase/cycle,
+    // the note is stale — delete it and skip recovery.
+    try {
+      const notePayload = JSON.parse(opBlockNote.value);
+      const expectedCycleForNote = phase === 'assess' ? 0 : workflow.current_cycle;
+      if (notePayload.phase !== phase || notePayload.cycle !== expectedCycleForNote) {
+        console.log(`[workflow-gap] stale operational-block note for ${workflow.id.slice(0, 8)}: note phase/cycle=${notePayload.phase}/${notePayload.cycle}, current=${phase}/${expectedCycleForNote} — deleting`);
+        queries.deleteNote(`workflow/${workflow.id}/operational-block`);
+        continue;
+      }
+    } catch {
+      // Malformed note — clean it up
+      queries.deleteNote(`workflow/${workflow.id}/operational-block`);
+      continue;
+    }
+
     // Find the failed job that caused the operational block
     const jobs = queries.getJobsForWorkflow(workflow.id);
     const expectedCycle = phase === 'assess' ? 0 : workflow.current_cycle;
@@ -1459,6 +1476,9 @@ export function resumeWorkflow(
   blockIfMissingRequiredWorktree(resumeState, phase, { throwOnBlock: true });
 
   updateAndEmit(workflow.id, { status: 'running', blocked_reason: null });
+  // Clear any stale operational-block note so it cannot trigger false auto-recovery
+  // if this workflow later blocks for a genuine non-operational reason.
+  queries.deleteNote(`workflow/${workflow.id}/operational-block`);
   // Reset zero-progress counter so resumed workflows get a fresh budget
   queries.upsertNote(`workflow/${workflow.id}/zero-progress-count`, '0', null);
   // Clear stale cycle-progress notes so the diminishing returns detector starts fresh
@@ -1987,6 +2007,9 @@ function updateAndEmit(id: string, fields: Parameters<typeof queries.updateWorkf
     ];
     const isOperational = opts?.operationalBlock || OPERATIONAL_BLOCK_PATTERNS.some(p => reason.includes(p));
     if (!isOperational) {
+      // Non-operational block: clear any stale operational-block note so
+      // reconcileRunningWorkflows does not auto-recover this workflow.
+      queries.deleteNote(`workflow/${id}/operational-block`);
       const err = new Error(`Workflow blocked: ${updated.title} — ${reason}`);
       err.name = 'WorkflowBlocked';
       // Gather last failed job + agent error for Sentry context
