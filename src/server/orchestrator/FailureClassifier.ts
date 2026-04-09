@@ -204,6 +204,21 @@ export function isSameModelRetryEligible(kind: FailureKind): boolean {
   return kind === 'codex_cli_crash';
 }
 
+/**
+ * Whether a classified failure kind represents infrastructure/operational issues
+ * rather than novel application bugs. Used by Sentry gating to suppress expected
+ * workflow blocks that result from exhausted recovery attempts.
+ */
+export function isOperationalFailureKind(kind: FailureKind): boolean {
+  switch (kind) {
+    case 'task_failure':
+    case 'unknown':
+      return false;
+    default:
+      return true;
+  }
+}
+
 export function shouldMarkProviderUnavailable(kind: FailureKind): boolean {
   return kind === 'rate_limit'
     || kind === 'provider_overload'
