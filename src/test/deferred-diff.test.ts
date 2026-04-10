@@ -61,6 +61,11 @@ let execAsyncDiffContent = '';
 // Configurable per-test: what sync git helpers return for snapshot commands
 let execSyncRevParseResult = '';
 let execSyncUncommittedResult = '';
+// Configurable per-test: make specific git helper calls throw (benign failure simulation)
+let execSyncTagDeleteThrows = false;
+let execSyncRevParseThrows = false;
+let execSyncUncommittedThrows = false;
+let execAsyncDiffThrows = false;
 
 vi.mock('child_process', () => ({
   spawn: vi.fn(),
@@ -68,18 +73,37 @@ vi.mock('child_process', () => ({
   execFileSync: vi.fn((file: string, args: string[]) => {
     const cmd = [file, ...args].join(' ');
     gitSyncCalls.push(cmd);
-    if (cmd.includes('git rev-parse HEAD')) return execSyncRevParseResult || 'snapshot-sha\n';
-    if (cmd.includes('git diff HEAD')) return execSyncUncommittedResult;
+    if (cmd.includes('git tag -d') && execSyncTagDeleteThrows) {
+      throw Object.assign(new Error('error: tag not found'), { status: 1 });
+    }
+    if (cmd.includes('git rev-parse HEAD')) {
+      if (execSyncRevParseThrows) throw Object.assign(new Error('fatal: not a git repository'), { code: 'ENOENT' });
+      return execSyncRevParseResult || 'snapshot-sha\n';
+    }
+    if (cmd.includes('git diff HEAD')) {
+      if (execSyncUncommittedThrows) throw Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+      return execSyncUncommittedResult;
+    }
     return '';
   }),
   execFile: vi.fn((file: string, args: string[], _opts: any, cb: any) => {
     const cmd = [file, ...args].join(' ');
     gitAsyncCalls.push(cmd);
+    if (cmd.includes('git log --patch') && execAsyncDiffThrows) {
+      process.nextTick(() => cb(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }), { stdout: '', stderr: '' }));
+      return { on: vi.fn() };
+    }
     // Resolve on next microtask so the deferred promise settles
     const stdout = cmd.includes('git log --patch') ? execAsyncDiffContent : '';
     process.nextTick(() => cb(null, { stdout, stderr: '' }));
     return { on: vi.fn() };
   }),
+}));
+
+const captureWithContextMock = vi.fn();
+vi.mock('../server/instrument.js', () => ({
+  captureWithContext: (...args: any[]) => captureWithContextMock(...args),
+  Sentry: { captureException: vi.fn() },
 }));
 
 vi.mock('../server/orchestrator/WorkflowManager.js', () => ({
@@ -135,6 +159,11 @@ describe('AgentRunner: deferred diff capture', () => {
     execAsyncDiffContent = '';
     execSyncRevParseResult = '';
     execSyncUncommittedResult = '';
+    execSyncTagDeleteThrows = false;
+    execSyncRevParseThrows = false;
+    execSyncUncommittedThrows = false;
+    execAsyncDiffThrows = false;
+    captureWithContextMock.mockClear();
     vi.clearAllMocks();
   });
 
@@ -315,5 +344,210 @@ describe('AgentRunner: deferred diff capture', () => {
     // Stored diff should include the uncommitted snapshot
     const refreshedAgent = queries.getAgentById(agent.id);
     expect(refreshedAgent?.diff).toContain('uncommitted work');
+  });
+});
+
+// ── Benign-failure regressions ──────────────────────────────────────────────
+// Proves that expected git-command failures (ENOENT, EPIPE, missing worktree,
+// non-zero exit from benign cleanup) are swallowed by the best-effort helpers
+// and do not propagate through handleJobCompletion or captureWithContext.
+
+describe('AgentRunner: benign git failure regressions', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+    await resetManagerState();
+    gitSyncCalls.length = 0;
+    gitAsyncCalls.length = 0;
+    execAsyncDiffContent = '';
+    execSyncRevParseResult = '';
+    execSyncUncommittedResult = '';
+    execSyncTagDeleteThrows = false;
+    execSyncRevParseThrows = false;
+    execSyncUncommittedThrows = false;
+    execAsyncDiffThrows = false;
+    captureWithContextMock.mockClear();
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('checkpoint tag cleanup failure does not block completion or report to Sentry', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { handleJobCompletion } = await import('../server/orchestrator/AgentRunner.js');
+    const { onJobCompleted: wfCallback } = await import('../server/orchestrator/WorkflowManager.js');
+
+    execSyncTagDeleteThrows = true;
+
+    const job = await insertTestJob({ id: 'tag-fail-job', status: 'running' });
+    const agent = queries.insertAgent({ id: 'tag-fail-agent', job_id: job.id, status: 'running' });
+    queries.updateAgent(agent.id, { base_sha: 'abc000' });
+    queries.updateJobStatus(job.id, 'running');
+
+    // Should resolve without throwing
+    await handleJobCompletion(agent.id, job, 'done');
+
+    // Wait for any deferred work
+    const { _lastDeferredDiffPromise } = await import('../server/orchestrator/AgentRunner.js');
+    if (_lastDeferredDiffPromise) await _lastDeferredDiffPromise;
+
+    // Workflow callback still fired
+    expect(wfCallback).toHaveBeenCalledTimes(1);
+
+    // Tag-delete was attempted (call was recorded)
+    const tagCalls = gitSyncCalls.filter(c => c.includes('git tag -d'));
+    expect(tagCalls).toHaveLength(1);
+
+    // No Sentry capture for this benign failure
+    expect(captureWithContextMock).not.toHaveBeenCalled();
+  });
+
+  it('snapshot rev-parse failure yields no deferred diff but callbacks still fire', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { handleJobCompletion } = await import('../server/orchestrator/AgentRunner.js');
+    const { onJobCompleted: wfCallback } = await import('../server/orchestrator/WorkflowManager.js');
+
+    execSyncRevParseThrows = true;
+
+    const job = await insertTestJob({ id: 'revparse-fail-job', status: 'running' });
+    const agent = queries.insertAgent({ id: 'revparse-fail-agent', job_id: job.id, status: 'running' });
+    queries.updateAgent(agent.id, { base_sha: 'def000' });
+    queries.updateJobStatus(job.id, 'running');
+
+    await handleJobCompletion(agent.id, job, 'done');
+
+    const { _lastDeferredDiffPromise } = await import('../server/orchestrator/AgentRunner.js');
+    if (_lastDeferredDiffPromise) await _lastDeferredDiffPromise;
+
+    // Workflow callback still fired
+    expect(wfCallback).toHaveBeenCalledTimes(1);
+
+    // rev-parse was attempted but failed — returns empty string, so endSha is null
+    const revParseCalls = gitSyncCalls.filter(c => c.includes('git rev-parse HEAD'));
+    expect(revParseCalls).toHaveLength(1);
+
+    // No deferred diff should be started since endSha is null
+    const asyncDiffCalls = gitAsyncCalls.filter(c => c.includes('git log --patch'));
+    expect(asyncDiffCalls).toHaveLength(0);
+
+    // Agent should have no diff stored
+    const refreshedAgent = queries.getAgentById(agent.id);
+    expect(refreshedAgent?.diff).toBeFalsy();
+
+    // No Sentry capture
+    expect(captureWithContextMock).not.toHaveBeenCalled();
+  });
+
+  it('snapshot git diff HEAD failure yields empty uncommitted snapshot but deferred diff still runs', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { handleJobCompletion } = await import('../server/orchestrator/AgentRunner.js');
+    const { onJobCompleted: wfCallback } = await import('../server/orchestrator/WorkflowManager.js');
+
+    execSyncUncommittedThrows = true;
+    execAsyncDiffContent = 'diff --git a/committed.ts b/committed.ts\n+committed change';
+
+    const job = await insertTestJob({ id: 'uncommitted-fail-job', status: 'running' });
+    const agent = queries.insertAgent({ id: 'uncommitted-fail-agent', job_id: job.id, status: 'running' });
+    queries.updateAgent(agent.id, { base_sha: 'ghi000' });
+    queries.updateJobStatus(job.id, 'running');
+
+    await handleJobCompletion(agent.id, job, 'done');
+
+    const { _lastDeferredDiffPromise } = await import('../server/orchestrator/AgentRunner.js');
+    if (_lastDeferredDiffPromise) await _lastDeferredDiffPromise;
+
+    // Workflow callback still fired
+    expect(wfCallback).toHaveBeenCalledTimes(1);
+
+    // git diff HEAD was attempted (recorded) but threw
+    const uncommittedCalls = gitSyncCalls.filter(c => c.includes('git diff HEAD'));
+    expect(uncommittedCalls).toHaveLength(1);
+
+    // Deferred committed diff still ran via async path
+    const asyncDiffCalls = gitAsyncCalls.filter(c => c.includes('git log --patch'));
+    expect(asyncDiffCalls).toHaveLength(1);
+
+    // Stored diff contains committed changes only (no uncommitted since that threw)
+    const refreshedAgent = queries.getAgentById(agent.id);
+    expect(refreshedAgent?.diff).toContain('committed change');
+    expect(refreshedAgent?.diff).not.toContain('uncommitted');
+
+    // No Sentry capture
+    expect(captureWithContextMock).not.toHaveBeenCalled();
+  });
+
+  it('deferred async git log failure after callbacks fire still resolves cleanly', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { handleJobCompletion } = await import('../server/orchestrator/AgentRunner.js');
+    const { onJobCompleted: wfCallback } = await import('../server/orchestrator/WorkflowManager.js');
+
+    execAsyncDiffThrows = true;
+    execSyncUncommittedResult = 'diff --git a/dirty.ts b/dirty.ts\n+pending work';
+
+    const job = await insertTestJob({ id: 'async-fail-job', status: 'running' });
+    const agent = queries.insertAgent({ id: 'async-fail-agent', job_id: job.id, status: 'running' });
+    queries.updateAgent(agent.id, { base_sha: 'jkl000' });
+    queries.updateJobStatus(job.id, 'running');
+
+    await handleJobCompletion(agent.id, job, 'done');
+
+    // Workflow callback already fired (sync path)
+    expect(wfCallback).toHaveBeenCalledTimes(1);
+
+    // Wait for deferred diff to settle (it will fail internally)
+    const { _lastDeferredDiffPromise } = await import('../server/orchestrator/AgentRunner.js');
+    if (_lastDeferredDiffPromise) await _lastDeferredDiffPromise;
+
+    // Async git log was attempted but errored
+    const asyncDiffCalls = gitAsyncCalls.filter(c => c.includes('git log --patch'));
+    expect(asyncDiffCalls).toHaveLength(1);
+
+    // Stored diff should still contain the uncommitted snapshot
+    // (captured synchronously before the async failure)
+    const refreshedAgent = queries.getAgentById(agent.id);
+    expect(refreshedAgent?.diff).toContain('pending work');
+
+    // No Sentry capture — the error was swallowed by runBestEffortGitAsync
+    expect(captureWithContextMock).not.toHaveBeenCalled();
+  });
+
+  it('all git helpers failing simultaneously still resolves with callbacks firing', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { handleJobCompletion } = await import('../server/orchestrator/AgentRunner.js');
+    const { onJobCompleted: wfCallback } = await import('../server/orchestrator/WorkflowManager.js');
+    const { onJobCompleted: debateCallback } = await import('../server/orchestrator/DebateManager.js');
+
+    // Every git command will fail
+    execSyncTagDeleteThrows = true;
+    execSyncRevParseThrows = true;
+    execSyncUncommittedThrows = true;
+    execAsyncDiffThrows = true;
+
+    const job = await insertTestJob({ id: 'all-fail-job', status: 'running' });
+    const agent = queries.insertAgent({ id: 'all-fail-agent', job_id: job.id, status: 'running' });
+    queries.updateAgent(agent.id, { base_sha: 'zzz000' });
+    queries.updateJobStatus(job.id, 'running');
+
+    // Must not throw
+    await handleJobCompletion(agent.id, job, 'done');
+
+    const { _lastDeferredDiffPromise } = await import('../server/orchestrator/AgentRunner.js');
+    if (_lastDeferredDiffPromise) await _lastDeferredDiffPromise;
+
+    // Both callbacks still fired
+    expect(wfCallback).toHaveBeenCalledTimes(1);
+    expect(debateCallback).toHaveBeenCalledTimes(1);
+
+    // Job was finalized to 'done'
+    const finalJob = queries.getJobById(job.id);
+    expect(finalJob?.status).toBe('done');
+
+    // No diff stored (all git helpers returned empty)
+    const refreshedAgent = queries.getAgentById(agent.id);
+    expect(refreshedAgent?.diff).toBeFalsy();
+
+    // No Sentry capture for any of the benign failures
+    expect(captureWithContextMock).not.toHaveBeenCalled();
   });
 });
