@@ -5,6 +5,7 @@
  */
 
 import { execSync, execFileSync } from 'child_process';
+import { existsSync } from 'fs';
 import * as queries from '../db/queries.js';
 import type { Workflow } from '../../shared/types.js';
 import { errMsg, execErrMsg } from '../../shared/errors.js';
@@ -124,6 +125,11 @@ export function pushAndCreatePr(
   });
   const { worktree_path, worktree_branch, work_dir } = workflow;
   if (!worktree_path || !work_dir) return null;
+
+  if (!existsSync(worktree_path)) {
+    workflowLogger(workflow.id).warn({ worktreePath: worktree_path }, 'worktree directory missing — cannot create PR');
+    return null;
+  }
 
   if (worktree_branch) {
     const branchCheck = ensureWorktreeBranch(worktree_path, worktree_branch);
@@ -336,6 +342,14 @@ export async function reconcileBlockedPRs(
   for (const workflow of blocked) {
     if (!workflow.worktree_path || !workflow.worktree_branch || !workflow.work_dir) {
       workflowLogger(workflow.id).warn({ worktreePath: workflow.worktree_path ?? null, branch: workflow.worktree_branch ?? null, workDir: workflow.work_dir ?? null }, 'missing worktree fields — skipping PR reconciliation');
+      continue;
+    }
+
+    if (!existsSync(workflow.worktree_path)) {
+      updateAndEmit(workflow.id, {
+        blocked_reason: 'PR creation failed — worktree directory missing, cannot retry',
+      });
+      workflowLogger(workflow.id).warn({ worktreePath: workflow.worktree_path }, 'worktree directory missing — updated blocked reason');
       continue;
     }
 

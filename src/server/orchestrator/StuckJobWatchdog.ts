@@ -627,9 +627,17 @@ function check(): void {
       });
       getFileLockRegistry().releaseAll(agentId);
 
-      // Update the job's model and re-queue it
+      // Update the job's model and re-queue it via valid transition path
       queries.updateJobModel(job.id, fallbackModel);
-      queries.updateJobStatus(job.id, 'queued');
+      const freshJob = queries.getJobById(job.id);
+      if (freshJob && freshJob.status !== 'queued' && freshJob.status !== 'done' && freshJob.status !== 'cancelled') {
+        if (freshJob.status !== 'failed') {
+          queries.updateJobStatus(job.id, 'failed');
+        }
+        queries.updateJobStatus(job.id, 'queued');
+      } else {
+        continue;
+      }
       const updatedJob = queries.getJobById(job.id);
       if (updatedJob) socket.emitJobUpdate(updatedJob);
       const updatedAgent = queries.getAgentWithJob(agentId);

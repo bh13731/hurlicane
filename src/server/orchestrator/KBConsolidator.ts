@@ -103,7 +103,8 @@ Example: ["id-to-delete-1", "id-to-delete-2"]`;
 
     try {
       const idsToDelete = await callHaiku(apiKey, prompt);
-      const parsed = JSON.parse(idsToDelete);
+      let parsed: unknown;
+      try { parsed = JSON.parse(idsToDelete); } catch { parsed = []; }
       if (Array.isArray(parsed)) {
         for (const id of parsed) {
           if (typeof id === 'string' && batch.some(e => e.id === id)) {
@@ -153,7 +154,8 @@ Example: ["old-contradicted-id-1"]`;
 
     try {
       const idsToDelete = await callHaiku(apiKey, prompt);
-      const parsed = JSON.parse(idsToDelete);
+      let parsed: unknown;
+      try { parsed = JSON.parse(idsToDelete); } catch { parsed = []; }
       if (Array.isArray(parsed)) {
         for (const id of parsed) {
           if (typeof id === 'string' && batch.some(e => e.id === id)) {
