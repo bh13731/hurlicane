@@ -296,9 +296,39 @@ export function runAgent(options: RunOptions): void {
 
   // Write prompt to stdin for Claude (pipe mode). Codex reads from
   // file-backed stdin instead — no pipe write needed.
+  //
+  // The child may exit before consuming stdin (e.g. bad flags, instant
+  // crash), which destroys the pipe and surfaces EPIPE on write/end.
+  // Without explicit handling here, that error reaches the global
+  // uncaughtException handler and gets reported to Sentry as a bug —
+  // but it's a benign race between prompt delivery and child exit.
   if (!useCodex) {
-    child.stdin!.write(buildPrompt(job));
-    child.stdin!.end();
+    const stdin = child.stdin!;
+
+    // Catch async errors emitted on the stdin stream itself.
+    stdin.on('error', (err: NodeJS.ErrnoException) => {
+      const benign = err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED' || err.code === 'ECONNRESET';
+      if (benign) {
+        agentLogger(agentId).warn({ err: err.message, code: err.code }, 'stdin pipe closed (child exited early)');
+      } else {
+        agentLogger(agentId).error({ err }, 'unexpected stdin error');
+        captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' });
+      }
+    });
+
+    try {
+      stdin.write(buildPrompt(job));
+      stdin.end();
+    } catch (err: unknown) {
+      const errno = err as NodeJS.ErrnoException;
+      const benign = errno.code === 'EPIPE' || errno.code === 'ERR_STREAM_DESTROYED' || errno.code === 'ECONNRESET';
+      if (benign) {
+        agentLogger(agentId).warn({ err: errno.message, code: errno.code }, 'stdin write failed (child exited early)');
+      } else {
+        agentLogger(agentId).error({ err }, 'unexpected stdin write error');
+        captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' });
+      }
+    }
   }
 
   // Capture the current git HEAD SHA so we can diff after the agent finishes

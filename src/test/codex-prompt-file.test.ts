@@ -114,6 +114,7 @@ vi.mock('child_process', () => ({
       stdin: {
         write: vi.fn((data: string) => { stdinWrites.push(data); }),
         end: vi.fn(() => { stdinEnded = true; }),
+        on: vi.fn(),
       },
       on: vi.fn(),
       unref: vi.fn(),
