@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import React, { useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { Header } from './components/Header';
 import { AgentTerminal } from './components/AgentTerminal';
 import { WorkQueueSidebar } from './components/WorkQueueSidebar';
@@ -7,6 +7,7 @@ import { JobLineagePanel } from './components/JobLineagePanel';
 import { RunningJobsPanel } from './components/RunningJobsPanel';
 import { EyePanel } from './components/EyePanel';
 import { TaskFeed } from './components/TaskFeed';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Lazy-loaded modal components (only rendered when toggled open)
 const TaskForm = lazy(() => import('./components/TaskForm').then(m => ({ default: m.TaskForm })));
@@ -23,62 +24,61 @@ const DebateDetailModal = lazy(() => import('./components/DebateDetailModal').th
 const WorkflowDetailModal = lazy(() => import('./components/WorkflowDetailModal').then(m => ({ default: m.WorkflowDetailModal })));
 const KnowledgeBaseModal = lazy(() => import('./components/KnowledgeBaseModal').then(m => ({ default: m.KnowledgeBaseModal })));
 import { useSocket } from './hooks/useSocket';
-import { useAgents } from './hooks/useAgents';
-import { useJobs } from './hooks/useJobs';
-import { useLocks } from './hooks/useLocks';
-import { useProjects } from './hooks/useProjects';
-import { useDebates } from './hooks/useDebates';
-import { useWorkflows } from './hooks/useWorkflows';
 import { useToasts } from './hooks/useToasts';
 import { ToastFeed } from './components/ToastFeed';
+import { useAppStore } from './store';
 import socket from './socket';
-import type { AgentWithJob, AgentOutput, CreateTaskRequest, CreateTaskResponse, CreateDebateRequest, Debate, Workflow, Job, Template, Discussion, Proposal } from '@shared/types';
+import type { AgentWithJob, AgentOutput, CreateTaskRequest, CreateDebateRequest, Workflow, Job, Discussion, Proposal } from '@shared/types';
 
 export default function App() {
-  const { agents, setInitial: setInitialAgents, addAgent, updateAgent } = useAgents();
-  const { jobs, setInitial: setInitialJobs, addJob, updateJob } = useJobs();
-  const { locks, setInitial: setInitialLocks, addLock, removeLock } = useLocks();
-  const { projects, setInitial: setInitialProjects, addProject, updateProject, removeProject } = useProjects();
-  const { debates, setInitial: setInitialDebates, addDebate, updateDebate: updateDebateState } = useDebates();
-  const { workflows, setInitial: setInitialWorkflows, addWorkflow, updateWorkflow: updateWorkflowState } = useWorkflows();
+  // ── Store selectors ─────────────────────────────────────────────────────
+  const agents = useAppStore(s => s.agents);
+  const jobs = useAppStore(s => s.jobs);
+  const locks = useAppStore(s => s.locks);
+  const projects = useAppStore(s => s.projects);
+  const debates = useAppStore(s => s.debates);
+  const workflows = useAppStore(s => s.workflows);
+  const discussions = useAppStore(s => s.discussions);
+  const proposals = useAppStore(s => s.proposals);
+
+  const selectedAgent = useAppStore(s => s.selectedAgent);
+  const selectedDebate = useAppStore(s => s.selectedDebate);
+  const selectedWorkflow = useAppStore(s => s.selectedWorkflow);
+  const activeProjectId = useAppStore(s => s.activeProjectId);
+  const leftTab = useAppStore(s => s.leftTab);
+
+  const showTaskForm = useAppStore(s => s.showTaskForm);
+  const showTemplates = useAppStore(s => s.showTemplates);
+  const showBatchTemplates = useAppStore(s => s.showBatchTemplates);
+  const showUsage = useAppStore(s => s.showUsage);
+  const showSearch = useAppStore(s => s.showSearch);
+  const showGantt = useAppStore(s => s.showGantt);
+  const showDag = useAppStore(s => s.showDag);
+  const showProjects = useAppStore(s => s.showProjects);
+  const showSettings = useAppStore(s => s.showSettings);
+  const showDebateForm = useAppStore(s => s.showDebateForm);
+  const showKnowledgeBase = useAppStore(s => s.showKnowledgeBase);
+  const showEye = useAppStore(s => s.showEye);
+  const eyeEnabled = useAppStore(s => s.eyeEnabled);
+  const todayClaudeCost = useAppStore(s => s.todayClaudeCost);
+  const todayCodexCost = useAppStore(s => s.todayCodexCost);
+  const costAutoUpdate = useAppStore(s => s.costAutoUpdate);
+  const dashboardNow = useAppStore(s => s.dashboardNow);
+  const ptyIdleAgents = useAppStore(s => s.ptyIdleAgents);
+
+  const archivedJobs = useAppStore(s => s.archivedJobs);
+  const archivedAgents = useAppStore(s => s.archivedAgents);
+  const archivedTotal = useAppStore(s => s.archivedTotal);
+  const archivedLoading = useAppStore(s => s.archivedLoading);
+
+  // ── Store actions (accessed via getState to avoid re-render deps) ───────
+  const store = useAppStore;
+
   const { toasts, dismiss: dismissToast } = useToasts();
-  const [_templates, setTemplates] = useState<Template[]>([]);
-
-  const [selectedAgent, setSelectedAgent] = useState<AgentWithJob | null>(null);
-  const [showTaskForm, setShowTaskForm] = useState(false);
-  const [showTemplates, setShowTemplates] = useState(false);
-  const [showUsage, setShowUsage] = useState(false);
-  const [showSearch, setShowSearch] = useState(false);
-  const [showGantt, setShowGantt] = useState(false);
-  const [showDag, setShowDag] = useState(false);
-  const [showProjects, setShowProjects] = useState(false);
-  const [showBatchTemplates, setShowBatchTemplates] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showDebateForm, setShowDebateForm] = useState(false);
-  const [_debateFormInitial, setDebateFormInitial] = useState<Partial<CreateDebateRequest> | undefined>();
-  const [selectedDebate, setSelectedDebate] = useState<Debate | null>(null);
-  const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
-  const [showKnowledgeBase, setShowKnowledgeBase] = useState(false);
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [archivedJobs, setArchivedJobs] = useState<Job[]>([]);
-  const [archivedAgents, setArchivedAgents] = useState<AgentWithJob[]>([]);
-  const [archivedTotal, setArchivedTotal] = useState(0);
-  const [archivedLoading, setArchivedLoading] = useState(false);
-  const [leftTab, setLeftTab] = useState<'feed' | 'lineage'>('feed');
-
-  const [todayClaudeCost, setTodayClaudeCost] = useState<number | null>(null);
-  const [todayCodexCost, setTodayCodexCost] = useState<number | null>(null);
-  const [costAutoUpdate, setCostAutoUpdate] = useState(false);
-  const [discussions, setDiscussions] = useState<Discussion[]>([]);
-  const [proposals, setProposals] = useState<Proposal[]>([]);
-  const [showEye, setShowEye] = useState(false);
-  const [eyeEnabled, setEyeEnabled] = useState(false);
-  const [dashboardNow, setDashboardNow] = useState(Date.now());
   const fetchingCost = useRef(false);
 
   // Track when PTY data was last received per agent (for idle detection)
   const lastPtyActivity = useRef<Map<string, number>>(new Map());
-  const [ptyIdleAgents, setPtyIdleAgents] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const handlePtyData = ({ agent_id }: { agent_id: string }) => {
@@ -91,11 +91,11 @@ export default function App() {
   useEffect(() => {
     const hasLiveWorkflows = workflows.some(workflow => workflow.status === 'running');
     if (!hasLiveWorkflows) return;
-    const id = setInterval(() => setDashboardNow(Date.now()), 1000);
+    const id = setInterval(() => store.getState().setDashboardNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [workflows]);
 
-  // Poll every second to compute which interactive running agents are idle (no pty output for 3s)
+  // Poll every second to compute which interactive running agents are idle
   useEffect(() => {
     const id = setInterval(() => {
       const now = Date.now();
@@ -108,8 +108,7 @@ export default function App() {
           }
         }
       }
-      setPtyIdleAgents(prev => {
-        // Only update if the set contents changed
+      store.getState().setPtyIdleAgents(prev => {
         if (prev.size === idleSet.size && [...idleSet].every(id => prev.has(id))) return prev;
         return idleSet;
       });
@@ -128,83 +127,74 @@ export default function App() {
       const data = await res.json();
       const claudeCost = data.totals?.totalCost ?? data.daily?.[0]?.totalCost ?? null;
       const codexCost = data.codex?.totals?.costUSD ?? data.codex?.daily?.[0]?.costUSD ?? null;
-      setTodayClaudeCost(claudeCost);
-      setTodayCodexCost(codexCost);
+      store.getState().setTodayClaudeCost(claudeCost);
+      store.getState().setTodayCodexCost(codexCost);
     } catch {
-      // ignore — don't show broken state
+      // ignore
     } finally {
       fetchingCost.current = false;
     }
   }, []);
 
-  // Fetch today's cost on mount so the spend tracker is always visible
   useEffect(() => { fetchTodayCost(); }, [fetchTodayCost]);
 
-  // When an agent updates, sync the selected agent if it's open; refresh cost when one finishes.
-  // Also sync jobs state from the embedded job, since job:update events can be missed when
-  // agent events arrive out-of-order or a transition happens entirely within the agent path.
   const handleAgentUpdate = useCallback((agent: AgentWithJob) => {
-    updateAgent(agent);
-    updateJob(agent.job);
-    setSelectedAgent(prev => prev?.id === agent.id ? agent : prev);
-    if (costAutoUpdate && (agent.status === 'done' || agent.status === 'failed')) {
+    const s = store.getState();
+    s.updateAgent(agent);
+    s.updateJob(agent.job);
+    if (s.costAutoUpdate && (agent.status === 'done' || agent.status === 'failed')) {
       fetchTodayCost();
     }
-  }, [updateAgent, updateJob, fetchTodayCost, costAutoUpdate]);
+  }, [fetchTodayCost]);
 
   const handleAgentNew = useCallback((agent: AgentWithJob) => {
-    addAgent(agent);
-    updateJob(agent.job);
-  }, [addAgent, updateJob]);
+    const s = store.getState();
+    s.addAgent(agent);
+    s.updateJob(agent.job);
+  }, []);
 
   useSocket({
     onSnapshot: (snapshot) => {
-      setInitialJobs(snapshot.jobs);
-      setInitialAgents(snapshot.agents);
-      setInitialLocks(snapshot.locks);
-      setTemplates(snapshot.templates ?? []);
-      setInitialProjects(snapshot.projects ?? []);
-      setInitialDebates(snapshot.debates ?? []);
-      setInitialWorkflows(snapshot.workflows ?? []);
-      setDiscussions(snapshot.discussions ?? []);
-      setProposals(snapshot.proposals ?? []);
+      const s = store.getState();
+      s.setJobs(snapshot.jobs);
+      s.setAgents(snapshot.agents);
+      s.setLocks(snapshot.locks);
+      s.setTemplates(snapshot.templates ?? []);
+      s.setProjects(snapshot.projects ?? []);
+      s.setDebates(snapshot.debates ?? []);
+      s.setWorkflows(snapshot.workflows ?? []);
+      s.setDiscussions(snapshot.discussions ?? []);
+      s.setProposals(snapshot.proposals ?? []);
     },
     onAgentNew: handleAgentNew,
     onAgentUpdate: handleAgentUpdate,
-    onAgentOutput: (_agentId: string, _line: AgentOutput) => {
-      // Output is rendered live in AgentTerminal via socket listener
-    },
-    onQuestionNew: (_question) => {
-      // Question state is on the agent; update will come via agent:update
-    },
-    onQuestionAnswered: (_question) => {
-      // Same — agent update will follow
-    },
-    onLockAcquired: addLock,
-    onLockReleased: (lockId) => removeLock(lockId),
-    onJobNew: addJob,
-    onJobUpdate: updateJob,
-    onProjectNew: addProject,
-    onDebateNew: addDebate,
-    onDebateUpdate: updateDebateState,
-    onWorkflowNew: addWorkflow,
-    onWorkflowUpdate: updateWorkflowState,
-    onDiscussionNew: (discussion: Discussion) => setDiscussions(prev => [discussion, ...prev.filter(d => d.id !== discussion.id)]),
-    onDiscussionUpdate: (discussion: Discussion) => setDiscussions(prev => prev.map(d => d.id === discussion.id ? discussion : d)),
-    onProposalNew: (proposal: Proposal) => setProposals(prev => [proposal, ...prev.filter(p => p.id !== proposal.id)]),
-    onProposalUpdate: (proposal: Proposal) => setProposals(prev => prev.map(p => p.id === proposal.id ? proposal : p)),
+    onAgentOutput: (_agentId: string, _line: AgentOutput) => {},
+    onQuestionNew: (_question) => {},
+    onQuestionAnswered: (_question) => {},
+    onLockAcquired: (lock) => store.getState().addLock(lock),
+    onLockReleased: (lockId) => store.getState().removeLock(lockId),
+    onJobNew: (job) => store.getState().addJob(job),
+    onJobUpdate: (job) => store.getState().updateJob(job),
+    onProjectNew: (project) => store.getState().addProject(project),
+    onDebateNew: (debate) => store.getState().addDebate(debate),
+    onDebateUpdate: (debate) => store.getState().updateDebate(debate),
+    onWorkflowNew: (workflow) => store.getState().addWorkflow(workflow),
+    onWorkflowUpdate: (workflow) => store.getState().updateWorkflow(workflow),
+    onDiscussionNew: (discussion: Discussion) => store.getState().addOrUpdateDiscussion(discussion),
+    onDiscussionUpdate: (discussion: Discussion) => store.getState().addOrUpdateDiscussion(discussion),
+    onProposalNew: (proposal: Proposal) => store.getState().addOrUpdateProposal(proposal),
+    onProposalUpdate: (proposal: Proposal) => store.getState().addOrUpdateProposal(proposal),
   });
 
   // Fetch eyeEnabled from settings on mount
   useEffect(() => {
     fetch('/api/settings')
       .then(r => r.ok ? r.json() : {})
-      .then((cfg: { eyeEnabled?: boolean }) => setEyeEnabled(cfg.eyeEnabled === true))
+      .then((cfg: { eyeEnabled?: boolean }) => store.getState().setEyeEnabled(cfg.eyeEnabled === true))
       .catch(() => {});
   }, []);
 
-  // Fetch on mount, retry once after 15s (handles ccusage first-install delay on server startup),
-  // then every 60s (if auto-update enabled)
+  // Cost polling
   useEffect(() => {
     fetchTodayCost();
     const retryId = setTimeout(fetchTodayCost, 15_000);
@@ -213,48 +203,70 @@ export default function App() {
     return () => { clearTimeout(retryId); clearInterval(id); };
   }, [fetchTodayCost, costAutoUpdate]);
 
-  // ─── Load archived jobs when the archived view is active ──────────────────
+  // Periodic lock resync — poll /api/locks every 3s so the lock list stays
+  // current even when socket events are missed (e.g. brief reconnect in dev).
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch('/api/locks');
+        if (res.ok) store.getState().setLocks(await res.json());
+      } catch {
+        // ignore — leave existing state intact on network error
+      }
+    }, 3_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Safety net: purge any locks whose TTL has expired from local state.
+  useEffect(() => {
+    const id = setInterval(() => store.getState().purgeExpiredLocks(), 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── Load archived jobs ────────────────────────────────────────────────────
   const ARCHIVED_PAGE_SIZE = 50;
   useEffect(() => {
     if (activeProjectId !== '__archived__') return;
-    setArchivedJobs([]);
-    setArchivedAgents([]);
-    setArchivedTotal(0);
+    const s = store.getState();
+    s.setArchivedJobs([]);
+    s.setArchivedAgents([]);
+    s.setArchivedTotal(0);
     fetch(`/api/jobs?archived=1&limit=${ARCHIVED_PAGE_SIZE}&offset=0`)
       .then(r => r.ok ? r.json() : { jobs: [], total: 0, agents: [] })
       .then((data: { jobs: Job[]; total: number; agents?: AgentWithJob[] }) => {
-        setArchivedJobs(data.jobs);
-        setArchivedAgents(data.agents ?? []);
-        setArchivedTotal(data.total);
+        const s2 = store.getState();
+        s2.setArchivedJobs(data.jobs);
+        s2.setArchivedAgents(data.agents ?? []);
+        s2.setArchivedTotal(data.total);
       })
       .catch(() => {});
   }, [activeProjectId]);
 
   const loadMoreArchived = useCallback(async () => {
-    setArchivedLoading(true);
+    store.getState().setArchivedLoading(true);
     try {
-      const res = await fetch(`/api/jobs?archived=1&limit=${ARCHIVED_PAGE_SIZE}&offset=${archivedJobs.length}`);
+      const currentLen = store.getState().archivedJobs.length;
+      const res = await fetch(`/api/jobs?archived=1&limit=${ARCHIVED_PAGE_SIZE}&offset=${currentLen}`);
       if (!res.ok) return;
       const data: { jobs: Job[]; total: number; agents?: AgentWithJob[] } = await res.json();
-      setArchivedJobs(prev => [...prev, ...data.jobs]);
-      setArchivedAgents(prev => [...prev, ...(data.agents ?? [])]);
-      setArchivedTotal(data.total);
+      const s = store.getState();
+      s.appendArchivedJobs(data.jobs);
+      s.appendArchivedAgents(data.agents ?? []);
+      s.setArchivedTotal(data.total);
     } catch { /* ignore */ } finally {
-      setArchivedLoading(false);
+      store.getState().setArchivedLoading(false);
     }
-  }, [archivedJobs.length]);
+  }, []);
 
-  // ─── Eye job detection ──────────────────────────────────────────────────
+  // ── Filtering helpers ─────────────────────────────────────────────────────
   const isEyeJob = useCallback((j: Job) => {
     try { return j.context != null && JSON.parse(j.context).eye === true; } catch { return false; }
   }, []);
 
-  // ─── Project-scoped filtering ──────────────────────────────────────────────
   const filteredJobs = useMemo(() => {
     if (activeProjectId === '__archived__') return archivedJobs.filter(j => !isEyeJob(j));
     const activeJobs = jobs.filter(j => !j.archived_at && !isEyeJob(j));
     if (activeProjectId) return activeJobs.filter(j => j.project_id === activeProjectId);
-    // No active project means the global home view, not "only unscoped jobs".
     return activeJobs;
   }, [jobs, activeProjectId, archivedJobs, isEyeJob]);
 
@@ -263,21 +275,17 @@ export default function App() {
   const filteredAgents = useMemo(() => {
     if (activeProjectId === '__archived__') return archivedAgents.filter(a => !isEyeJob(a.job));
     const matching = agents.filter(a => filteredJobIds.has(a.job_id));
-    // In active view, only show the most recent agent per job (hides superseded/restarted agents)
     const latestByJob = new Map<string, AgentWithJob>();
     for (const a of matching) {
       const existing = latestByJob.get(a.job_id);
-      if (!existing || a.started_at > existing.started_at) {
-        latestByJob.set(a.job_id, a);
-      }
+      if (!existing || a.started_at > existing.started_at) latestByJob.set(a.job_id, a);
     }
     return [...latestByJob.values()];
   }, [agents, filteredJobIds, activeProjectId, archivedAgents, isEyeJob]);
 
   const filteredWorkflows = useMemo(() => {
     if (activeProjectId === '__archived__') return [] as Workflow[];
-    if (activeProjectId) return workflows.filter(workflow => workflow.project_id === activeProjectId);
-    // Autonomous runs are project-backed by design, so the global view should show all of them.
+    if (activeProjectId) return workflows.filter(w => w.project_id === activeProjectId);
     return workflows;
   }, [workflows, activeProjectId]);
 
@@ -287,6 +295,7 @@ export default function App() {
     return projects.find(p => p.id === activeProjectId)?.name ?? null;
   }, [projects, activeProjectId]);
 
+  // ── Handlers ──────────────────────────────────────────────────────────────
   const handleCreateProject = useCallback(async (name: string, description: string) => {
     try {
       const res = await fetch('/api/projects', {
@@ -296,19 +305,19 @@ export default function App() {
       });
       if (!res.ok) return;
       const project = await res.json();
-      addProject(project);
-      setActiveProjectId(project.id);
+      const s = store.getState();
+      s.addProject(project);
+      s.setActiveProjectId(project.id);
     } catch { /* ignore */ }
-  }, [addProject]);
+  }, []);
 
   const handleDeleteProject = useCallback(async (id: string) => {
     try {
       const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
       if (!res.ok) return;
-      removeProject(id);
-      if (activeProjectId === id) setActiveProjectId(null);
+      store.getState().removeProject(id);
     } catch { /* ignore */ }
-  }, [removeProject, activeProjectId]);
+  }, []);
 
   const handleRenameProject = useCallback(async (id: string, newName: string) => {
     try {
@@ -318,10 +327,9 @@ export default function App() {
         body: JSON.stringify({ name: newName }),
       });
       if (!res.ok) return;
-      const updated = await res.json();
-      updateProject(updated);
+      store.getState().updateProject(await res.json());
     } catch { /* ignore */ }
-  }, [updateProject]);
+  }, []);
 
   const handleRenameJob = useCallback(async (jobId: string, newTitle: string) => {
     try {
@@ -331,19 +339,14 @@ export default function App() {
         body: JSON.stringify({ title: newTitle }),
       });
       if (!res.ok) return;
-      const updated = await res.json();
-      updateJob(updated);
-      // Keep selectedAgent in sync
-      setSelectedAgent(prev => prev && prev.job.id === jobId ? { ...prev, job: updated } : prev);
+      store.getState().updateJob(await res.json());
     } catch { /* ignore */ }
-  }, [updateJob]);
+  }, []);
 
   const handleSubmitTask = useCallback(async (req: CreateTaskRequest) => {
-    // Inject active project for job-routed tasks (workflow creates its own project)
+    const currentProjectId = store.getState().activeProjectId;
     const isJobRoute = !req.iterations || req.iterations <= 1;
-    const payload = activeProjectId && isJobRoute
-      ? { ...req, projectId: activeProjectId }
-      : req;
+    const payload = currentProjectId && isJobRoute ? { ...req, projectId: currentProjectId } : req;
     const res = await fetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -353,12 +356,13 @@ export default function App() {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error ?? 'Failed to create task');
     }
-    const data: CreateTaskResponse = await res.json();
+    const data = await res.json();
     if (data.task_type === 'workflow' && data.project) {
-      addProject(data.project);
-      setActiveProjectId(data.project.id);
+      const s = store.getState();
+      s.addProject(data.project);
+      s.setActiveProjectId(data.project.id);
     }
-  }, [activeProjectId, addProject]);
+  }, []);
 
   const handleSubmitDebate = useCallback(async (req: CreateDebateRequest) => {
     const res = await fetch('/api/debates', {
@@ -371,24 +375,24 @@ export default function App() {
       throw new Error(err.error ?? 'Failed to create debate');
     }
     const data = await res.json();
-    // Add the project created for this debate and switch to it
-    addProject(data.project);
-    setActiveProjectId(data.project.id);
-  }, [addProject]);
+    const s = store.getState();
+    s.addProject(data.project);
+    s.setActiveProjectId(data.project.id);
+  }, []);
 
   const handleSelectAgent = useCallback((agent: AgentWithJob) => {
-    setSelectedAgent(agent);
-    const canonicalJob = jobs.find(j => j.id === agent.job_id);
-    setActiveProjectId(canonicalJob?.project_id ?? agent.job.project_id ?? null);
-  }, [jobs]);
+    const s = store.getState();
+    s.setSelectedAgent(agent);
+    const canonicalJob = s.jobs.find(j => j.id === agent.job_id);
+    s.setActiveProjectId(canonicalJob?.project_id ?? agent.job.project_id ?? null);
+  }, []);
 
   const handleSelectJob = useCallback((job: Job) => {
-    const agent = agents.find(a => a.job_id === job.id);
-    if (agent) {
-      setSelectedAgent(agent);
-    }
-    setActiveProjectId(job.project_id ?? null);
-  }, [agents]);
+    const s = store.getState();
+    const agent = s.agents.find(a => a.job_id === job.id);
+    if (agent) s.setSelectedAgent(agent);
+    s.setActiveProjectId(job.project_id ?? null);
+  }, []);
 
   const handleCancelJob = useCallback(async (job: Job) => {
     await fetch(`/api/jobs/${job.id}`, { method: 'DELETE' });
@@ -402,209 +406,179 @@ export default function App() {
     await fetch(`/api/jobs/${job.id}/archive`, { method: 'POST' });
   }, []);
 
-  const handleArchiveAll = useCallback(async (jobs: Job[]) => {
-    await Promise.all(jobs.map(j => fetch(`/api/jobs/${j.id}/archive`, { method: 'POST' })));
+  const handleArchiveAll = useCallback(async (jobsToArchive: Job[]) => {
+    await Promise.all(jobsToArchive.map(j => fetch(`/api/jobs/${j.id}/archive`, { method: 'POST' })));
   }, []);
 
   const handleCloseTerminal = useCallback(() => {
-    setSelectedAgent(null);
-    setLeftTab('feed');
+    store.getState().closeTerminal();
   }, []);
 
   return (
     <div className="app">
-      <Header onNewTask={() => setShowTaskForm(true)} onTemplates={() => setShowTemplates(true)} onBatchTemplates={() => setShowBatchTemplates(true)} onUsage={() => setShowUsage(true)} onSearch={() => setShowSearch(true)} onTimeline={() => setShowGantt(true)} onDag={() => setShowDag(true)} onProjects={() => setShowProjects(true)} onSettings={() => setShowSettings(true)} onDebate={() => { setDebateFormInitial(undefined); setShowDebateForm(true); }} onDebates={debates.length > 0 ? debates : undefined} onSelectDebate={(d) => setSelectedDebate(d)} onWorkflows={workflows.length > 0 ? workflows : undefined} onSelectWorkflow={(w) => setSelectedWorkflow(w)} onKnowledgeBase={() => setShowKnowledgeBase(true)} onEye={() => setShowEye(v => !v)} eyeEnabled={eyeEnabled} eyeActive={showEye} eyeBadgeCount={showEye ? 0 : discussions.filter(d => d.needs_reply).length + proposals.filter(p => p.needs_reply).length} onHome={() => { setSelectedAgent(null); setActiveProjectId(null); setShowTaskForm(false); setShowTemplates(false); setShowBatchTemplates(false); setShowUsage(false); setShowSearch(false); setShowGantt(false); setShowDag(false); setShowProjects(false); setShowSettings(false); setShowDebateForm(false); setShowKnowledgeBase(false); setShowEye(false); }} currentProjectName={activeProjectName} onClearProject={() => setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => setCostAutoUpdate(v => !v)} />
+      <Header onNewTask={() => store.getState().setShowTaskForm(true)} onTemplates={() => store.getState().setShowTemplates(true)} onBatchTemplates={() => store.getState().setShowBatchTemplates(true)} onUsage={() => store.getState().setShowUsage(true)} onSearch={() => store.getState().setShowSearch(true)} onTimeline={() => store.getState().setShowGantt(true)} onDag={() => store.getState().setShowDag(true)} onProjects={() => store.getState().setShowProjects(true)} onSettings={() => store.getState().setShowSettings(true)} onDebate={() => { store.getState().setDebateFormInitial(undefined); store.getState().setShowDebateForm(true); }} onDebates={debates.length > 0 ? debates : undefined} onSelectDebate={(d) => store.getState().setSelectedDebate(d)} onWorkflows={workflows.length > 0 ? workflows : undefined} onSelectWorkflow={(w) => store.getState().setSelectedWorkflow(w)} onKnowledgeBase={() => store.getState().setShowKnowledgeBase(true)} onEye={() => store.getState().setShowEye(v => !v)} eyeEnabled={eyeEnabled} eyeActive={showEye} eyeBadgeCount={showEye ? 0 : discussions.filter(d => d.needs_reply).length + proposals.filter(p => p.needs_reply).length} onHome={() => store.getState().resetToHome()} currentProjectName={activeProjectName} onClearProject={() => store.getState().setActiveProjectId(null)} todayClaudeCost={todayClaudeCost ?? undefined} todayCodexCost={todayCodexCost ?? undefined} costAutoUpdate={costAutoUpdate} onToggleCostAutoUpdate={() => store.getState().setCostAutoUpdate(v => !v)} />
 
       <div className="main-layout">
-        <div className={`left-sidebar-stack ${leftTab === 'lineage' && selectedAgent ? '' : 'left-sidebar-stack--narrow'}`}>
-          {selectedAgent && (
-            <div className="left-sidebar-tabs">
-              <button
-                className={`left-sidebar-tab ${leftTab === 'feed' ? 'left-sidebar-tab--active' : ''}`}
-                onClick={() => setLeftTab('feed')}
-              >Feed</button>
-              <button
-                className={`left-sidebar-tab ${leftTab === 'lineage' ? 'left-sidebar-tab--active' : ''}`}
-                onClick={() => setLeftTab('lineage')}
-              >Lineage</button>
-            </div>
-          )}
-          {leftTab === 'lineage' && selectedAgent ? (
-            <JobLineagePanel
-              selectedAgent={selectedAgent}
-              allAgents={agents}
-              onSelectAgent={handleSelectAgent}
-            />
-          ) : (
-            <WorkQueueSidebar jobs={jobs} projects={projects} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} onArchiveJob={handleArchiveJob} waitingJobIds={new Set(agents.filter(a => a.status === 'waiting_user' || ptyIdleAgents.has(a.id)).map(a => a.job_id))} />
-          )}
-          <RunningJobsPanel
-            agents={agents}
-            projects={projects}
-            onSelectAgent={handleSelectAgent}
-            ptyIdleAgentIds={ptyIdleAgents}
-          />
-        </div>
-
-        <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
-          <section className="dashboard-home-section">
-            <div className="dashboard-home-section-header">
-              <div>
-                <h2 className="dashboard-home-section-title">Tasks</h2>
-                <p className="dashboard-home-section-subtitle">All workflows and standalone jobs, grouped by urgency.</p>
+        <ErrorBoundary section="sidebar">
+          <div className={`left-sidebar-stack ${leftTab === 'lineage' && selectedAgent ? '' : 'left-sidebar-stack--narrow'}`}>
+            {selectedAgent && (
+              <div className="left-sidebar-tabs">
+                <button
+                  className={`left-sidebar-tab ${leftTab === 'feed' ? 'left-sidebar-tab--active' : ''}`}
+                  onClick={() => store.getState().setLeftTab('feed')}
+                >Feed</button>
+                <button
+                  className={`left-sidebar-tab ${leftTab === 'lineage' ? 'left-sidebar-tab--active' : ''}`}
+                  onClick={() => store.getState().setLeftTab('lineage')}
+                >Lineage</button>
               </div>
-            </div>
-            <TaskFeed
-              workflows={filteredWorkflows}
-              agents={filteredAgents}
-              allAgents={agents}
-              jobs={filteredJobs}
-              queuedJobs={filteredJobs.filter(j => j.status === 'queued')}
-              now={dashboardNow}
-              onSelectAgent={handleSelectAgent}
-              onSelectWorkflow={setSelectedWorkflow}
-              onArchiveJob={handleArchiveJob}
-              onArchiveAll={handleArchiveAll}
-              selectedAgentId={selectedAgent?.id ?? null}
-              ptyIdleAgentIds={ptyIdleAgents}
-              isArchived={activeProjectId === '__archived__'}
-            />
-          </section>
-          {activeProjectId === '__archived__' && archivedJobs.length < archivedTotal && (
-            <div style={{ textAlign: 'center', padding: '12px' }}>
-              <button className="btn btn-secondary" onClick={loadMoreArchived} disabled={archivedLoading}>
-                {archivedLoading ? 'Loading…' : `Load more (${archivedJobs.length} of ${archivedTotal})`}
-              </button>
-            </div>
-          )}
-        </main>
+            )}
+            {leftTab === 'lineage' && selectedAgent ? (
+              <JobLineagePanel selectedAgent={selectedAgent} allAgents={agents} onSelectAgent={handleSelectAgent} />
+            ) : (
+              <WorkQueueSidebar jobs={jobs} projects={projects} onSelectJob={handleSelectJob} onCancelJob={handleCancelJob} onRunJobNow={handleRunJobNow} onArchiveJob={handleArchiveJob} waitingJobIds={new Set(agents.filter(a => a.status === 'waiting_user' || ptyIdleAgents.has(a.id)).map(a => a.job_id))} />
+            )}
+            <RunningJobsPanel agents={agents} projects={projects} onSelectAgent={handleSelectAgent} ptyIdleAgentIds={ptyIdleAgents} />
+          </div>
+        </ErrorBoundary>
 
-        {selectedAgent ? (
-          <AgentTerminal
-            agent={selectedAgent}
-            onClose={handleCloseTerminal}
-            onContinued={handleSelectAgent}
-            onRenameJob={handleRenameJob}
-          />
-        ) : (
-          <FileLockMap locks={locks} />
-        )}
+        <ErrorBoundary section="task feed">
+          <main className={`agent-main ${selectedAgent ? 'agent-main-split' : ''}`}>
+            <section className="dashboard-home-section">
+              <div className="dashboard-home-section-header">
+                <div>
+                  <h2 className="dashboard-home-section-title">Tasks</h2>
+                  <p className="dashboard-home-section-subtitle">All workflows and standalone jobs, grouped by urgency.</p>
+                </div>
+              </div>
+              <TaskFeed
+                workflows={filteredWorkflows}
+                agents={filteredAgents}
+                allAgents={agents}
+                jobs={filteredJobs}
+                queuedJobs={filteredJobs.filter(j => j.status === 'queued')}
+                now={dashboardNow}
+                onSelectAgent={handleSelectAgent}
+                onSelectWorkflow={store.getState().setSelectedWorkflow}
+                onArchiveJob={handleArchiveJob}
+                onArchiveAll={handleArchiveAll}
+                selectedAgentId={selectedAgent?.id ?? null}
+                ptyIdleAgentIds={ptyIdleAgents}
+                isArchived={activeProjectId === '__archived__'}
+              />
+            </section>
+            {activeProjectId === '__archived__' && archivedJobs.length < archivedTotal && (
+              <div style={{ textAlign: 'center', padding: '12px' }}>
+                <button className="btn btn-secondary" onClick={loadMoreArchived} disabled={archivedLoading}>
+                  {archivedLoading ? 'Loading\u2026' : `Load more (${archivedJobs.length} of ${archivedTotal})`}
+                </button>
+              </div>
+            )}
+          </main>
+        </ErrorBoundary>
+
+        <ErrorBoundary section="terminal">
+          {selectedAgent ? (
+            <AgentTerminal agent={selectedAgent} onClose={handleCloseTerminal} onContinued={handleSelectAgent} onRenameJob={handleRenameJob} />
+          ) : (
+            <FileLockMap locks={locks} />
+          )}
+        </ErrorBoundary>
       </div>
 
       <Suspense fallback={null}>
       {showTaskForm && (
-        <TaskForm
-          onSubmit={handleSubmitTask}
-          onClose={() => setShowTaskForm(false)}
-          availableJobs={jobs}
-        />
+        <TaskForm onSubmit={handleSubmitTask} onClose={() => store.getState().setShowTaskForm(false)} availableJobs={jobs} />
       )}
-
       {showTemplates && (
-        <TemplateManager onClose={() => setShowTemplates(false)} />
+        <TemplateManager onClose={() => store.getState().setShowTemplates(false)} />
       )}
-
       {showBatchTemplates && (
         <BatchTemplateManager
-          onClose={() => setShowBatchTemplates(false)}
+          onClose={() => store.getState().setShowBatchTemplates(false)}
           onRun={(project) => {
-            setShowBatchTemplates(false);
-            addProject(project);
-            setActiveProjectId(project.id);
+            const s = store.getState();
+            s.setShowBatchTemplates(false);
+            s.addProject(project);
+            s.setActiveProjectId(project.id);
           }}
         />
       )}
-
       {showUsage && (
-        <UsageModal onClose={() => setShowUsage(false)} />
+        <UsageModal onClose={() => store.getState().setShowUsage(false)} />
       )}
-
       {showSearch && (
         <SearchModal
-          onClose={() => setShowSearch(false)}
+          onClose={() => store.getState().setShowSearch(false)}
           onSelectAgent={(agentId) => {
-            const agent = agents.find(a => a.id === agentId);
-            if (agent) { handleSelectAgent(agent); }
-            setShowSearch(false);
+            const agent = store.getState().agents.find(a => a.id === agentId);
+            if (agent) handleSelectAgent(agent);
+            store.getState().setShowSearch(false);
           }}
         />
       )}
-
       {showGantt && (
         <GanttModal
           jobs={filteredJobs}
           agents={filteredAgents}
-          onClose={() => setShowGantt(false)}
-          onSelectAgent={(agent) => {
-            handleSelectAgent(agent);
-            setShowGantt(false);
-          }}
+          onClose={() => store.getState().setShowGantt(false)}
+          onSelectAgent={(agent) => { handleSelectAgent(agent); store.getState().setShowGantt(false); }}
         />
       )}
-
       {showDag && (
         <DAGModal
           jobs={filteredJobs}
           agents={filteredAgents}
-          onClose={() => setShowDag(false)}
-          onSelectAgent={(agent) => {
-            handleSelectAgent(agent);
-            setShowDag(false);
-          }}
+          onClose={() => store.getState().setShowDag(false)}
+          onSelectAgent={(agent) => { handleSelectAgent(agent); store.getState().setShowDag(false); }}
         />
       )}
-
       {showSettings && (
-        <SettingsModal onClose={() => setShowSettings(false)} eyeEnabled={eyeEnabled} onEyeEnabledChange={setEyeEnabled} />
+        <SettingsModal onClose={() => store.getState().setShowSettings(false)} eyeEnabled={eyeEnabled} onEyeEnabledChange={store.getState().setEyeEnabled} />
       )}
-
       {selectedWorkflow && (
         <WorkflowDetailModal
           workflow={workflows.find(w => w.id === selectedWorkflow.id) ?? selectedWorkflow}
           agents={agents}
-          onClose={() => setSelectedWorkflow(null)}
-          onWorkflowUpdate={updateWorkflowState}
+          onClose={() => store.getState().setSelectedWorkflow(null)}
+          onWorkflowUpdate={store.getState().updateWorkflow}
         />
       )}
-
       {showDebateForm && (
         <DebateForm
+          initial={store.getState().debateFormInitial}
           onSubmit={handleSubmitDebate}
-          onClose={() => { setShowDebateForm(false); setDebateFormInitial(undefined); }}
+          onClose={() => { store.getState().setShowDebateForm(false); store.getState().setDebateFormInitial(undefined); }}
         />
       )}
-
       {selectedDebate && (
         <DebateDetailModal
           debate={debates.find(d => d.id === selectedDebate.id) ?? selectedDebate}
           agents={agents}
-          onClose={() => setSelectedDebate(null)}
-          onClone={(_initial) => { setShowDebateForm(true); }}
-          onDebateUpdate={updateDebateState}
+          onClose={() => store.getState().setSelectedDebate(null)}
+          onClone={(initial) => { const s = store.getState(); s.setDebateFormInitial(initial); s.setSelectedDebate(null); s.setShowDebateForm(true); }}
+          onDebateUpdate={store.getState().updateDebate}
         />
       )}
-
       {showKnowledgeBase && (
-        <KnowledgeBaseModal onClose={() => setShowKnowledgeBase(false)} />
+        <KnowledgeBaseModal onClose={() => store.getState().setShowKnowledgeBase(false)} />
       )}
-
       {showEye && (
-        <div className="modal-overlay" onClick={() => setShowEye(false)}>
+        <div className="modal-overlay" onClick={() => store.getState().setShowEye(false)}>
           <div className="modal" style={{ width: '90vw', maxWidth: 1200, height: '80vh' }} onClick={e => e.stopPropagation()}>
-            <EyePanel discussions={discussions} proposals={proposals} onClose={() => setShowEye(false)} />
+            <EyePanel discussions={discussions} proposals={proposals} onClose={() => store.getState().setShowEye(false)} />
           </div>
         </div>
       )}
-
       {showProjects && (
         <ProjectSelector
           projects={projects}
           activeProjectId={activeProjectId}
-          onSelect={setActiveProjectId}
+          onSelect={store.getState().setActiveProjectId}
           onCreate={handleCreateProject}
           onDelete={handleDeleteProject}
           onRename={handleRenameProject}
-          onClose={() => setShowProjects(false)}
+          onClose={() => store.getState().setShowProjects(false)}
         />
       )}
       </Suspense>
@@ -613,7 +587,7 @@ export default function App() {
         toasts={toasts}
         dismiss={dismissToast}
         onSelectAgent={(agentId) => {
-          const agent = agents.find(a => a.id === agentId);
+          const agent = store.getState().agents.find(a => a.id === agentId);
           if (agent) handleSelectAgent(agent);
         }}
       />
