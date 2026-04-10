@@ -5,7 +5,7 @@
  * 1. Workflow/debate callbacks fire without waiting for async diff capture.
  * 2. The deferred diff is stored and the agent record is re-emitted.
  * 3. When completion_checks includes 'diff_not_empty', diff is captured
- *    synchronously (execSync) before the check runs.
+ *    synchronously before the check runs.
  * 4. Deferred diff uses snapshot refs (endSha) captured before callbacks,
  *    so a next-phase agent in the same worktree cannot contaminate the diff.
  * 5. Uncommitted changes are snapshot-captured before callbacks fire.
@@ -55,23 +55,26 @@ vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
 }));
 
 // Track which git commands go through sync vs async paths
-const execSyncCalls: string[] = [];
-const execAsyncCalls: string[] = [];
+const gitSyncCalls: string[] = [];
+const gitAsyncCalls: string[] = [];
 let execAsyncDiffContent = '';
-// Configurable per-test: what execSync returns for snapshot commands
+// Configurable per-test: what sync git helpers return for snapshot commands
 let execSyncRevParseResult = '';
 let execSyncUncommittedResult = '';
 
 vi.mock('child_process', () => ({
   spawn: vi.fn(),
-  execSync: vi.fn((cmd: string) => {
-    execSyncCalls.push(cmd);
-    if (cmd.includes('git rev-parse HEAD')) return Buffer.from(execSyncRevParseResult || 'snapshot-sha\n');
-    if (cmd.includes('git diff HEAD')) return Buffer.from(execSyncUncommittedResult);
-    return Buffer.from('');
+  execSync: vi.fn(() => Buffer.from('')),
+  execFileSync: vi.fn((file: string, args: string[]) => {
+    const cmd = [file, ...args].join(' ');
+    gitSyncCalls.push(cmd);
+    if (cmd.includes('git rev-parse HEAD')) return execSyncRevParseResult || 'snapshot-sha\n';
+    if (cmd.includes('git diff HEAD')) return execSyncUncommittedResult;
+    return '';
   }),
-  exec: vi.fn((cmd: string, _opts: any, cb: any) => {
-    execAsyncCalls.push(cmd);
+  execFile: vi.fn((file: string, args: string[], _opts: any, cb: any) => {
+    const cmd = [file, ...args].join(' ');
+    gitAsyncCalls.push(cmd);
     // Resolve on next microtask so the deferred promise settles
     const stdout = cmd.includes('git log --patch') ? execAsyncDiffContent : '';
     process.nextTick(() => cb(null, { stdout, stderr: '' }));
@@ -127,8 +130,8 @@ describe('AgentRunner: deferred diff capture', () => {
   beforeEach(async () => {
     await setupTestDb();
     await resetManagerState();
-    execSyncCalls.length = 0;
-    execAsyncCalls.length = 0;
+    gitSyncCalls.length = 0;
+    gitAsyncCalls.length = 0;
     execAsyncDiffContent = '';
     execSyncRevParseResult = '';
     execSyncUncommittedResult = '';
@@ -158,20 +161,20 @@ describe('AgentRunner: deferred diff capture', () => {
 
     // execSync captures snapshot refs (rev-parse + uncommitted diff) but NOT the
     // expensive git log --patch which stays on the async deferred path
-    const syncPatchCalls = execSyncCalls.filter(c => c.includes('git log --patch'));
+    const syncPatchCalls = gitSyncCalls.filter(c => c.includes('git log --patch'));
     expect(syncPatchCalls).toHaveLength(0);
 
     // Snapshot commands ran synchronously before callbacks
-    const syncRevParse = execSyncCalls.filter(c => c.includes('git rev-parse HEAD'));
+    const syncRevParse = gitSyncCalls.filter(c => c.includes('git rev-parse HEAD'));
     expect(syncRevParse).toHaveLength(1);
-    const syncUncommitted = execSyncCalls.filter(c => c.includes('git diff HEAD'));
+    const syncUncommitted = gitSyncCalls.filter(c => c.includes('git diff HEAD'));
     expect(syncUncommitted).toHaveLength(1);
 
     // Async exec WAS called for committed diff capture (deferred path)
-    const asyncCommittedCalls = execAsyncCalls.filter(c => c.includes('git log --patch'));
+    const asyncCommittedCalls = gitAsyncCalls.filter(c => c.includes('git log --patch'));
     expect(asyncCommittedCalls).toHaveLength(1);
     // No async uncommitted diff call — captured synchronously in snapshot
-    const asyncUncommittedCalls = execAsyncCalls.filter(c => c.includes('git diff HEAD'));
+    const asyncUncommittedCalls = gitAsyncCalls.filter(c => c.includes('git diff HEAD'));
     expect(asyncUncommittedCalls).toHaveLength(0);
 
     // Wait for deferred diff to finish
@@ -199,14 +202,14 @@ describe('AgentRunner: deferred diff capture', () => {
 
     await handleJobCompletion(agent.id, job, 'done');
 
-    // execSync SHOULD have been called for diff (synchronous path for completion check)
-    const syncDiffCalls = execSyncCalls.filter(
+    // Sync git helper SHOULD have been called for diff (synchronous path for completion check)
+    const syncDiffCalls = gitSyncCalls.filter(
       c => c.includes('git log --patch') || c.includes('git diff HEAD')
     );
     expect(syncDiffCalls).toHaveLength(2);
 
-    // Async exec should NOT have been called for diff (already captured sync)
-    const asyncDiffCalls = execAsyncCalls.filter(
+    // Async git helper should NOT have been called for diff (already captured sync)
+    const asyncDiffCalls = gitAsyncCalls.filter(
       c => c.includes('git log --patch') || c.includes('git diff HEAD')
     );
     expect(asyncDiffCalls).toHaveLength(0);
@@ -267,13 +270,13 @@ describe('AgentRunner: deferred diff capture', () => {
     if (_lastDeferredDiffPromise) await _lastDeferredDiffPromise;
 
     // The async git log command should use the captured endSha, not HEAD
-    const asyncCommittedCalls = execAsyncCalls.filter(c => c.includes('git log --patch'));
+    const asyncCommittedCalls = gitAsyncCalls.filter(c => c.includes('git log --patch'));
     expect(asyncCommittedCalls).toHaveLength(1);
     expect(asyncCommittedCalls[0]).toContain('base-sha-000..end-sha-111');
     expect(asyncCommittedCalls[0]).not.toContain('..HEAD');
 
     // No async git diff HEAD call — uncommitted snapshot was captured synchronously
-    const asyncUncommittedCalls = execAsyncCalls.filter(c => c.includes('git diff HEAD'));
+    const asyncUncommittedCalls = gitAsyncCalls.filter(c => c.includes('git diff HEAD'));
     expect(asyncUncommittedCalls).toHaveLength(0);
   });
 
@@ -296,7 +299,7 @@ describe('AgentRunner: deferred diff capture', () => {
     let snapshotCapturedBeforeCallback = false;
     vi.mocked(wfCallback).mockImplementation(() => {
       // At this point, the snapshot should already have been captured
-      const syncDiffCalls = execSyncCalls.filter(c => c.includes('git diff HEAD'));
+      const syncDiffCalls = gitSyncCalls.filter(c => c.includes('git diff HEAD'));
       snapshotCapturedBeforeCallback = syncDiffCalls.length > 0;
     });
 

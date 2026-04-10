@@ -1,10 +1,10 @@
-import { spawn, exec, execSync, type ChildProcess } from 'child_process';
+import { spawn, execFile, execFileSync, execSync, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 import { captureWithContext } from '../instrument.js';
 import { agentLogger } from '../lib/logger.js';
 import * as queries from '../db/queries.js';
@@ -530,6 +530,42 @@ function findLastWaitForJobsIds(agentId: string): string[] | null {
   return null;
 }
 
+function runBestEffortGitSync(
+  workDir: string,
+  args: string[],
+  timeout: number,
+): string {
+  try {
+    return execFileSync('git', args, {
+      cwd: workDir,
+      timeout,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch {
+    return '';
+  }
+}
+
+async function runBestEffortGitAsync(
+  workDir: string,
+  args: string[],
+  timeout: number,
+  maxBuffer = 1024 * 1024,
+): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('git', args, {
+      cwd: workDir,
+      timeout,
+      maxBuffer,
+      encoding: 'utf8',
+    });
+    return stdout;
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Shared post-processing run after any agent finishes (tmux or stream-json).
  * Caller is responsible for already having set agent status in the DB.
@@ -541,20 +577,12 @@ function findLastWaitForJobsIds(agentId: string): string[] | null {
  * diff (e.g. diff_not_empty) before status finalization.
  */
 function captureAgentDiffSync(agentId: string, baseSha: string, workDir: string): void {
-  try {
-    const committed = execSync(
-      `git log --patch --no-color ${baseSha}..HEAD`,
-      { cwd: workDir, timeout: 10000 }
-    ).toString();
-    const uncommitted = execSync(
-      'git diff HEAD --no-color',
-      { cwd: workDir, timeout: 10000 }
-    ).toString();
-    const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
-    if (fullDiff.trim()) {
-      queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
-    }
-  } catch { /* not a git repo, no changes, or git not available */ }
+  const committed = runBestEffortGitSync(workDir, ['log', '--patch', '--no-color', `${baseSha}..HEAD`], 10000);
+  const uncommitted = runBestEffortGitSync(workDir, ['diff', 'HEAD', '--no-color'], 10000);
+  const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
+  if (fullDiff.trim()) {
+    queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
+  }
 }
 
 /**
@@ -572,19 +600,18 @@ async function captureAgentDiffDeferred(
   uncommittedSnapshot: string,
   workDir: string,
 ): Promise<void> {
-  try {
-    const { stdout: committed } = await execAsync(
-      `git log --patch --no-color ${baseSha}..${endSha}`,
-      { cwd: workDir, timeout: 10000, maxBuffer: 1024 * 1024 }
-    );
-    const fullDiff = [committed, uncommittedSnapshot].filter(s => s.trim()).join('\n');
-    if (fullDiff.trim()) {
-      queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
-      // Re-emit so the dashboard picks up the diff
-      const refreshed = queries.getAgentWithJob(agentId);
-      if (refreshed) socket.emitAgentUpdate(refreshed);
-    }
-  } catch { /* not a git repo, no changes, or git not available */ }
+  const committed = await runBestEffortGitAsync(
+    workDir,
+    ['log', '--patch', '--no-color', `${baseSha}..${endSha}`],
+    10000,
+  );
+  const fullDiff = [committed, uncommittedSnapshot].filter(s => s.trim()).join('\n');
+  if (fullDiff.trim()) {
+    queries.updateAgent(agentId, { diff: fullDiff.slice(0, 524288) });
+    // Re-emit so the dashboard picks up the diff
+    const refreshed = queries.getAgentWithJob(agentId);
+    if (refreshed) socket.emitAgentUpdate(refreshed);
+  }
 }
 
 // Exposed for testing: tracks the most recent deferred diff promise
@@ -610,10 +637,8 @@ export async function handleJobCompletion(
 
   // Clean up git checkpoint tag created before dispatch
   const workDir = job.work_dir ?? process.cwd();
-  try {
-    const tagName = `orchestrator/checkpoint/${agentId.slice(0, 8)}`;
-    execSync(`git tag -d ${tagName} 2>/dev/null || true`, { cwd: workDir, stdio: 'pipe', timeout: 5000 });
-  } catch { /* non-fatal */ }
+  const tagName = `orchestrator/checkpoint/${agentId.slice(0, 8)}`;
+  runBestEffortGitSync(workDir, ['tag', '-d', tagName], 5000);
 
   const agentRec = queries.getAgentById(agentId);
 
@@ -647,12 +672,8 @@ export async function handleJobCompletion(
   let endSha: string | null = null;
   let uncommittedSnapshot = '';
   if (!needsDiffForChecks && agentRec?.base_sha) {
-    try {
-      endSha = execSync('git rev-parse HEAD', { cwd: workDir, timeout: 5000 }).toString().trim();
-    } catch { /* not a git repo */ }
-    try {
-      uncommittedSnapshot = execSync('git diff HEAD --no-color', { cwd: workDir, timeout: 10000 }).toString();
-    } catch { /* ignore */ }
+    endSha = runBestEffortGitSync(workDir, ['rev-parse', 'HEAD'], 5000).trim() || null;
+    uncommittedSnapshot = runBestEffortGitSync(workDir, ['diff', 'HEAD', '--no-color'], 10000);
   }
 
   // ── Critical path: finalize status, release locks, trigger state-machine callbacks ──
