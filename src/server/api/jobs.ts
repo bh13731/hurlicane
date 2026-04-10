@@ -6,6 +6,7 @@ import * as socket from '../socket/SocketManager.js';
 import { spawnInitialRoundJobs } from '../orchestrator/DebateManager.js';
 import { nudgeQueue } from '../orchestrator/WorkQueueManager.js';
 import type { CreateJobRequest, Debate, JobStatus } from '../../shared/types.js';
+import { createJobSchema, updateJobTitleSchema, updateJobInteractiveSchema, validateBody } from './validation.js';
 
 const router = Router();
 const anthropic = new Anthropic();
@@ -38,11 +39,12 @@ async function generateSmartTitle(description: string): Promise<string> {
 }
 
 router.post('/', (req, res) => {
-  const body = req.body as CreateJobRequest;
-  if (!body.description && !body.templateId) {
-    res.status(400).json({ error: 'description is required (or select a template)' });
+  const parsed = validateBody(createJobSchema, req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error });
     return;
   }
+  const body = parsed.data as CreateJobRequest;
 
   const explicitTitle = body.title?.trim();
   let titleSource = body.description;
@@ -200,8 +202,9 @@ router.post('/:id/flag', (req, res) => {
 router.patch('/:id/title', (req, res) => {
   const job = queries.getJobById(req.params.id);
   if (!job) { res.status(404).json({ error: 'not found' }); return; }
-  const title = req.body?.title?.trim();
-  if (!title) { res.status(400).json({ error: 'title required' }); return; }
+  const parsed = validateBody(updateJobTitleSchema, req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error }); return; }
+  const title = parsed.data.title.trim();
   queries.updateJobTitle(job.id, title);
   const updated = queries.getJobById(job.id)!;
   socket.emitJobUpdate(updated);
@@ -229,7 +232,9 @@ router.post('/:id/run-now', (req, res) => {
 router.patch('/:id/interactive', (req, res) => {
   const job = queries.getJobById(req.params.id);
   if (!job) { res.status(404).json({ error: 'not found' }); return; }
-  const interactive = req.body?.interactive ? 1 : 0;
+  const parsed = validateBody(updateJobInteractiveSchema, req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error }); return; }
+  const interactive = parsed.data.interactive ? 1 : 0;
   queries.updateJobInteractive(job.id, interactive);
   const updated = queries.getJobById(job.id)!;
   socket.emitJobUpdate(updated);

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import jobsRouter from './jobs.js';
 import agentsRouter from './agents.js';
 import repliesRouter from './replies.js';
@@ -24,7 +25,26 @@ import tasksRouter from './tasks.js';
 
 const router = Router();
 
+const AUTH_TOKEN = process.env.AUTH_TOKEN;
+
+function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+  if (!AUTH_TOKEN) { next(); return; }
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Missing or malformed Authorization header. Expected: Bearer <token>' });
+    return;
+  }
+  const token = header.slice(7);
+  if (token !== AUTH_TOKEN) {
+    res.status(403).json({ error: 'Invalid bearer token' });
+    return;
+  }
+  next();
+}
+
 router.use('/health', healthRouter);
+
+router.use(authMiddleware);
 router.use('/events', eventsRouter);
 router.use('/jobs', jobsRouter);
 router.use('/agents', agentsRouter);

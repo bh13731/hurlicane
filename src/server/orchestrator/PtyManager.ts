@@ -544,11 +544,9 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
     `unset SENTRY_DSN`,
     `unset SENTRY_RELEASE`,
     `unset SENTRY_ENVIRONMENT`,
-    // Pass through Anthropic API key so agents use the API instead of OAuth
-    // (avoids hitting CLI per-user rate limits when an API key is available).
-    ...(process.env.ANTHROPIC_API_KEY
-      ? [`export ANTHROPIC_API_KEY=${JSON.stringify(process.env.ANTHROPIC_API_KEY)}`]
-      : []),
+    // ANTHROPIC_API_KEY is set via tmux setenv -g before session creation,
+    // so the initial shell inherits it. Not written to the script to avoid
+    // persisting secrets on disk.
     // Always cd to the working directory and fail hard if it doesn't exist.
     // Without this, the agent runs in the wrong directory and can't find files.
     `cd ${JSON.stringify(workDir)} || { echo "[agent] FATAL: working directory does not exist: ${workDir}" >&2; exit 1; }`,
@@ -607,6 +605,15 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
     try {
       execFileSync(TMUX, ['kill-session', '-t', sessionName(agentId)], { stdio: 'pipe' });
     } catch { /* no existing session — fine */ }
+
+    // Set ANTHROPIC_API_KEY in the tmux global environment BEFORE creating
+    // the session, so the initial shell process inherits it immediately.
+    // (tmux setenv -t only affects new panes, not the already-running shell.)
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        execFileSync(TMUX, ['setenv', '-g', 'ANTHROPIC_API_KEY', process.env.ANTHROPIC_API_KEY], { stdio: 'pipe' });
+      } catch { /* non-fatal — agent may fall back to OAuth */ }
+    }
 
     // Create a new detached tmux session running our launcher script
     execFileSync(TMUX, [

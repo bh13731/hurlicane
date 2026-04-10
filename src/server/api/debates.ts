@@ -4,6 +4,7 @@ import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
 import { spawnInitialRoundJobs, resolvePreDebateTerminal } from '../orchestrator/DebateManager.js';
 import type { CreateDebateRequest, Debate } from '../../shared/types.js';
+import { createDebateSchema, validateBody } from './validation.js';
 
 const router = Router();
 
@@ -28,19 +29,12 @@ router.get('/:id/jobs', (req, res) => {
 
 // POST /api/debates — create + start a new debate
 router.post('/', (req, res) => {
-  const body = req.body as CreateDebateRequest;
-  if (!body.task?.trim()) {
-    res.status(400).json({ error: 'task is required' });
+  const parsed = validateBody(createDebateSchema, req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error });
     return;
   }
-  if (!body.claudeModel?.trim()) {
-    res.status(400).json({ error: 'claudeModel is required' });
-    return;
-  }
-  if (!body.codexModel?.trim()) {
-    res.status(400).json({ error: 'codexModel is required' });
-    return;
-  }
+  const body = parsed.data as CreateDebateRequest;
 
   const debateId = randomUUID();
   const now = Date.now();

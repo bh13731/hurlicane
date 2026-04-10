@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { captureWithContext } from '../instrument.js';
@@ -194,10 +194,10 @@ async function tick(): Promise<void> {
       const dispatchWorkDir = dispatchJob.work_dir ?? process.cwd();
       try {
         const isGitRepo = fs.existsSync(path.join(dispatchWorkDir, '.git')) ||
-          (() => { try { execSync('git rev-parse --git-dir', { cwd: dispatchWorkDir, stdio: 'pipe', timeout: 3000 }); return true; } catch { return false; } })();
+          (() => { try { execFileSync('git', ['rev-parse', '--git-dir'], { cwd: dispatchWorkDir, stdio: 'pipe', timeout: 3000 }); return true; } catch { return false; } })();
         if (isGitRepo) {
           const tagName = `orchestrator/checkpoint/${agentId.slice(0, 8)}`;
-          execSync(`git tag -f ${tagName}`, { cwd: dispatchWorkDir, stdio: 'pipe', timeout: 5000 });
+          execFileSync('git', ['tag', '-f', tagName], { cwd: dispatchWorkDir, stdio: 'pipe', timeout: 5000 });
         }
       } catch (err) {
         // Non-fatal — checkpoint is best-effort
@@ -262,7 +262,7 @@ function createWorktree(job: Job, agentId: string): Job {
   // when work_dir is already a worktree (child job inheriting parent's worktree)
   let repoDir: string;
   try {
-    repoDir = execSync('git rev-parse --show-toplevel', { cwd: workDir, stdio: 'pipe', timeout: 5000 })
+    repoDir = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: workDir, stdio: 'pipe', timeout: 5000 })
       .toString().trim();
   } catch {
     repoDir = workDir;
@@ -284,8 +284,8 @@ function createWorktree(job: Job, agentId: string): Job {
   // Ensure the namespace directory exists before git worktree add
   fs.mkdirSync(path.dirname(worktreeDir), { recursive: true });
 
-  log.info({ worktreeDir, branchName, agentId }, 'creating worktree');
-  execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b ${JSON.stringify(branchName)}`, {
+  console.log(`[queue] creating worktree: ${worktreeDir} (branch: ${branchName})`);
+  execFileSync('git', ['worktree', 'add', worktreeDir, '-b', branchName], {
     cwd: repoDir,
     timeout: 30000,
   });

@@ -8,6 +8,7 @@ import { markJobRunning } from '../orchestrator/JobLifecycle.js';
 import { disconnectAgent, disconnectAll, getPtyBuffer, getSnapshot, attachPty, isTmuxSessionAlive, saveSnapshot } from '../orchestrator/PtyManager.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import { nudgeQueue } from '../orchestrator/WorkQueueManager.js';
+import { agentReadAllSchema, agentRetrySchema, agentContinueSchema, validateBody } from './validation.js';
 
 const router = Router();
 
@@ -28,7 +29,9 @@ router.get('/', (_req, res) => {
 
 // Must be registered before /:id to avoid param capture
 router.post('/read-all', (req, res) => {
-  const { ids } = req.body as { ids?: string[] };
+  const parsed = validateBody(agentReadAllSchema, req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: parsed.error }); return; }
+  const { ids } = parsed.data;
   const targets = Array.isArray(ids) && ids.length > 0
     ? ids
     : queries.getAgentsWithJobForSnapshot()
@@ -133,7 +136,9 @@ router.post('/:id/retry', (req, res) => {
 
   const original = queries.getAgentWithJob(req.params.id)!;
   const originalJob = original.job;
-  const { interactive } = req.body as { interactive?: boolean };
+  const retryParsed = validateBody(agentRetrySchema, req.body ?? {});
+  if (!retryParsed.success) { res.status(400).json({ error: retryParsed.error }); return; }
+  const { interactive } = retryParsed.data;
 
   const retryJob = queries.insertJob({
     id: randomUUID(),
@@ -157,8 +162,9 @@ router.post('/:id/retry', (req, res) => {
 router.post('/:id/continue', (req, res) => {
   const agent = queries.getAgentById(req.params.id);
   if (!agent) { res.status(404).json({ error: 'not found' }); return; }
-  const { message, interactive } = req.body as { message?: string; interactive?: boolean };
-  if (!message?.trim()) { res.status(400).json({ error: 'message is required' }); return; }
+  const contParsed = validateBody(agentContinueSchema, req.body);
+  if (!contParsed.success) { res.status(400).json({ error: contParsed.error }); return; }
+  const { message, interactive } = contParsed.data;
 
   const original = queries.getAgentWithJob(req.params.id)!;
   const originalJob = original.job;
