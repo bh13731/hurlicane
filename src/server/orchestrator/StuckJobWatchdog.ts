@@ -627,8 +627,18 @@ function check(): void {
       });
       getFileLockRegistry().releaseAll(agentId);
 
-      // Update the job's model and re-queue it
+      // Re-queue job via valid transition path, but only if retriable
+      const freshJob = queries.getJobById(job.id);
+      if (!freshJob || freshJob.status === 'queued' || freshJob.status === 'done' || freshJob.status === 'cancelled') {
+        // Job already terminal/requeued — still emit agent update so UI reflects failed status
+        const updatedAgent = queries.getAgentWithJob(agentId);
+        if (updatedAgent) socket.emitAgentUpdate(updatedAgent);
+        continue;
+      }
       queries.updateJobModel(job.id, fallbackModel);
+      if (freshJob.status !== 'failed') {
+        queries.updateJobStatus(job.id, 'failed');
+      }
       queries.updateJobStatus(job.id, 'queued');
       const updatedJob = queries.getJobById(job.id);
       if (updatedJob) socket.emitJobUpdate(updatedJob);

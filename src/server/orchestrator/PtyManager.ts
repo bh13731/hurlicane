@@ -902,9 +902,9 @@ export async function attachPty(agentId: string, job: Job, cols = 100, rows = 50
     // All retries exhausted — fall back to polling if tmux session is alive
     const err = lastErr!;
     if (isAutoExitJob(job)) {
-      console.warn(`[pty ${agentId}] PTY attach failed after ${PTY_SPAWN_MAX_RETRIES + 1} attempts (tailing continues):`, errMsg(err));
+      console.log(`[pty ${agentId}] PTY attach failed after ${PTY_SPAWN_MAX_RETRIES + 1} attempts (tailing continues):`, errMsg(err));
     } else {
-      console.warn(`[pty ${agentId}] PTY attach failed after ${PTY_SPAWN_MAX_RETRIES + 1} attempts:`, errMsg(err));
+      console.log(`[pty ${agentId}] PTY attach failed after ${PTY_SPAWN_MAX_RETRIES + 1} attempts:`, errMsg(err));
     }
     logPtyLifecycleEvent('pty_attach_exhausted', agentId, job, {
       error: errMsg(err),

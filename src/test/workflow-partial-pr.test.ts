@@ -62,6 +62,11 @@ vi.mock('child_process', () => {
   return mod;
 });
 
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
+  return { ...actual, existsSync: vi.fn(() => true) };
+});
+
 vi.mock('../server/socket/SocketManager.js', () => createSocketMock());
 
 vi.mock('../server/orchestrator/WorkflowPrompts.js', () => ({
