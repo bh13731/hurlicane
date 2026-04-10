@@ -8,6 +8,7 @@ import { execSync, execFileSync } from 'child_process';
 import * as queries from '../db/queries.js';
 import type { Workflow } from '../../shared/types.js';
 import { errMsg, execErrMsg } from '../../shared/errors.js';
+import { workflowLogger } from '../lib/logger.js';
 import { parseMilestones, CHECKBOX_CHECKED } from './WorkflowMilestoneParser.js';
 import { ensureWorktreeBranch, removeWorktree } from './WorkflowWorktreeManager.js';
 
@@ -329,13 +330,12 @@ export async function reconcileBlockedPRs(
   );
 
   if (blocked.length === 0) return;
-  console.log(`[reconcile-blocked-prs] found ${blocked.length} workflow(s) blocked on PR creation — retrying`);
+  const reconcileLog = workflowLogger('reconcile');
+  reconcileLog.info({ count: blocked.length }, 'found workflows blocked on PR creation — retrying');
 
   for (const workflow of blocked) {
     if (!workflow.worktree_path || !workflow.worktree_branch || !workflow.work_dir) {
-      console.warn(
-        `[reconcile-blocked-prs] workflow ${workflow.id} is missing worktree fields (path=${workflow.worktree_path ?? 'null'}, branch=${workflow.worktree_branch ?? 'null'}, work_dir=${workflow.work_dir ?? 'null'}) — skipping`,
-      );
+      workflowLogger(workflow.id).warn({ worktreePath: workflow.worktree_path ?? null, branch: workflow.worktree_branch ?? null, workDir: workflow.work_dir ?? null }, 'missing worktree fields — skipping PR reconciliation');
       continue;
     }
 
@@ -344,12 +344,12 @@ export async function reconcileBlockedPRs(
       if (prUrl) {
         updateAndEmit(workflow.id, { status: 'complete', blocked_reason: null, pr_url: prUrl });
         removeWorktree(workflow);
-        console.log(`[reconcile-blocked-prs] recovered workflow ${workflow.id} → ${prUrl}`);
+        workflowLogger(workflow.id).info({ prUrl }, 'recovered workflow via PR reconciliation');
       } else {
-        console.warn(`[reconcile-blocked-prs] PR creation still failing for workflow ${workflow.id} — leaving blocked`);
+        workflowLogger(workflow.id).warn('PR creation still failing — leaving blocked');
       }
     } catch (err) {
-      console.warn(`[reconcile-blocked-prs] error retrying PR for workflow ${workflow.id}:`, errMsg(err));
+      workflowLogger(workflow.id).warn({ err: errMsg(err) }, 'error retrying PR creation');
     }
   }
 }

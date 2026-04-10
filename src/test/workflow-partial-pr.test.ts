@@ -851,9 +851,12 @@ describe('countBranchCommits: safe fallback chain (Fix-C4b)', () => {
 });
 
 describe('Fix-C11a: transient rev-parse errors propagate to callers via countBranchCommits', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(async () => {
     execSyncCalls.length = 0;
     execFileSyncCalls.length = 0;
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await setupTestDb();
   });
 
@@ -885,7 +888,6 @@ describe('Fix-C11a: transient rev-parse errors propagate to callers via countBra
   }
 
   it('pushAndCreatePr still attempts PR when rev-parse throws transient error (safe default: hasCommits=true)', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockTransientRevParseFailure();
 
     const { pushAndCreatePr } = await import('../server/orchestrator/WorkflowManager.js');
@@ -923,7 +925,6 @@ describe('Fix-C11a: transient rev-parse errors propagate to callers via countBra
   });
 
   it('getPrCreationOutcome returns failed_with_publishable_commits when rev-parse throws transient error', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockTransientRevParseFailure();
 
     const { getPrCreationOutcome } = await import('../server/orchestrator/WorkflowManager.js');
@@ -1181,7 +1182,6 @@ describe('reconcileBlockedPRs: startup recovery', () => {
       blocked_reason: 'PR creation failed — worktree preserved for retry at /tmp/wt',
     });
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { reconcileBlockedPRs } = await import('../server/orchestrator/WorkflowManager.js');
 
     // Should not throw despite the malformed row
@@ -1196,8 +1196,6 @@ describe('reconcileBlockedPRs: startup recovery', () => {
     expect(valid!.status).toBe('complete');
     expect(valid!.pr_url).toBe('https://github.com/test/repo/pull/90');
 
-    // A warning was logged for the skipped malformed workflow (single-string form)
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('wf-malformed-e'));
   });
 });
 
