@@ -96,6 +96,11 @@ vi.mock('../server/orchestrator/FileLockRegistry.js', () => ({
   })),
 }));
 
+vi.mock('../server/instrument.js', () => ({
+  captureWithContext: vi.fn(),
+  Sentry: { captureException: vi.fn() },
+}));
+
 // Track spawn calls and fs operations
 const spawnCalls: Array<{ binary: string; args: string[]; options: any }> = [];
 const writtenFiles: Map<string, string> = new Map();
@@ -562,5 +567,206 @@ describe('AgentRunner: Codex prompt file delivery', () => {
     for (const fd of allFds) {
       expect(closeCalls).toContain(fd);
     }
+  });
+});
+
+describe('AgentRunner: Claude stdin EPIPE handling', () => {
+  beforeEach(async () => {
+    await setupTestDb();
+    await resetManagerState();
+    spawnCalls.length = 0;
+    writtenFiles.clear();
+    openedFds.clear();
+    nextFd = 100;
+    stdinWrites.length = 0;
+    stdinEnded = false;
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb();
+  });
+
+  it('benign EPIPE on stdin.write() is swallowed and does not call captureWithContext', async () => {
+    const { spawn } = await import('child_process');
+    const { captureWithContext } = await import('../server/instrument.js');
+    const { runAgent } = await import('../server/orchestrator/AgentRunner.js');
+
+    vi.mocked(spawn).mockImplementationOnce((_cmd: any, args: any, options: any) => {
+      spawnCalls.push({ binary: _cmd, args, options });
+      return {
+        pid: 12345,
+        stdin: {
+          write: vi.fn(() => {
+            const err = new Error('write EPIPE') as NodeJS.ErrnoException;
+            err.code = 'EPIPE';
+            throw err;
+          }),
+          end: vi.fn(),
+          on: vi.fn(),
+        },
+        on: vi.fn(),
+        unref: vi.fn(),
+      } as any;
+    });
+
+    const job = await insertTestJob({
+      id: 'claude-epipe-sync-benign',
+      title: 'EPIPE sync benign',
+      description: 'test',
+      model: 'claude-sonnet-4-6',
+      status: 'assigned',
+    });
+    const queries = await import('../server/db/queries.js');
+    const agent = queries.insertAgent({ id: 'agent-epipe-sync-benign', job_id: job.id, status: 'running' });
+
+    // Should not throw — EPIPE is caught internally
+    runAgent({ agentId: agent.id, job });
+
+    // Benign error must NOT reach Sentry
+    expect(vi.mocked(captureWithContext)).not.toHaveBeenCalled();
+  });
+
+  it('unexpected error on stdin.write() calls captureWithContext with AgentRunner context', async () => {
+    const { spawn } = await import('child_process');
+    const { captureWithContext } = await import('../server/instrument.js');
+    const { runAgent } = await import('../server/orchestrator/AgentRunner.js');
+
+    vi.mocked(spawn).mockImplementationOnce((_cmd: any, args: any, options: any) => {
+      spawnCalls.push({ binary: _cmd, args, options });
+      return {
+        pid: 12345,
+        stdin: {
+          write: vi.fn(() => {
+            const err = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+            err.code = 'EACCES';
+            throw err;
+          }),
+          end: vi.fn(),
+          on: vi.fn(),
+        },
+        on: vi.fn(),
+        unref: vi.fn(),
+      } as any;
+    });
+
+    const job = await insertTestJob({
+      id: 'claude-stdin-unexpected-sync',
+      title: 'Unexpected sync error',
+      description: 'test',
+      model: 'claude-sonnet-4-6',
+      status: 'assigned',
+    });
+    const queries = await import('../server/db/queries.js');
+    const agent = queries.insertAgent({ id: 'agent-stdin-unexpected-sync', job_id: job.id, status: 'running' });
+
+    runAgent({ agentId: agent.id, job });
+
+    // Unexpected error MUST be reported to Sentry exactly once
+    expect(vi.mocked(captureWithContext)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(captureWithContext)).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'EACCES' }),
+      expect.objectContaining({
+        agent_id: agent.id,
+        job_id: job.id,
+        component: 'AgentRunner',
+      }),
+    );
+  });
+
+  it('benign EPIPE emitted asynchronously on stdin stream does not call captureWithContext', async () => {
+    const { spawn } = await import('child_process');
+    const { captureWithContext } = await import('../server/instrument.js');
+    const { runAgent } = await import('../server/orchestrator/AgentRunner.js');
+
+    let stdinErrorHandler: ((err: Error) => void) | null = null;
+    vi.mocked(spawn).mockImplementationOnce((_cmd: any, args: any, options: any) => {
+      spawnCalls.push({ binary: _cmd, args, options });
+      return {
+        pid: 12345,
+        stdin: {
+          write: vi.fn((data: string) => { stdinWrites.push(data); }),
+          end: vi.fn(() => { stdinEnded = true; }),
+          on: vi.fn((event: string, handler: any) => {
+            if (event === 'error') stdinErrorHandler = handler;
+          }),
+        },
+        on: vi.fn(),
+        unref: vi.fn(),
+      } as any;
+    });
+
+    const job = await insertTestJob({
+      id: 'claude-epipe-async-benign',
+      title: 'EPIPE async benign',
+      description: 'test',
+      model: 'claude-sonnet-4-6',
+      status: 'assigned',
+    });
+    const queries = await import('../server/db/queries.js');
+    const agent = queries.insertAgent({ id: 'agent-epipe-async-benign', job_id: job.id, status: 'running' });
+
+    runAgent({ agentId: agent.id, job });
+
+    // Simulate async EPIPE emitted after child exits
+    expect(stdinErrorHandler).not.toBeNull();
+    const epipeErr = new Error('write EPIPE') as NodeJS.ErrnoException;
+    epipeErr.code = 'EPIPE';
+    stdinErrorHandler!(epipeErr);
+
+    // Benign async error must NOT reach Sentry
+    expect(vi.mocked(captureWithContext)).not.toHaveBeenCalled();
+  });
+
+  it('unexpected error emitted asynchronously on stdin stream calls captureWithContext', async () => {
+    const { spawn } = await import('child_process');
+    const { captureWithContext } = await import('../server/instrument.js');
+    const { runAgent } = await import('../server/orchestrator/AgentRunner.js');
+
+    let stdinErrorHandler: ((err: Error) => void) | null = null;
+    vi.mocked(spawn).mockImplementationOnce((_cmd: any, args: any, options: any) => {
+      spawnCalls.push({ binary: _cmd, args, options });
+      return {
+        pid: 12345,
+        stdin: {
+          write: vi.fn((data: string) => { stdinWrites.push(data); }),
+          end: vi.fn(() => { stdinEnded = true; }),
+          on: vi.fn((event: string, handler: any) => {
+            if (event === 'error') stdinErrorHandler = handler;
+          }),
+        },
+        on: vi.fn(),
+        unref: vi.fn(),
+      } as any;
+    });
+
+    const job = await insertTestJob({
+      id: 'claude-stdin-unexpected-async',
+      title: 'Unexpected async error',
+      description: 'test',
+      model: 'claude-sonnet-4-6',
+      status: 'assigned',
+    });
+    const queries = await import('../server/db/queries.js');
+    const agent = queries.insertAgent({ id: 'agent-stdin-unexpected-async', job_id: job.id, status: 'running' });
+
+    runAgent({ agentId: agent.id, job });
+
+    // Simulate unexpected async error
+    expect(stdinErrorHandler).not.toBeNull();
+    const unexpectedErr = new Error('EIO: i/o error') as NodeJS.ErrnoException;
+    unexpectedErr.code = 'EIO';
+    stdinErrorHandler!(unexpectedErr);
+
+    // Unexpected async error MUST be reported to Sentry exactly once
+    expect(vi.mocked(captureWithContext)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(captureWithContext)).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'EIO' }),
+      expect.objectContaining({
+        agent_id: agent.id,
+        job_id: job.id,
+        component: 'AgentRunner',
+      }),
+    );
   });
 });
