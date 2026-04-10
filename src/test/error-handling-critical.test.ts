@@ -61,6 +61,11 @@ vi.mock('child_process', () => ({
     process.nextTick(() => cb(null, { stdout: '', stderr: '' }));
     return { on: vi.fn() };
   }),
+  execFileSync: vi.fn(() => Buffer.from('')),
+  execFile: vi.fn((_file: string, _args: string[], _opts: any, cb: any) => {
+    process.nextTick(() => cb(null, { stdout: '', stderr: '' }));
+    return { on: vi.fn() };
+  }),
 }));
 
 vi.mock('../server/orchestrator/CompletionChecks.js', () => ({

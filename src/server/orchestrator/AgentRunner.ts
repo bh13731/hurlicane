@@ -1,10 +1,28 @@
-import { spawn, exec, execSync, type ChildProcess } from 'child_process';
+import { spawn, exec, execSync, execFile, execFileSync, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
 const execAsync = promisify(exec);
+
+/**
+ * Lazy async wrapper for execFile — evaluates `execFile` only when called, not
+ * at module-init time. This allows test files that mock child_process without
+ * an execFile export to import AgentRunner without errors.
+ */
+function execFileAsync(
+  file: string,
+  args: string[],
+  opts?: { cwd?: string; timeout?: number; maxBuffer?: number },
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, opts ?? {}, (err, stdout, stderr) => {
+      if (err) reject(err);
+      else resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
+    });
+  });
+}
 import { captureWithContext } from '../instrument.js';
 import { agentLogger } from '../lib/logger.js';
 import * as queries from '../db/queries.js';
@@ -542,13 +560,13 @@ function findLastWaitForJobsIds(agentId: string): string[] | null {
  */
 function captureAgentDiffSync(agentId: string, baseSha: string, workDir: string): void {
   try {
-    const committed = execSync(
-      `git log --patch --no-color ${baseSha}..HEAD`,
-      { cwd: workDir, timeout: 10000 }
+    const committed = execFileSync(
+      'git', ['log', '--patch', '--no-color', `${baseSha}..HEAD`],
+      { cwd: workDir, timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }
     ).toString();
-    const uncommitted = execSync(
-      'git diff HEAD --no-color',
-      { cwd: workDir, timeout: 10000 }
+    const uncommitted = execFileSync(
+      'git', ['diff', 'HEAD', '--no-color'],
+      { cwd: workDir, timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }
     ).toString();
     const fullDiff = [committed, uncommitted].filter(s => s.trim()).join('\n');
     if (fullDiff.trim()) {
@@ -573,8 +591,8 @@ async function captureAgentDiffDeferred(
   workDir: string,
 ): Promise<void> {
   try {
-    const { stdout: committed } = await execAsync(
-      `git log --patch --no-color ${baseSha}..${endSha}`,
+    const { stdout: committed } = await execFileAsync(
+      'git', ['log', '--patch', '--no-color', `${baseSha}..${endSha}`],
       { cwd: workDir, timeout: 10000, maxBuffer: 1024 * 1024 }
     );
     const fullDiff = [committed, uncommittedSnapshot].filter(s => s.trim()).join('\n');
@@ -612,8 +630,8 @@ export async function handleJobCompletion(
   const workDir = job.work_dir ?? process.cwd();
   try {
     const tagName = `orchestrator/checkpoint/${agentId.slice(0, 8)}`;
-    execSync(`git tag -d ${tagName} 2>/dev/null || true`, { cwd: workDir, stdio: 'pipe', timeout: 5000 });
-  } catch { /* non-fatal */ }
+    execFileSync('git', ['tag', '-d', tagName], { cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 });
+  } catch { /* non-fatal — tag may not exist */ }
 
   const agentRec = queries.getAgentById(agentId);
 
@@ -648,10 +666,10 @@ export async function handleJobCompletion(
   let uncommittedSnapshot = '';
   if (!needsDiffForChecks && agentRec?.base_sha) {
     try {
-      endSha = execSync('git rev-parse HEAD', { cwd: workDir, timeout: 5000 }).toString().trim();
+      endSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 }).toString().trim();
     } catch { /* not a git repo */ }
     try {
-      uncommittedSnapshot = execSync('git diff HEAD --no-color', { cwd: workDir, timeout: 10000 }).toString();
+      uncommittedSnapshot = execFileSync('git', ['diff', 'HEAD', '--no-color'], { cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 }).toString();
     } catch { /* ignore */ }
   }
 

@@ -55,26 +55,32 @@ vi.mock('../server/orchestrator/FailureClassifier.js', () => ({
 }));
 
 // Track which git commands go through sync vs async paths
+// Each entry is stringified as "<file> <args...>" for easy substring matching
 const execSyncCalls: string[] = [];
 const execAsyncCalls: string[] = [];
 let execAsyncDiffContent = '';
-// Configurable per-test: what execSync returns for snapshot commands
+// Configurable per-test: what execFileSync returns for snapshot commands
 let execSyncRevParseResult = '';
 let execSyncUncommittedResult = '';
 
 vi.mock('child_process', () => ({
   spawn: vi.fn(),
-  execSync: vi.fn((cmd: string) => {
+  execSync: vi.fn(),
+  exec: vi.fn(),
+  execFileSync: vi.fn((file: string, args: string[]) => {
+    const cmd = [file, ...args].join(' ');
     execSyncCalls.push(cmd);
     if (cmd.includes('git rev-parse HEAD')) return Buffer.from(execSyncRevParseResult || 'snapshot-sha\n');
     if (cmd.includes('git diff HEAD')) return Buffer.from(execSyncUncommittedResult);
     return Buffer.from('');
   }),
-  exec: vi.fn((cmd: string, _opts: any, cb: any) => {
+  execFile: vi.fn((file: string, args: string[], _opts: any, cb: any) => {
+    const cmd = [file, ...args].join(' ');
     execAsyncCalls.push(cmd);
-    // Resolve on next microtask so the deferred promise settles
+    // Resolve on next microtask so the deferred promise settles.
+    // execFile callback receives (err, stdout, stderr) as separate args.
     const stdout = cmd.includes('git log --patch') ? execAsyncDiffContent : '';
-    process.nextTick(() => cb(null, { stdout, stderr: '' }));
+    process.nextTick(() => cb(null, stdout, ''));
     return { on: vi.fn() };
   }),
 }));
