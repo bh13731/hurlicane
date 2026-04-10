@@ -327,6 +327,7 @@ export function runAgent(options: RunOptions): void {
       } else {
         agentLogger(agentId).error({ err }, 'unexpected stdin write error');
         captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'AgentRunner' });
+        throw err;
       }
     }
   }

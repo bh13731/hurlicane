@@ -660,7 +660,7 @@ describe('AgentRunner: Claude stdin EPIPE handling', () => {
     const queries = await import('../server/db/queries.js');
     const agent = queries.insertAgent({ id: 'agent-stdin-unexpected-sync', job_id: job.id, status: 'running' });
 
-    runAgent({ agentId: agent.id, job });
+    expect(() => runAgent({ agentId: agent.id, job })).toThrow('EACCES');
 
     // Unexpected error MUST be reported to Sentry exactly once
     expect(vi.mocked(captureWithContext)).toHaveBeenCalledTimes(1);
