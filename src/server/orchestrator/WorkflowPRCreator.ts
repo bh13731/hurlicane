@@ -347,7 +347,7 @@ export async function reconcileBlockedPRs(
 
     if (!existsSync(workflow.worktree_path)) {
       updateAndEmit(workflow.id, {
-        blocked_reason: 'PR creation failed — worktree directory missing, cannot retry',
+        blocked_reason: 'Worktree directory missing — cannot retry',
       });
       workflowLogger(workflow.id).warn({ worktreePath: workflow.worktree_path }, 'worktree directory missing — updated blocked reason');
       continue;
