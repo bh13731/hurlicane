@@ -544,9 +544,9 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
     `unset SENTRY_DSN`,
     `unset SENTRY_RELEASE`,
     `unset SENTRY_ENVIRONMENT`,
-    // ANTHROPIC_API_KEY is inherited from the tmux session's process environment
-    // (set via tmux setenv after session creation) — not written to the script
-    // to avoid persisting secrets on disk.
+    // ANTHROPIC_API_KEY is set via tmux setenv -g before session creation,
+    // so the initial shell inherits it. Not written to the script to avoid
+    // persisting secrets on disk.
     // Always cd to the working directory and fail hard if it doesn't exist.
     // Without this, the agent runs in the wrong directory and can't find files.
     `cd ${JSON.stringify(workDir)} || { echo "[agent] FATAL: working directory does not exist: ${workDir}" >&2; exit 1; }`,
@@ -606,6 +606,15 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
       execFileSync(TMUX, ['kill-session', '-t', sessionName(agentId)], { stdio: 'pipe' });
     } catch { /* no existing session — fine */ }
 
+    // Set ANTHROPIC_API_KEY in the tmux global environment BEFORE creating
+    // the session, so the initial shell process inherits it immediately.
+    // (tmux setenv -t only affects new panes, not the already-running shell.)
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        execFileSync(TMUX, ['setenv', '-g', 'ANTHROPIC_API_KEY', process.env.ANTHROPIC_API_KEY], { stdio: 'pipe' });
+      } catch { /* non-fatal — agent may fall back to OAuth */ }
+    }
+
     // Create a new detached tmux session running our launcher script
     execFileSync(TMUX, [
       'new-session', '-d',
@@ -638,13 +647,7 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
       execFileSync(TMUX, ['set-option', '-t', sessionName(agentId), 'mouse', 'on'], { stdio: 'pipe' });
     } catch { /* ignore — older tmux may not support per-session mouse */ }
 
-    if (process.env.ANTHROPIC_API_KEY) {
-      try {
-        execFileSync(TMUX, ['setenv', '-t', sessionName(agentId), 'ANTHROPIC_API_KEY', process.env.ANTHROPIC_API_KEY], { stdio: 'pipe' });
-      } catch { /* non-fatal */ }
-    }
-
-  } catch (err: any) {
+  } catch (err) {
     _spawningAgents.delete(agentId);
     console.error(`[pty ${agentId}] failed to create tmux session:`, errMsg(err));
     captureWithContext(err, { agent_id: agentId, job_id: job.id, component: 'PtyManager' });

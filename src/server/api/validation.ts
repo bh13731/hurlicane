@@ -10,7 +10,7 @@ export const createJobSchema = z.object({
   priority: z.number().int().min(0).max(100).optional(),
   workDir: z.string().max(1000).optional(),
   maxTurns: z.number().int().min(1).max(10_000).optional(),
-  stopMode: z.enum(['turns', 'cost', 'time']).optional(),
+  stopMode: z.enum(['turns', 'budget', 'time', 'completion']).optional(),
   stopValue: z.number().min(0).optional(),
   model: z.string().max(200).optional().nullable(),
   templateId: z.string().uuid().optional(),
@@ -20,7 +20,7 @@ export const createJobSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
   repeatIntervalMs: z.number().int().min(1000).optional().nullable(),
   scheduledAt: z.number().int().optional().nullable(),
-  retryPolicy: z.enum(['none', 'once', 'twice', 'thrice']).optional(),
+  retryPolicy: z.enum(['none', 'same', 'analyze']).optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),
   completionChecks: z.array(z.string().max(500)).optional(),
   reviewConfig: z.object({ model: z.string().max(200).optional(), maxTurns: z.number().int().min(1).max(10_000).optional() }).optional(),
@@ -30,7 +30,7 @@ export const createJobSchema = z.object({
   debateMaxRounds: z.number().int().min(1).optional(),
 }).refine(data => data.description || data.templateId, { message: 'description is required (or select a template)' });
 
-export const updateJobTitleSchema = z.object({ title: z.string().min(1).max(200) });
+export const updateJobTitleSchema = z.object({ title: z.string().min(1).max(200).refine(s => s.trim().length > 0, { message: 'title must not be empty or whitespace-only' }) });
 export const updateJobInteractiveSchema = z.object({ interactive: z.boolean() });
 
 export const createWorkflowSchema = z.object({
@@ -43,11 +43,11 @@ export const createWorkflowSchema = z.object({
   maxTurnsAssess: z.number().int().min(1).max(10_000).optional(),
   maxTurnsReview: z.number().int().min(1).max(10_000).optional(),
   maxTurnsImplement: z.number().int().min(1).max(10_000).optional(),
-  stopModeAssess: z.enum(['turns', 'cost', 'time']).optional(),
+  stopModeAssess: z.enum(['turns', 'budget', 'time', 'completion']).optional(),
   stopValueAssess: z.number().min(0).optional(),
-  stopModeReview: z.enum(['turns', 'cost', 'time']).optional(),
+  stopModeReview: z.enum(['turns', 'budget', 'time', 'completion']).optional(),
   stopValueReview: z.number().min(0).optional(),
-  stopModeImplement: z.enum(['turns', 'cost', 'time']).optional(),
+  stopModeImplement: z.enum(['turns', 'budget', 'time', 'completion']).optional(),
   stopValueImplement: z.number().min(0).optional(),
   templateId: z.string().uuid().optional(),
   useWorktree: z.boolean().optional(),

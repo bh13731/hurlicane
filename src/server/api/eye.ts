@@ -146,11 +146,6 @@ router.post('/start', (req, res) => {
     return;
   }
 
-  const {
-    repeatIntervalMs = getConfiguredRepeatIntervalMs(),
-    maxTurns = 100,
-    model = 'claude-opus-4-6',
-    workDir,
   const startParsed = validateBody(eyeStartSchema, req.body ?? {});
   if (!startParsed.success) { res.status(400).json({ error: startParsed.error }); return; }
 
