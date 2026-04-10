@@ -203,6 +203,26 @@ export default function App() {
     return () => { clearTimeout(retryId); clearInterval(id); };
   }, [fetchTodayCost, costAutoUpdate]);
 
+  // Periodic lock resync — poll /api/locks every 3s so the lock list stays
+  // current even when socket events are missed (e.g. brief reconnect in dev).
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch('/api/locks');
+        if (res.ok) store.getState().setLocks(await res.json());
+      } catch {
+        // ignore — leave existing state intact on network error
+      }
+    }, 3_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Safety net: purge any locks whose TTL has expired from local state.
+  useEffect(() => {
+    const id = setInterval(() => store.getState().purgeExpiredLocks(), 10_000);
+    return () => clearInterval(id);
+  }, []);
+
   // ── Load archived jobs ────────────────────────────────────────────────────
   const ARCHIVED_PAGE_SIZE = 50;
   useEffect(() => {
@@ -526,6 +546,7 @@ export default function App() {
       )}
       {showDebateForm && (
         <DebateForm
+          initial={store.getState().debateFormInitial}
           onSubmit={handleSubmitDebate}
           onClose={() => { store.getState().setShowDebateForm(false); store.getState().setDebateFormInitial(undefined); }}
         />
@@ -535,7 +556,7 @@ export default function App() {
           debate={debates.find(d => d.id === selectedDebate.id) ?? selectedDebate}
           agents={agents}
           onClose={() => store.getState().setSelectedDebate(null)}
-          onClone={() => store.getState().setShowDebateForm(true)}
+          onClone={(initial) => { const s = store.getState(); s.setDebateFormInitial(initial); s.setSelectedDebate(null); s.setShowDebateForm(true); }}
           onDebateUpdate={store.getState().updateDebate}
         />
       )}

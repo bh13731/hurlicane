@@ -3,23 +3,24 @@ import type { CreateDebateRequest, Template } from '@shared/types';
 import { useModels } from '../hooks/useModels';
 
 interface DebateFormProps {
+  initial?: Partial<CreateDebateRequest>;
   onSubmit: (req: CreateDebateRequest) => Promise<void>;
   onClose: () => void;
 }
 
-export function DebateForm({ onSubmit, onClose }: DebateFormProps) {
+export function DebateForm({ initial, onSubmit, onClose }: DebateFormProps) {
   const { claude: claudeModels, codex: codexModels } = useModels();
-  const [title, setTitle] = useState('');
-  const [task, setTask] = useState('');
-  const [claudeModel, setClaudeModel] = useState('claude-sonnet-4-6[1m]');
-  const [codexModel, setCodexModel] = useState('codex');
-  const [maxRounds, setMaxRounds] = useState(3);
-  const [workDir, setWorkDir] = useState('');
-  const [templateId, setTemplateId] = useState('');
-  const [postActionPrompt, setPostActionPrompt] = useState('');
+  const [title, setTitle] = useState(initial?.title ?? '');
+  const [task, setTask] = useState(initial?.task ?? '');
+  const [claudeModel, setClaudeModel] = useState(initial?.claudeModel ?? 'claude-sonnet-4-6[1m]');
+  const [codexModel, setCodexModel] = useState(initial?.codexModel ?? 'codex');
+  const [maxRounds, setMaxRounds] = useState(initial?.maxRounds ?? 3);
+  const [workDir, setWorkDir] = useState(initial?.workDir ?? '');
+  const [templateId, setTemplateId] = useState(initial?.templateId ?? '');
+  const [postActionPrompt, setPostActionPrompt] = useState(initial?.postActionPrompt ?? '');
   const [postActionRole, setPostActionRole] = useState<'claude' | 'codex'>('claude');
   const [postActionVerification, setPostActionVerification] = useState(false);
-  const [loopCount, setLoopCount] = useState(1);
+  const [loopCount, setLoopCount] = useState(initial?.loopCount ?? 1);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
 
