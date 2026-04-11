@@ -819,6 +819,10 @@ export function _resetForTest(): void {
   _processedJobs.clear();
 }
 
+// Test-only export so unit tests can verify classification of nested/prefixed
+// blocked_reason strings without needing a full workflow harness.
+export const _isOperationalBlockedReasonForTest = isOperationalBlockedReason;
+
 const OPERATIONAL_BLOCK_SUBSTRINGS = [
   'Reached max cycles', 'no milestone progress', 'Diminishing returns',
   'PR creation failed', 'Draft PR creation failed', 'was cancelled',
@@ -831,7 +835,16 @@ const OPERATIONAL_FAILED_KINDS = new Set([
 
 function isOperationalBlockedReason(reason: string): boolean {
   if (OPERATIONAL_BLOCK_SUBSTRINGS.some(pattern => reason.includes(pattern))) return true;
-  const failedMatch = reason.match(/^Phase '[^']+' job [0-9a-f]{8} failed \(([^)]+)\)$/);
+  // Match `Phase 'X' job <sha> failed (<kind>)` anywhere in the reason, not
+  // just at the start. Nested/cascaded reasons (e.g. a Sentry-fix workflow
+  // that failed because its target had an operational failure) prefix this
+  // pattern with strings like `WorkflowBlocked: Workflow blocked: Sentry fix
+  // [repo]: BrokenPipeErr — ` which previously defeated the `^...$`-anchored
+  // match and caused the outer Sentry-fix workflow to be captured — spawning
+  // ANOTHER Sentry-fix workflow in a cascade (see HURLICANE-5J, -9E). If any
+  // `Phase ... failed (kind)` fragment in the reason is operational, treat
+  // the whole reason as operational.
+  const failedMatch = reason.match(/Phase '[^']+' job [0-9a-f]{8} failed \(([^)]+)\)/);
   if (!failedMatch) return false;
   return OPERATIONAL_FAILED_KINDS.has(failedMatch[1]);
 }

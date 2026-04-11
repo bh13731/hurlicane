@@ -115,6 +115,26 @@ if (dsn) {
         return null;
       }
 
+      // Assess-phase missing plan/contract warnings — the workflow
+      // has a 3-level repair ladder that retries automatically; the
+      // log fires on each retry to help classify why `write_note`
+      // wasn't called. Per-cycle repair attempts are capped, so the
+      // workflow eventually blocks permanently if every repair
+      // fails. The console.warn itself is purely diagnostic.
+      // Suppresses HURLICANE-6Z.
+      if (msg.includes('assess missing') && msg.includes('never_called')) {
+        return null;
+      }
+
+      // Zero-progress watchdog warnings — the watchdog surfaces when
+      // an implement agent has been active without milestone progress
+      // for 15min. The workflow's zero-progress recovery path handles
+      // the underlying issue (2 consecutive no-progress cycles ->
+      // block). Suppresses HURLICANE-6T.
+      if (msg.includes('implement agent active but 0 milestone progress')) {
+        return null;
+      }
+
       return event;
     },
   });
