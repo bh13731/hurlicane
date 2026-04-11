@@ -26,7 +26,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: "--allowed-tools Bash(gh:*),Read,Grep,Glob"
+          claude_args: "--allowed-tools Bash(gh:*),Read,Grep,Glob,Write"
           prompt: |
             Review PR ${{ github.repository }}#${{ github.event.pull_request.number }}.
 
@@ -39,17 +39,26 @@ jobs:
             `gh pr view ${{ github.event.pull_request.number }} --json files,title,body`
             for metadata, and `Read`/`Grep`/`Glob` to inspect surrounding code.
 
-            Post ONE summary comment with your findings via:
-            `gh pr comment ${{ github.event.pull_request.number }} --body "..."`
+            IMPORTANT — to post the review safely, you MUST:
+            1. Use the `Write` tool to save your review summary to
+               `/tmp/claude-review.md`. This avoids shell interpretation of
+               backticks, `$(...)`, and other special characters that could
+               come from untrusted PR content.
+            2. Then post it via:
+               `gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/claude-review.md`
 
-            If the PR looks clean, still post a short "looks good" comment so we
-            know the review actually ran.
+            Do NOT use `gh pr comment --body "..."` — that path is shell-parsed
+            and vulnerable to injection from PR content.
+
+            Post ONE comment. If the PR looks clean, still write a short
+            "looks good" review to the file and post it so we know the review
+            actually ran.
 
             Note: the previous version of this workflow used the
-            `code-review@claude-code-plugins` plugin with a slash-command prompt.
-            That plugin runs but silently produces no output (final turn is a
-            TodoWrite instead of a text message, so the action's
+            `code-review@claude-code-plugins` plugin with a slash-command
+            prompt. That plugin runs but silently produces no output (final
+            turn is a TodoWrite instead of a text message, so the action's
             post-buffered-inline-comments step finds nothing to post). We
-            replaced it with this direct-prompt approach. See hurlicane#64 for
-            context. Do not revert to the plugin-based version without first
-            verifying it produces visible output on a test PR.
+            replaced it with this direct-prompt approach. See hurlicane#64
+            for context. Do not revert to the plugin-based version without
+            first verifying it produces visible output on a test PR.
