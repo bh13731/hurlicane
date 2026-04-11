@@ -75,6 +75,46 @@ if (dsn) {
       // -K7, -68, -HT and variants.
       if (msg.includes('file claim conflicts')) return null;
 
+      // FailureClassifier debug output — when an agent fails with a
+      // message the classifier doesn't recognize, it logs the tail of
+      // the failure text and falls back to 'task_failure'. This fires
+      // once per unique unclassified failure, and each unique message
+      // creates a separate Sentry issue (~100+ historical issues
+      // HURLICANE-KP..HURLICANE-GM, each with 1 event). The fallback
+      // path already works correctly; the log line is purely a hint
+      // for us to extend the classifier. Not a bug, not actionable
+      // from Sentry.
+      if (msg.includes('[FailureClassifier] Unclassified failure text')) {
+        return null;
+      }
+
+      // Merge conflict pre-check warnings — when a workflow's branch
+      // has conflicts with main, the pre-check logs them so we can
+      // surface them in the workflow UI. This is operational
+      // information, not a bug. Suppresses HURLICANE-C8, -BJ, -8P.
+      if (msg.includes('merge conflict pre-check')) return null;
+
+      // Zombie tmux session cleanup — the watchdog found a tmux
+      // session without a matching agent record and killed it.
+      // Recovery action, not a bug. Suppresses HURLICANE-1F.
+      if (msg.includes('[watchdog] zombie tmux session')) return null;
+
+      // MCP session auto-recovery — after a server restart, agents
+      // reconnect with stale session IDs. The MCP transport
+      // reestablishes automatically. Suppresses HURLICANE-1B.
+      if (msg.includes('[mcp] unknown session') && msg.includes('auto-recovering')) {
+        return null;
+      }
+
+      // Work-dir missing on PTY attach — when a worktree is removed
+      // while a job is still queued, the PTY can't attach and the
+      // job is marked failed. This is the correct behaviour (the
+      // work the job would have done is gone with the worktree);
+      // the warning is informational. Suppresses HURLICANE-7M.
+      if (msg.includes('work_dir does not exist') && msg.includes('marking job failed')) {
+        return null;
+      }
+
       return event;
     },
   });
