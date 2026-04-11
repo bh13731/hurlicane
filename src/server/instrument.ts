@@ -7,6 +7,19 @@
  */
 import * as Sentry from '@sentry/node';
 
+// Swallow EPIPE on stdout/stderr — prevents the server crashing and Sentry
+// noise (HURLICANE-Q4) when the downstream log pipe is severed (terminal
+// closed, parent process gone, log-collector restart). Without these
+// listeners, the async 'error' event from the underlying socket becomes an
+// uncaughtException that Sentry captures via captureConsoleIntegration as
+// a `write EPIPE` issue originating from whatever console.log fired last.
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code !== 'EPIPE') throw err;
+});
+process.stderr.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code !== 'EPIPE') throw err;
+});
+
 const dsn = process.env.SENTRY_DSN;
 
 if (dsn) {
@@ -35,11 +48,6 @@ if (dsn) {
 
       // Hot-reload MCP session closures — expected during dev.
       if (msg.includes('[mcp] session closed')) return null;
-
-      // Queue cooldowns when no model is available for a phase — normal
-      // throttling behaviour. Suppresses HURLICANE-71, -70, -97, -1S, -1Y,
-      // -8H, -1G, -1D, -1C, -1N, -1P, -1T, -M2, -M5 and the like.
-      if (msg.includes('no dispatchable model available')) return null;
 
       // Resource RSS threshold warnings — tracked separately via the
       // HealthMonitor. Suppresses HURLICANE-NH, -P8, -NY, -NS, -NM, -NG,
