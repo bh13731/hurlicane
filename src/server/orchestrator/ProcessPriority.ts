@@ -7,14 +7,20 @@ let _niceAvailable: boolean | null = null;
 export function isNiceAvailable(): boolean {
   if (_niceAvailable != null) return _niceAvailable;
   try {
-    execFileSync('/bin/sh', ['-lc', `command -v ${JSON.stringify(NICE_BIN)} >/dev/null 2>&1`], {
-      stdio: 'pipe',
+    // Probe with the same PATH resolution that `spawn()` will use later,
+    // rather than a login-shell `command -v` lookup that can see a richer
+    // PATH than Node's child_process sees. Previously the `/bin/sh -lc`
+    // probe succeeded (login shell PATH had nice) but the subsequent
+    // `spawn('nice', ...)` failed with ENOENT (Node's PATH didn't).
+    // See HURLICANE-1E. `nice -n 0 true` is portable across GNU/BSD nice.
+    execFileSync(NICE_BIN, ['-n', '0', 'true'], {
+      stdio: 'ignore',
       timeout: 3000,
     });
     _niceAvailable = true;
   } catch {
-    /* execFileSync exits non-zero when `nice` is absent or the lookup command fails —
-       treat as unavailable so callers fall back to plain spawn without priority adjustment */
+    /* ENOENT (binary not on Node's PATH) or non-zero exit — either way,
+       fall back to plain spawn without priority adjustment. */
     _niceAvailable = false;
   }
   return _niceAvailable;
