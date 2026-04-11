@@ -26,10 +26,47 @@ if (dsn) {
       Sentry.captureConsoleIntegration({ levels: ['warn', 'error'] }),
     ],
     beforeSend(event) {
-      // Drop noisy "session closed" warnings — these are expected during
-      // hot-reload and don't indicate bugs.
+      // Drop noisy operational log messages that the captureConsoleIntegration
+      // would otherwise surface as issues. These are informational — they
+      // indicate the system is working as designed, not that something is
+      // broken. Each entry should note the Sentry issue(s) it suppresses so
+      // we can re-enable if the underlying behaviour changes.
       const msg = event.message ?? event.exception?.values?.[0]?.value ?? '';
+
+      // Hot-reload MCP session closures — expected during dev.
       if (msg.includes('[mcp] session closed')) return null;
+
+      // Queue cooldowns when no model is available for a phase — normal
+      // throttling behaviour. Suppresses HURLICANE-71, -70, -97, -1S, -1Y,
+      // -8H, -1G, -1D, -1C, -1N, -1P, -1T, -M2, -M5 and the like.
+      if (msg.includes('no dispatchable model available')) return null;
+
+      // Resource RSS threshold warnings — tracked separately via the
+      // HealthMonitor. Suppresses HURLICANE-NH, -P8, -NY, -NS, -NM, -NG,
+      // -NW, -NR, -NN, -NF, -NE, -NX, -NT, -M7, -PR, -PC, -P2, -NQ, -NJ,
+      // -ND, -Q2, -PS, -P6, -P3, -P0, -NZ and similar variants. If we
+      // genuinely start leaking memory we'll still see it via
+      // captureWithContext from the health monitor, not console.warn.
+      if (msg.includes('[resource] WARNING: orchestrator RSS')) return null;
+
+      // Watchdog inconsistency reports — the watchdog itself recovers,
+      // so the console.warn is informational. Suppresses HURLICANE-18
+      // and future variants (agent/job status drift detected + cleaned).
+      if (msg.includes('[watchdog] inconsistency:') && msg.includes('cleaning up')) {
+        return null;
+      }
+
+      // Orphaned lock release log — the watchdog is recovering, not
+      // reporting a bug. Suppresses HURLICANE-1A.
+      if (msg.includes('[watchdog] releasing') && msg.includes('orphaned lock')) {
+        return null;
+      }
+
+      // File-claim conflict warnings — the lock registry is doing its
+      // job, the workflow will retry. Suppresses HURLICANE-9K, -GW,
+      // -K7, -68, -HT and variants.
+      if (msg.includes('file claim conflicts')) return null;
+
       return event;
     },
   });
