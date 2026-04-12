@@ -505,7 +505,11 @@ export function reportStandaloneResolutionFailure(
   resolution: StandalonePrintResolution,
 ): void {
   if (resolution.status !== 'failed') return;
-  if (resolution.source === 'result' || resolution.source === 'commits') return;
+  if (
+    resolution.source === 'result'
+    || resolution.source === 'commits'
+    || resolution.source === 'rate_limit'
+  ) return;
 
   const message = [
     `Standalone print job failed via ${resolution.source}`,
@@ -513,7 +517,12 @@ export function reportStandaloneResolutionFailure(
     resolution.errorMessage,
   ].filter(Boolean).join(': ');
 
-  captureWithContext(new Error(message), { agent_id: agentId, job_id: jobId, component });
+  captureWithContext(new Error(message), {
+    agent_id: agentId,
+    job_id: jobId,
+    component,
+    resolution_source: resolution.source,
+  });
 }
 
 function logPtyLifecycleEvent(
@@ -775,6 +784,7 @@ export function startInteractiveAgent({ agentId, job, cols = 100, rows = 50, res
   closePtyLogFd(agentId); // close any lingering FD from a previous session
   fs.mkdirSync(PTY_LOG_DIR, { recursive: true });
   try { fs.unlinkSync(getPtyLogPath(agentId)); } catch { /* no previous log */ }
+  try { fs.unlinkSync(getNdjsonPath(agentId)); } catch { /* no previous ndjson */ }
   try { fs.unlinkSync(getSnapshotPath(agentId)); } catch { /* no previous snapshot */ }
   try { fs.unlinkSync(getPtyStderrPath(agentId)); } catch { /* no previous stderr */ }
 

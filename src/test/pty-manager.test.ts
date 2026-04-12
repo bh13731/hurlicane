@@ -237,6 +237,7 @@ describe('PtyManager spawning state', () => {
         'utf8',
       );
       expect(script).toContain('pty-running-agent.stderr');
+      expect(script).toContain('pty-running-agent.ndjson');
       expect(script).toContain('--output-format stream-json');
       await vi.advanceTimersByTimeAsync(4000);
 
@@ -315,7 +316,56 @@ describe('PtyManager spawning state', () => {
         agent_id: 'agent-1',
         job_id: 'job-1',
         component: 'PtyManager',
+        resolution_source: 'incomplete_run',
       }),
     );
+  });
+
+  it('classifies stderr-only standalone runs as incomplete_run', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { _resolveStandalonePrintJobOutcomeForTest } = await import('../server/orchestrator/PtyManager.js');
+
+    const job = queries.insertJob({
+      id: 'pty-stderr-only-job',
+      title: 'Stderr-only standalone print job',
+      description: 'test',
+      context: null,
+      priority: 0,
+      status: 'running',
+      is_interactive: 0,
+      work_dir: null,
+    });
+    queries.insertAgent({ id: 'pty-stderr-only-agent', job_id: job.id, status: 'running' });
+
+    const logDir = path.join(process.cwd(), 'data', 'agent-logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(logDir, 'pty-stderr-only-agent.stderr'),
+      'Claude exited before stream-json started\n',
+      'utf8',
+    );
+
+    const resolution = _resolveStandalonePrintJobOutcomeForTest('pty-stderr-only-agent', job as any);
+
+    expect(resolution.status).toBe('failed');
+    expect(resolution.source).toBe('incomplete_run');
+    expect(resolution.errorMessage).toContain('stderr tail: Claude exited before stream-json started');
+    expect(resolution.errorMessage).not.toContain('parsed ');
+  });
+
+  it('does not report standalone rate-limit failures to Sentry', async () => {
+    const { reportStandaloneResolutionFailure } = await import('../server/orchestrator/PtyManager.js');
+    const { captureWithContext } = await import('../server/instrument.js');
+
+    vi.mocked(captureWithContext).mockClear();
+
+    reportStandaloneResolutionFailure('agent-1', 'job-1', 'PtyManager', {
+      status: 'failed',
+      source: 'rate_limit',
+      errorMessage: 'Rate limited (seven_day), resets at soon',
+      detail: 'resolved from ndjson rate_limit event',
+    });
+
+    expect(captureWithContext).not.toHaveBeenCalled();
   });
 });

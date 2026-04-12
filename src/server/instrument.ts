@@ -150,7 +150,7 @@ if (dsn) {
  */
 export function captureWithContext(
   err: unknown,
-  context?: { agent_id?: string; job_id?: string; workflow_id?: string; component?: string },
+  context?: { agent_id?: string; job_id?: string; workflow_id?: string; component?: string } & Record<string, string | number | boolean | undefined>,
 ): void {
   Sentry.captureException(err, context ? { tags: { ...context } } : undefined);
 }
