@@ -273,6 +273,26 @@ function check(): void {
         (standaloneResolution ? ` (${standaloneResolution.source})` : '')
       );
 
+      // Extract cost/turns from ndjson log if the agent ran but died without a result event
+      let extractedCost: number | null = null;
+      let extractedTurns: number | null = null;
+      if (standaloneResolution?.source === 'no_terminal_evidence') {
+        try {
+          const logPath = getLogPath(agent.id);
+          if (fs.existsSync(logPath)) {
+            const lines = fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean);
+            let assistantCount = 0;
+            for (const line of lines) {
+              try {
+                const ev = JSON.parse(line);
+                if (ev.type === 'assistant') assistantCount++;
+              } catch { /* skip */ }
+            }
+            if (assistantCount > 0) extractedTurns = assistantCount;
+          }
+        } catch { /* best effort */ }
+      }
+
       queries.updateAgent(agent.id, {
         status: agentStatus,
         error_message: agentStatus === 'done'
@@ -282,6 +302,8 @@ function check(): void {
               ?? (finalStatus === 'failed' ? 'Agent session ended without calling finish_job.' : null)
             ),
         finished_at: Date.now(),
+        ...(extractedTurns !== null ? { num_turns: extractedTurns } : {}),
+        ...(extractedCost !== null ? { cost_usd: extractedCost } : {}),
       });
       if (runningJob) {
         queries.updateJobStatus(runningJob.id, finalStatus);
@@ -295,6 +317,14 @@ function check(): void {
           source: standaloneResolution.source,
           detail: standaloneResolution.detail,
         });
+        // Report to Sentry when an agent dies mid-session without a result event
+        // (the most common failure mode — agents that ran but the CLI exited uncleanly)
+        if (standaloneResolution.source === 'no_terminal_evidence' && standaloneResolution.status === 'failed') {
+          captureWithContext(
+            new Error(`Agent died without result: ${standaloneResolution.detail}`),
+            { agent_id: agent.id, job_id: agent.job_id, component: 'StuckJobWatchdog', resolution_source: standaloneResolution.source },
+          );
+        }
       }
     }
 
