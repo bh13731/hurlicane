@@ -1,4 +1,5 @@
 import { exec } from 'child_process';
+// Verify runner - executes shell commands for workflow verification
 
 export interface VerifyResult {
   exitCode: number;
