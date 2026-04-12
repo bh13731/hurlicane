@@ -306,11 +306,28 @@ export function resolveStandalonePrintJobOutcome(agentId: string, job: Pick<Job,
     };
   }
 
+  // Check if there are any events at all — if the agent did work but died without
+  // a result event, extract what we can for diagnostics
+  const ndjsonPath = path.join(PTY_LOG_DIR, `${agentId}.ndjson`);
+  let eventCount = 0;
+  try {
+    if (fs.existsSync(ndjsonPath)) {
+      const content = fs.readFileSync(ndjsonPath, 'utf8');
+      eventCount = content.split('\n').filter(Boolean).length;
+    }
+  } catch { /* ignore */ }
+
+  const detail = eventCount > 0
+    ? `Agent produced ${eventCount} events but died without a result event — likely CLI crash or unclean exit`
+    : 'no final ndjson result/rate-limit event and no commits since base_sha';
+
   return {
     status: 'failed',
     source: 'no_terminal_evidence',
-    errorMessage: 'Agent session ended without a final result event or new commits.',
-    detail: 'no final ndjson result/rate-limit event and no commits since base_sha',
+    errorMessage: eventCount > 0
+      ? `Agent died mid-session after ${eventCount} events without producing a result. Likely CLI crash, API error, or context overflow.`
+      : 'Agent session ended without a final result event or new commits.',
+    detail,
   };
 }
 
