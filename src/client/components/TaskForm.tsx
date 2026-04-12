@@ -74,8 +74,9 @@ export function TaskForm({ onSubmit, onClose, availableJobs = [] }: TaskFormProp
   const [stopModeImplement, setStopModeImplement] = useState<StopMode>('turns');
   const [stopValueImplement, setStopValueImplement] = useState<number | null>(100);
 
-  // ── Workflow-only: verify command ─────────────────────────────────────────
-  const [verifyCommand, setVerifyCommand] = useState<string>('');
+  // ── Workflow-only: start command (for verify agent) ──────────────────────
+  const [verifyEnabled, setVerifyEnabled] = useState(true);
+  const [startCommand, setStartCommand] = useState<string>('npm run dev');
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -192,7 +193,7 @@ export function TaskForm({ onSubmit, onClose, availableJobs = [] }: TaskFormProp
         req.stopValueReview = stopValueReview ?? undefined;
         req.stopModeImplement = stopModeImplement;
         req.stopValueImplement = stopValueImplement ?? undefined;
-        req.verifyCommand = verifyCommand.trim() || undefined;
+        req.startCommand = verifyEnabled && startCommand.trim() ? startCommand.trim() : undefined;
       }
 
       await onSubmit(req);
@@ -644,21 +645,29 @@ export function TaskForm({ onSubmit, onClose, availableJobs = [] }: TaskFormProp
                     onValueChange={setStopValueImplement}
                   />
                   <div className="form-group">
-                    <label htmlFor="task-verify-cmd" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      Verify command
-                      <span style={{ fontSize: 11, color: '#888' }}>(optional)</span>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={verifyEnabled}
+                        onChange={e => setVerifyEnabled(e.target.checked)}
+                      />
+                      Verify before PR
                     </label>
-                    <input
-                      id="task-verify-cmd"
-                      type="text"
-                      value={verifyCommand}
-                      onChange={e => setVerifyCommand(e.target.value)}
-                      placeholder="e.g. doppler run -- npx tsx scripts/smoke-test.ts"
-                      style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
-                    />
-                    <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-                      Shell command to run after each implement cycle. Exit 0 = pass; non-zero = fail and retry.
-                    </div>
+                    {verifyEnabled && (
+                      <>
+                        <input
+                          id="task-start-cmd"
+                          type="text"
+                          value={startCommand}
+                          onChange={e => setStartCommand(e.target.value)}
+                          placeholder="e.g. npm run dev, docker compose up"
+                          style={{ fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 4 }}
+                        />
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                          Command to start the app. A QA agent will write and run smoke tests against it.
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               )}

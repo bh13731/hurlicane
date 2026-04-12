@@ -5,10 +5,9 @@ import path from 'path';
 import { captureWithContext, Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import type { Job, Workflow, WorkflowPhase, StopMode, VerifyRun } from '../../shared/types.js';
+import type { Job, Workflow, WorkflowPhase, StopMode } from '../../shared/types.js';
 import { effectiveMaxTurns, isCodexModel } from '../../shared/types.js';
-import { runVerification } from './VerifyRunner.js';
-import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildWorkflowRepairPrompt, buildSimplifiedAssessRepairPrompt, type InlineWorkflowContext } from './WorkflowPrompts.js';
+import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildVerifyPrompt, buildWorkflowRepairPrompt, buildSimplifiedAssessRepairPrompt, type InlineWorkflowContext } from './WorkflowPrompts.js';
 import { getAvailableModel, getFallbackModel, getAlternateProviderModel, getModelProvider, markModelRateLimited, markProviderRateLimited } from './ModelClassifier.js';
 import { classifyJobFailure, isFallbackEligibleFailure, isSameModelRetryEligible, shouldMarkProviderUnavailable } from './FailureClassifier.js';
 import { nudgeQueue } from './WorkQueueManager.js';
@@ -145,26 +144,9 @@ function _onJobCompleted(job: Job): void {
         }
         const updated = queries.getWorkflowById(workflow.id)!;
         if (milestones.total > 0 && meetsCompletionThreshold(milestones, updated.completion_threshold)) {
-          if (updated.verify_command) {
-            console.log(`[workflow ${workflow.id}] milestones meet completion threshold after review — running verify before finalization`);
-            const lastImplementJob = queries.getJobsForWorkflow(workflow.id)
-              .filter(j => j.workflow_phase === 'implement' && j.status === 'done')
-              .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0];
-            if (lastImplementJob) {
-              scheduleVerifyPhase(updated, lastImplementJob).catch(err => {
-                console.error(`[workflow ${workflow.id}] verify phase threw unexpectedly:`, err);
-                captureWithContext(err, { workflow_id: workflow.id, component: 'VerifyRunner' });
-                updateAndEmit(workflow.id, {
-                  status: 'blocked',
-                  current_phase: 'verify' as WorkflowPhase,
-                  blocked_reason: `Verify phase threw an unexpected error: ${errMsg(err)}`,
-                });
-              });
-            } else {
-              const reason = 'Verify command configured but no completed implement job found to verify against';
-              console.log(`[workflow ${workflow.id}] ${reason} — marking blocked`);
-              updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'review' as WorkflowPhase, blocked_reason: reason });
-            }
+          if (updated.start_command) {
+            console.log(`[workflow ${workflow.id}] milestones meet completion threshold after review — spawning verify agent before finalization`);
+            spawnPhaseJob(updated, 'verify', updated.current_cycle);
           } else {
             console.log(`[workflow ${workflow.id}] milestones meet completion threshold (${milestones.done}/${milestones.total}, threshold ${updated.completion_threshold}) after review — marking complete`);
             updateAndEmit(workflow.id, { status: 'complete', current_phase: 'idle' as WorkflowPhase });
@@ -194,10 +176,64 @@ function _onJobCompleted(job: Job): void {
       break;
     }
 
-    case 'verify':
-      // Verify is not a job-based phase — jobs should never be tagged with it.
-      console.warn(`[workflow ${workflow.id}] unexpected job completion for phase 'verify' (job ${job.id.slice(0, 8)}) — ignoring`);
+    case 'verify': {
+      try {
+        const cycle = job.workflow_cycle ?? workflow.current_cycle;
+        const resultNote = queries.getNote(`workflow/${workflow.id}/verify-result/${cycle}`);
+        const resultContent = resultNote?.value ?? '';
+        // Match "## Verify Result: PASS" on its own line (not "PASS | FAIL" template text)
+        const passed = /^## Verify Result:\s*PASS\s*$/mi.test(resultContent);
+
+        // Persist verify run record for dashboard
+        const previousRuns = queries.getVerifyRunsForCycle(workflow.id, cycle);
+        const attempt = previousRuns.length + 1;
+        queries.insertVerifyRun({
+          id: randomUUID(),
+          workflow_id: workflow.id,
+          cycle,
+          attempt,
+          command: 'verify-agent',
+          exit_code: passed ? 0 : 1,
+          stdout: resultContent || null,
+          stderr: null,
+          duration_ms: null,
+          created_at: Date.now(),
+        });
+
+        if (passed) {
+          console.log(`[workflow ${workflow.id}] verify agent PASSED (cycle ${cycle}, attempt ${attempt}) — finalizing workflow`);
+          queries.deleteNote(`workflow/${workflow.id}/verify-failure/${cycle}`);
+          updateAndEmit(workflow.id, { status: 'complete', current_phase: 'idle' as WorkflowPhase });
+          finalizeWorkflow(queries.getWorkflowById(workflow.id)!).catch(err => console.error(`[workflow ${workflow.id}] finalizeWorkflow error:`, err));
+        } else {
+          const maxRetries = workflow.max_verify_retries;
+          console.log(`[workflow ${workflow.id}] verify agent FAILED (cycle ${cycle}, attempt ${attempt}) — ${attempt}/${maxRetries + 1} failures`);
+
+          // Persist failure note for the next implement prompt
+          queries.upsertNote(`workflow/${workflow.id}/verify-failure/${cycle}`, resultContent, null);
+
+          if (attempt <= maxRetries) {
+            console.log(`[workflow ${workflow.id}] verify failure ${attempt}/${maxRetries} — re-spawning implement for cycle ${cycle} (verify retry)`);
+            spawnPhaseJob(queries.getWorkflowById(workflow.id)!, 'implement', cycle);
+          } else {
+            const summary = resultContent.slice(0, 300) || '(no result note)';
+            const verifyFailReason = `verify_failed: Verify agent failed ${attempt} time(s) on cycle ${cycle}: ${summary}`;
+            console.log(`[workflow ${workflow.id}] ${verifyFailReason} — marking blocked`);
+            updateAndEmit(workflow.id, {
+              status: 'blocked',
+              current_phase: 'verify' as WorkflowPhase,
+              blocked_reason: verifyFailReason,
+            });
+          }
+        }
+      } catch (err) {
+        const errorMessage = errMsg(err);
+        console.error(`[workflow ${workflow.id}] error in verify handler (cycle ${job.workflow_cycle}):`, err);
+        captureWithContext(err, { job_id: job.id, workflow_id: workflow.id, component: 'WorkflowManager' });
+        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'verify' as WorkflowPhase, blocked_reason: `Internal error in verify handler: ${errorMessage}` });
+      }
       break;
+    }
 
     default:
       console.warn(`[workflow ${workflow.id}] unknown phase '${job.workflow_phase}' on job ${job.id}`);
@@ -310,17 +346,9 @@ function handleImplementCompleted(job: Job, workflow: Workflow, milestones: { to
 function advanceAfterImplement(job: Job, workflow: Workflow, updated: Workflow, milestones: { total: number; done: number }): void {
   if (milestones.total > 0 && meetsCompletionThreshold(milestones, updated.completion_threshold)) {
     // If verify command is configured, run verification before finalizing
-    if (updated.verify_command) {
-      console.log(`[workflow ${workflow.id}] milestones meet completion threshold (${milestones.done}/${milestones.total}) — running verify before finalization`);
-      scheduleVerifyPhase(updated, job).catch(err => {
-        console.error(`[workflow ${workflow.id}] verify phase threw unexpectedly:`, err);
-        captureWithContext(err, { workflow_id: workflow.id, component: 'VerifyRunner' });
-        updateAndEmit(workflow.id, {
-          status: 'blocked',
-          current_phase: 'verify' as WorkflowPhase,
-          blocked_reason: `Verify phase threw an unexpected error: ${errMsg(err)}`,
-        });
-      });
+    if (updated.start_command) {
+      console.log(`[workflow ${workflow.id}] milestones meet completion threshold (${milestones.done}/${milestones.total}) — spawning verify agent before finalization`);
+      spawnPhaseJob(updated, 'verify', updated.current_cycle);
       return;
     }
     console.log(`[workflow ${workflow.id}] milestones meet completion threshold (${milestones.done}/${milestones.total}, threshold ${updated.completion_threshold}) — marking complete`);
@@ -338,171 +366,13 @@ function advanceAfterImplement(job: Job, workflow: Workflow, updated: Workflow, 
   }
 }
 
-// ─── Verify Phase ──────────────────────────────────────────────────────────────
-
-/**
- * Run the verify command asynchronously after a successful implement phase.
- * Sets current_phase to 'verify', runs the command, persists results, writes a
- * worklog note, then either advances to the next review cycle (on pass) or
- * re-spawns implement for the same cycle up to max_verify_retries times (on fail).
- * After exhausting retries the workflow is blocked with reason 'verify_failed'.
- */
-async function scheduleVerifyPhase(
-  workflow: Workflow,
-  implementJob: Job,
-): Promise<void> {
-  const workflowId = workflow.id;
-  const cycle = implementJob.workflow_cycle ?? workflow.current_cycle;
-
-  // Idempotency guard: one verify at a time per cycle
-  const inProgressKey = `workflow/${workflowId}/verify-in-progress/${cycle}`;
-  if (!queries.insertNoteIfNotExists(inProgressKey, 'running', null)) {
-    console.log(`[workflow ${workflowId}] verify already in progress for cycle ${cycle} — skipping duplicate`);
-    return;
-  }
-
-  updateAndEmit(workflowId, { current_phase: 'verify' as WorkflowPhase });
-
-  const verifyCommand = workflow.verify_command!;
-  const cwd = workflow.worktree_path ?? workflow.work_dir ?? process.cwd();
-
-  // Count previous verify attempts for this cycle to determine attempt number
-  const previousRuns = queries.getVerifyRunsForCycle(workflowId, cycle);
-  const attempt = previousRuns.length + 1;
-
-  console.log(`[workflow ${workflowId}] running verify phase (cycle ${cycle}, attempt ${attempt}): ${verifyCommand}`);
-
-  let verifyResult;
-  try {
-    verifyResult = await runVerification(verifyCommand, cwd);
-  } catch (err) {
-    // runVerification never rejects, but guard against unexpected throws
-    verifyResult = { exitCode: 1, stdout: '', stderr: String(err), durationMs: 0 };
-  }
-
-  // Persist structured result
-  const runRecord: VerifyRun = {
-    id: randomUUID(),
-    workflow_id: workflowId,
-    cycle,
-    attempt,
-    command: verifyCommand,
-    exit_code: verifyResult.exitCode,
-    stdout: verifyResult.stdout || null,
-    stderr: verifyResult.stderr || null,
-    duration_ms: verifyResult.durationMs,
-    created_at: Date.now(),
-  };
-  queries.insertVerifyRun(runRecord);
-
-  // Write worklog entry
-  const verifyStatus = verifyResult.exitCode === 0 ? 'PASSED' : 'FAILED';
-  const worklogParts = [
-    `## Cycle ${cycle} — Verify (${verifyStatus})`,
-    `**Timestamp:** ${new Date().toISOString()}`,
-    `**Command:** \`${verifyCommand}\``,
-    `**Exit code:** ${verifyResult.exitCode}`,
-    `**Duration:** ${(verifyResult.durationMs / 1000).toFixed(1)}s`,
-    `**Attempt:** ${attempt} of ${workflow.max_verify_retries + 1}`,
-  ];
-  if (verifyResult.stdout) worklogParts.push(`\n### stdout\n\`\`\`\n${verifyResult.stdout.slice(0, 5000)}\n\`\`\``);
-  if (verifyResult.stderr) worklogParts.push(`\n### stderr\n\`\`\`\n${verifyResult.stderr.slice(0, 5000)}\n\`\`\``);
-  queries.upsertNote(`workflow/${workflowId}/worklog/cycle-${cycle}-verify`, worklogParts.join('\n'), null);
-
-  // Clean up in-progress marker so reconcile doesn't re-trigger
-  queries.deleteNote(inProgressKey);
-
-  // Re-read fresh state — workflow may have been cancelled/blocked during async wait
-  const fresh = queries.getWorkflowById(workflowId);
-  if (!fresh || fresh.status !== 'running') {
-    console.log(`[workflow ${workflowId}] workflow no longer running after verify (status: ${fresh?.status ?? 'missing'}) — skipping advancement`);
-    return;
-  }
-
-  if (verifyResult.exitCode === 0) {
-    console.log(`[workflow ${workflowId}] verify PASSED (cycle ${cycle}, attempt ${attempt}, ${(verifyResult.durationMs / 1000).toFixed(1)}s) — finalizing workflow`);
-    // Clear any stale verify failure note from a previous failed attempt
-    queries.deleteNote(`workflow/${workflowId}/verify-failure/${cycle}`);
-    updateAndEmit(workflowId, { status: 'complete', current_phase: 'idle' as WorkflowPhase });
-    finalizeWorkflow(queries.getWorkflowById(workflowId)!).catch(err => console.error(`[workflow ${workflowId}] finalizeWorkflow error:`, err));
-  } else {
-    const failedRuns = queries.getVerifyRunsForCycle(workflowId, cycle).filter(r => r.exit_code !== 0);
-    const maxRetries = fresh.max_verify_retries;
-
-    console.log(`[workflow ${workflowId}] verify FAILED (cycle ${cycle}, attempt ${attempt}, exit ${verifyResult.exitCode}) — ${failedRuns.length}/${maxRetries + 1} failures`);
-
-    // Persist the latest failure so the next implement prompt can surface it
-    queries.upsertNote(
-      `workflow/${workflowId}/verify-failure/${cycle}`,
-      JSON.stringify({
-        command: verifyCommand,
-        exitCode: verifyResult.exitCode,
-        stdout: verifyResult.stdout,
-        stderr: verifyResult.stderr,
-        attempt,
-        durationMs: verifyResult.durationMs,
-      }),
-      null,
-    );
-
-    if (attempt <= maxRetries) {
-      // Retries remain — re-run implement for the same cycle with verify retry context
-      // Apply the same worktree safety checks that spawnPhaseJob uses
-      if (blockIfMissingRequiredWorktree(fresh, 'implement')) return;
-      if (fresh.worktree_path && fresh.worktree_branch) {
-        const branchCheck = ensureWorktreeBranch(fresh.worktree_path, fresh.worktree_branch);
-        if (!branchCheck.ok) {
-          const reason = `Worktree branch verification failed before verify retry: ${branchCheck.error}`;
-          console.log(`[workflow ${workflowId}] ${reason} — marking blocked`);
-          updateAndEmit(workflowId, { status: 'blocked', current_phase: 'implement' as WorkflowPhase, blocked_reason: reason });
-          return;
-        }
-      }
-
-      console.log(`[workflow ${workflowId}] verify failure ${attempt}/${maxRetries} — re-spawning implement for cycle ${cycle} (verify retry)`);
-      const inlineContext = preReadWorkflowContext(workflowId, { cycle });
-      const prompt = buildImplementPrompt(fresh, cycle, inlineContext);
-      const model = getWorkflowFallbackModel(fresh, 'implement', fresh.implementer_model) ?? fresh.implementer_model;
-      const retryJob = queries.insertJob({
-        id: randomUUID(),
-        title: `[Workflow C${cycle}] Implement (verify retry ${attempt})`,
-        description: prompt,
-        context: JSON.stringify({ is_verify_retry: true }),
-        priority: 0,
-        model,
-        template_id: fresh.template_id,
-        work_dir: fresh.worktree_path ?? fresh.work_dir,
-        max_turns: effectiveMaxTurns(fresh.stop_mode_implement, fresh.stop_value_implement),
-        stop_mode: fresh.stop_mode_implement,
-        stop_value: fresh.stop_value_implement,
-        project_id: fresh.project_id,
-        use_worktree: 0,
-        workflow_id: workflowId,
-        workflow_cycle: cycle,
-        workflow_phase: 'implement',
-      });
-      try { socket.emitJobNew(retryJob); } catch (emitErr) { console.warn(`[workflow ${workflowId}] socket.emitJobNew failed:`, emitErr); }
-      nudgeQueue();
-      updateAndEmit(workflowId, { current_phase: 'implement' as WorkflowPhase });
-    } else {
-      const output = (verifyResult.stderr || verifyResult.stdout).slice(0, 300);
-      const verifyFailReason = `verify_failed: Verify phase failed ${attempt} time(s) on cycle ${cycle} (exit ${verifyResult.exitCode}): ${output || '(no output)'}`;
-      console.log(`[workflow ${workflowId}] ${verifyFailReason} — marking blocked`);
-      updateAndEmit(workflowId, {
-        status: 'blocked',
-        current_phase: 'verify' as WorkflowPhase,
-        blocked_reason: verifyFailReason,
-      });
-    }
-  }
-}
-
 function handleZeroProgressAndAdvance(job: Job, workflow: Workflow, updated: Workflow, milestones: { total: number; done: number }): void {
   const jobContext = job.context ? JSON.parse(job.context) : {};
 
-  // Verify-retry implements are fixing test/verify failures, not progressing milestones.
+  // If this cycle has failed verify runs, this implement was spawned to fix verify failures.
   // Skip zero-progress detection — just advance to the next cycle.
-  if (jobContext.is_verify_retry) {
+  const verifyRuns = queries.getVerifyRunsForCycle(workflow.id, updated.current_cycle);
+  if (verifyRuns.some(r => r.exit_code !== 0)) {
     const nextCycle = updated.current_cycle + 1;
     updateAndEmit(workflow.id, { current_cycle: nextCycle });
     spawnPhaseJob(queries.getWorkflowById(workflow.id)!, 'review', nextCycle);
@@ -708,9 +578,7 @@ export function preReadWorkflowContext(workflowId: string, opts: { cycle?: numbe
   if (cycle !== undefined && cycle > 0) {
     const failureNote = queries.getNote(`workflow/${workflowId}/verify-failure/${cycle}`);
     if (failureNote?.value) {
-      try {
-        verifyFailure = JSON.parse(failureNote.value) as InlineWorkflowContext['verifyFailure'];
-      } catch { /* ignore malformed note */ }
+      verifyFailure = failureNote.value;
     }
   }
 
@@ -745,7 +613,7 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
   let stopValue: number | null;
   let prompt: string;
 
-  const inlineContext = (phase === 'review' || phase === 'implement')
+  const inlineContext = (phase === 'review' || phase === 'implement' || phase === 'verify')
     ? preReadWorkflowContext(workflow.id, { cycle }) : undefined;
 
   switch (phase) {
@@ -764,6 +632,12 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
       model = workflow.implementer_model;
       stopMode = workflow.stop_mode_implement; stopValue = workflow.stop_value_implement;
       prompt = buildImplementPrompt(workflow, cycle, inlineContext);
+      break;
+    case 'verify':
+      model = 'claude-opus-4-6';
+      stopMode = 'turns';
+      stopValue = 40;
+      prompt = buildVerifyPrompt(workflow, cycle, inlineContext);
       break;
     default:
       throw new Error(`Invalid phase: ${phase}`);
@@ -862,33 +736,7 @@ export function reconcileRunningWorkflows(): void {
     const hasActiveJob = jobs.some(job => ACTIVE.has(job.status));
     if (hasActiveJob) continue;
 
-    // Verify is not a job-based phase — re-trigger it on restart if in-progress marker is gone
-    if (workflow.current_phase === 'verify') {
-      const inProgressKey = `workflow/${workflow.id}/verify-in-progress/${workflow.current_cycle}`;
-      const inProgress = queries.getNote(inProgressKey);
-      if (inProgress) {
-        // Still marked as in-progress — may be a timing race; leave it alone
-        continue;
-      }
-      // In-progress marker was cleaned up (or never written) — re-trigger verification
-      const lastImplementJob = [...jobs]
-        .filter(j => j.workflow_phase === 'implement' && j.workflow_cycle === workflow.current_cycle && j.status === 'done')
-        .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0];
-      if (!lastImplementJob) {
-        updateAndEmit(workflow.id, { status: 'blocked', blocked_reason: `Workflow stuck in verify on cycle ${workflow.current_cycle} with no completed implement job to re-verify` });
-        continue;
-      }
-      console.log(`[workflow-gap] re-triggering verify for workflow ${workflow.id.slice(0, 8)} (cycle ${workflow.current_cycle}) after restart`);
-      logResilienceEvent('gap_detector_recovery', 'workflow', workflow.id, {
-        from_phase: 'verify', from_cycle: workflow.current_cycle, to_phase: 'verify', to_cycle: workflow.current_cycle,
-        to_status: 'running', trigger_job_id: lastImplementJob.id, trigger_job_status: 'verify_restart',
-      });
-      scheduleVerifyPhase(workflow, lastImplementJob).catch(err => {
-        console.error(`[workflow ${workflow.id}] verify restart error:`, err);
-        updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'verify' as WorkflowPhase, blocked_reason: `Verify restart threw an error: ${errMsg(err)}` });
-      });
-      continue;
-    }
+    // Verify is now a job-based phase — the generic reconciliation below handles it
 
     if (workflow.current_phase === 'idle') {
       updateAndEmit(workflow.id, { status: 'blocked', blocked_reason: 'Workflow marked running but no active phase job exists' });
@@ -1016,29 +864,8 @@ export function resumeWorkflow(workflow: Workflow, options: { phase?: WorkflowPh
   let stopValue: number | null;
   let prompt: string;
 
-  const inlineContext = (phase === 'review' || phase === 'implement')
+  const inlineContext = (phase === 'review' || phase === 'implement' || phase === 'verify')
     ? preReadWorkflowContext(updated.id, { cycle }) : undefined;
-
-  // Verify is not a job-based phase — re-trigger the verification command
-  if (phase === 'verify') {
-    const lastImplementJob = queries.getJobsForWorkflow(updated.id)
-      .filter(j => j.workflow_phase === 'implement' && j.workflow_cycle === cycle && j.status === 'done')
-      .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0];
-    if (!lastImplementJob) {
-      throw new Error(`Cannot resume verify phase on cycle ${cycle}: no completed implement job found`);
-    }
-    if (!updated.verify_command) {
-      throw new Error(`Cannot resume verify phase: workflow has no verify_command`);
-    }
-    scheduleVerifyPhase(updated, lastImplementJob).catch(err => {
-      console.error(`[workflow ${workflow.id}] verify resume error:`, err);
-      updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'verify' as WorkflowPhase, blocked_reason: `Verify resume threw an error: ${errMsg(err)}` });
-    });
-    // Return a synthetic placeholder job for the API response
-    return queries.getJobsForWorkflow(updated.id)
-      .filter(j => j.workflow_phase === 'implement' && j.workflow_cycle === cycle)
-      .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0] ?? lastImplementJob;
-  }
 
   switch (phase) {
     case 'assess':
@@ -1055,6 +882,11 @@ export function resumeWorkflow(workflow: Workflow, options: { phase?: WorkflowPh
       model = updated.implementer_model;
       stopMode = updated.stop_mode_implement; stopValue = updated.stop_value_implement;
       prompt = buildImplementPrompt(updated, cycle, inlineContext);
+      break;
+    case 'verify':
+      model = 'claude-opus-4-6';
+      stopMode = 'turns'; stopValue = 40;
+      prompt = buildVerifyPrompt(updated, cycle, inlineContext);
       break;
     default:
       throw new Error(`Cannot resume from phase '${phase}'`);

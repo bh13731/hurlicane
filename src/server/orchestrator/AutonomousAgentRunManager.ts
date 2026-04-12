@@ -58,7 +58,7 @@ export function createAutonomousAgentRun(
     blocked_reason: null,
     pr_url: null,
     completion_threshold: Math.min(Math.max(body.completionThreshold ?? 1.0, 0.1), 1.0),
-    verify_command: body.verifyCommand?.trim() || null,
+    start_command: body.startCommand?.trim() || null,
     max_verify_retries: Math.min(Math.max(body.maxVerifyRetries ?? 2, 0), 10),
     created_at: now,
     updated_at: now,

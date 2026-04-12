@@ -459,15 +459,15 @@ export function WorkflowDetailModal({ workflow, agents, onClose, onWorkflowUpdat
                 <div>
                   {!detail?.verify_runs || detail.verify_runs.length === 0 ? (
                     <div style={{ color: '#888', fontSize: 13 }}>
-                      No verify runs yet. {workflow.verify_command
-                        ? `Verify command: ${workflow.verify_command}`
-                        : 'No verify command configured for this workflow.'}
+                      No verify runs yet. {workflow.start_command
+                        ? `Start command: ${workflow.start_command}`
+                        : 'No start command configured for this workflow.'}
                     </div>
                   ) : (
                     <div>
-                      {workflow.verify_command && (
+                      {workflow.start_command && (
                         <div style={{ marginBottom: 12, fontSize: 12, color: '#999' }}>
-                          Command: <code style={{ background: '#1a1a1a', padding: '2px 6px', borderRadius: 4, color: '#e5e5e5' }}>{workflow.verify_command}</code>
+                          Start command: <code style={{ background: '#1a1a1a', padding: '2px 6px', borderRadius: 4, color: '#e5e5e5' }}>{workflow.start_command}</code>
                         </div>
                       )}
                       {[...detail.verify_runs].reverse().map(run => {

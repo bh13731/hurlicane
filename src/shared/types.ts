@@ -131,7 +131,7 @@ export interface Workflow {
   blocked_reason: string | null;
   pr_url: string | null;
   completion_threshold: number;
-  verify_command: string | null;
+  start_command: string | null;
   max_verify_retries: number;
   created_at: number;
   updated_at: number;
@@ -575,7 +575,7 @@ export interface CreateWorkflowRequest {
   // creates a new project.  The unified CreateTaskRequest supports projectId
   // for job-routed tasks only; workflow-routed tasks reject it at validation.
   completionThreshold?: number;
-  verifyCommand?: string;
+  startCommand?: string;
   maxVerifyRetries?: number;
 }
 
@@ -638,7 +638,7 @@ export interface CreateTaskRequest {
   completionThreshold?: number;
 
   // ── Verification (workflow-only) ─────────────────────────────────────────
-  verifyCommand?: string;               // shell command to run after each implement phase
+  startCommand?: string;               // command to start the app for smoke testing (e.g. npm run dev)
   maxVerifyRetries?: number;             // max retries on verify failure (default 2)
 
   // ── Advanced job options (quick / reviewed only) ──────────────────────────
