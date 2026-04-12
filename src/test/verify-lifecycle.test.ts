@@ -287,6 +287,85 @@ describe('WorkflowManager verify agent lifecycle', () => {
     expect(failureNote!.value).toContain('FAIL');
   });
 
+  // ── No result note = FAIL ──────────────────────────────────────────────────
+
+  it('treats missing result note as FAIL', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { getWorkflowById, updateWorkflow, upsertNote, getJobsForWorkflow } = await import('../server/db/queries.js');
+    const { meetsCompletionThreshold } = await import('../server/orchestrator/WorkflowMilestoneParser.js');
+
+    vi.mocked(meetsCompletionThreshold).mockReturnValue(true);
+
+    const { workflow } = await makeVerifyWorkflow({ current_cycle: 1 });
+    updateWorkflow(workflow.id, { start_command: 'npm run dev', max_verify_retries: 2 } as any);
+    upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [x] M2\n- [x] M3', null);
+
+    // Implement completes → verify spawned
+    const implJob = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+    onJobCompleted(implJob);
+
+    // Verify agent completes but writes NO result note
+    const verifyJob = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'verify',
+      status: 'done',
+    });
+    onJobCompleted(verifyJob);
+
+    // Should NOT be complete — missing note means FAIL
+    const freshWf = getWorkflowById(workflow.id)!;
+    expect(freshWf.status).not.toBe('complete');
+
+    // Should have spawned a retry implement job
+    const jobs = getJobsForWorkflow(workflow.id);
+    const implJobs = jobs.filter(j => j.workflow_phase === 'implement');
+    expect(implJobs.length).toBeGreaterThan(1);
+  });
+
+  // ── Template text not a false positive ────────────────────────────────────
+
+  it('does not false-positive on PASS | FAIL template text', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { getWorkflowById, updateWorkflow, upsertNote } = await import('../server/db/queries.js');
+    const { meetsCompletionThreshold } = await import('../server/orchestrator/WorkflowMilestoneParser.js');
+
+    vi.mocked(meetsCompletionThreshold).mockReturnValue(true);
+
+    const { workflow } = await makeVerifyWorkflow({ current_cycle: 1 });
+    updateWorkflow(workflow.id, { start_command: 'npm run dev', max_verify_retries: 2 } as any);
+    upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [x] M2\n- [x] M3', null);
+
+    // Implement → verify
+    const implJob = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'implement',
+      status: 'done',
+    });
+    onJobCompleted(implJob);
+
+    // Agent echoes the template without filling it in
+    upsertNote(`workflow/${workflow.id}/verify-result/1`, '## Verify Result: PASS | FAIL\n\nI could not run the tests.', null);
+
+    const verifyJob = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 1,
+      workflow_phase: 'verify',
+      status: 'done',
+    });
+    onJobCompleted(verifyJob);
+
+    // Should NOT be treated as PASS
+    const freshWf = getWorkflowById(workflow.id)!;
+    expect(freshWf.status).not.toBe('complete');
+  });
+
   // ── Verify fail exhausted ─────────────────────────────────────────────────
 
   it('blocks workflow after max_verify_retries exhausted', async () => {

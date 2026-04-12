@@ -181,7 +181,8 @@ function _onJobCompleted(job: Job): void {
         const cycle = job.workflow_cycle ?? workflow.current_cycle;
         const resultNote = queries.getNote(`workflow/${workflow.id}/verify-result/${cycle}`);
         const resultContent = resultNote?.value ?? '';
-        const passed = resultContent.includes('## Verify Result: PASS');
+        // Match "## Verify Result: PASS" on its own line (not "PASS | FAIL" template text)
+        const passed = /^## Verify Result:\s*PASS\s*$/mi.test(resultContent);
 
         // Persist verify run record for dashboard
         const previousRuns = queries.getVerifyRunsForCycle(workflow.id, cycle);
