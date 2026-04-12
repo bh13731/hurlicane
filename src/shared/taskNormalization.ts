@@ -127,8 +127,8 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
         return `${field} is a workflow-only field and cannot be used on job-routed tasks (iterations = 1)`;
       }
     }
-    if (req.verifyCommand !== undefined) {
-      return 'verifyCommand is a workflow-only field and cannot be used on job-routed tasks (iterations = 1)';
+    if (req.startCommand !== undefined) {
+      return 'startCommand is a workflow-only field and cannot be used on job-routed tasks (iterations = 1)';
     }
     if (req.maxVerifyRetries !== undefined) {
       return 'maxVerifyRetries is a workflow-only field and cannot be used on job-routed tasks (iterations = 1)';
@@ -299,7 +299,7 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
     useWorktree: canonical.useWorktree,
     templateId: req.templateId,
     completionThreshold: req.completionThreshold,
-    verifyCommand: req.verifyCommand,
+    startCommand: req.startCommand,
     maxVerifyRetries: req.maxVerifyRetries,
     // Per-phase stopping conditions
     maxTurnsAssess: req.maxTurnsAssess,
