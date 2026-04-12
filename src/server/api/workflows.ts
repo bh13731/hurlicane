@@ -7,7 +7,7 @@ import { cancelledAgents } from '../orchestrator/AgentRunner.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import { disconnectAgent, isTmuxSessionAlive, saveSnapshot } from '../orchestrator/PtyManager.js';
 import { createAutonomousAgentRun } from '../orchestrator/AutonomousAgentRunManager.js';
-import type { CreateAutonomousAgentRunRequest, WorkflowPhase } from '../../shared/types.js';
+import type { CreateAutonomousAgentRunRequest, WorkflowPhase, VerifyRun } from '../../shared/types.js';
 import { createWorkflowSchema, resumeWorkflowSchema, validateBody } from './validation.js';
 
 const router = Router();
@@ -32,11 +32,14 @@ router.get('/:id', (req, res) => {
     if (full) worklogs.push({ key: n.key, value: full.value, updated_at: full.updated_at });
   }
 
+  const verifyRuns: VerifyRun[] = queries.getVerifyRunsForWorkflow(workflow.id);
+
   res.json({
     ...workflow,
     plan: planNote?.value ?? null,
     contract: contractNote?.value ?? null,
     worklogs,
+    verify_runs: verifyRuns,
   });
 });
 

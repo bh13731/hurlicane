@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Workflow, Job, AgentWithJob, WorkflowMetrics } from '@shared/types';
+import type { Workflow, Job, AgentWithJob, WorkflowMetrics, VerifyRun } from '@shared/types';
 
 function useNowTick(enabled: boolean): number {
   const [now, setNow] = useState(Date.now());
@@ -15,6 +15,7 @@ interface WorkflowDetail extends Workflow {
   plan: string | null;
   contract: string | null;
   worklogs: Array<{ key: string; value: string; updated_at: number }>;
+  verify_runs: VerifyRun[];
 }
 
 interface WorkflowDetailModalProps {
@@ -46,6 +47,7 @@ const PHASE_LABELS: Record<string, string> = {
   assess: 'Assess',
   review: 'Review',
   implement: 'Implement',
+  verify: 'Verify',
 };
 
 function formatDuration(ms: number | null | undefined): string {
@@ -60,9 +62,10 @@ export function WorkflowDetailModal({ workflow, agents, onClose, onWorkflowUpdat
   const [detail, setDetail] = useState<WorkflowDetail | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [metrics, setMetrics] = useState<WorkflowMetrics | null>(null);
-  const [activeTab, setActiveTab] = useState<'summary' | 'progress' | 'plan' | 'worklog' | 'jobs' | 'metrics'>(
+  const [activeTab, setActiveTab] = useState<'summary' | 'progress' | 'plan' | 'worklog' | 'jobs' | 'verify' | 'metrics'>(
     ['complete', 'blocked', 'failed', 'cancelled'].includes(workflow.status) ? 'summary' : 'progress'
   );
+  const [expandedVerifyRuns, setExpandedVerifyRuns] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
   const now = useNowTick(workflow.status === 'running');
@@ -209,7 +212,7 @@ export function WorkflowDetailModal({ workflow, agents, onClose, onWorkflowUpdat
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #333' }}>
-          {(['summary', 'progress', 'plan', 'worklog', 'jobs', 'metrics'] as const).map(tab => (
+          {(['summary', 'progress', 'plan', 'worklog', 'jobs', 'verify', 'metrics'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -447,6 +450,74 @@ export function WorkflowDetailModal({ workflow, agents, onClose, onWorkflowUpdat
                   ) : (
                     <div style={{ color: '#888', fontSize: 13 }}>
                       No worklog entries yet. The implement phase will write them.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'verify' && (
+                <div>
+                  {!detail?.verify_runs || detail.verify_runs.length === 0 ? (
+                    <div style={{ color: '#888', fontSize: 13 }}>
+                      No verify runs yet. {workflow.verify_command
+                        ? `Verify command: ${workflow.verify_command}`
+                        : 'No verify command configured for this workflow.'}
+                    </div>
+                  ) : (
+                    <div>
+                      {workflow.verify_command && (
+                        <div style={{ marginBottom: 12, fontSize: 12, color: '#999' }}>
+                          Command: <code style={{ background: '#1a1a1a', padding: '2px 6px', borderRadius: 4, color: '#e5e5e5' }}>{workflow.verify_command}</code>
+                        </div>
+                      )}
+                      {[...detail.verify_runs].reverse().map(run => {
+                        const passed = run.exit_code === 0;
+                        const runId = run.id;
+                        const expanded = expandedVerifyRuns.has(runId);
+                        const hasOutput = !!(run.stdout || run.stderr);
+                        return (
+                          <div key={runId} style={{ marginBottom: 12, border: `1px solid ${passed ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, borderRadius: 8, overflow: 'hidden' }}>
+                            <div
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: passed ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)', cursor: hasOutput ? 'pointer' : 'default' }}
+                              onClick={() => hasOutput && setExpandedVerifyRuns(prev => {
+                                const next = new Set(prev);
+                                next.has(runId) ? next.delete(runId) : next.add(runId);
+                                return next;
+                              })}
+                            >
+                              <span style={{ fontWeight: 700, fontSize: 12, color: passed ? '#22c55e' : '#ef4444' }}>
+                                {passed ? '✓ PASSED' : `✗ FAILED (exit ${run.exit_code})`}
+                              </span>
+                              <span style={{ fontSize: 11, color: '#888' }}>cycle {run.cycle} · attempt {run.attempt}</span>
+                              {run.duration_ms != null && (
+                                <span style={{ fontSize: 11, color: '#888' }}>{(run.duration_ms / 1000).toFixed(1)}s</span>
+                              )}
+                              <span style={{ fontSize: 11, color: '#666', marginLeft: 'auto' }}>
+                                {new Date(run.created_at).toLocaleString()}
+                              </span>
+                              {hasOutput && (
+                                <span style={{ fontSize: 11, color: '#666' }}>{expanded ? '▾' : '▸'}</span>
+                              )}
+                            </div>
+                            {expanded && hasOutput && (
+                              <div style={{ padding: '10px 14px', background: '#111' }}>
+                                {run.stdout && (
+                                  <div style={{ marginBottom: run.stderr ? 10 : 0 }}>
+                                    <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>stdout</div>
+                                    <pre style={{ margin: 0, fontFamily: 'monospace', fontSize: 11, whiteSpace: 'pre-wrap', color: '#ccc', maxHeight: 300, overflow: 'auto' }}>{run.stdout}</pre>
+                                  </div>
+                                )}
+                                {run.stderr && (
+                                  <div>
+                                    <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>stderr</div>
+                                    <pre style={{ margin: 0, fontFamily: 'monospace', fontSize: 11, whiteSpace: 'pre-wrap', color: '#f87171', maxHeight: 300, overflow: 'auto' }}>{run.stderr}</pre>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

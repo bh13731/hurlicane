@@ -15,7 +15,7 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: '#6b7280',
 };
 
-const PHASES = ['assess', 'review', 'implement'] as const;
+const PHASES = ['assess', 'review', 'implement', 'verify'] as const;
 
 // Client-side cost estimation (mirrors CostEstimator.ts)
 const MODEL_PRICING: Record<string, [number, number]> = {
