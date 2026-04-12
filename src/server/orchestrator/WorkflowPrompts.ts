@@ -14,15 +14,8 @@ export interface InlineWorkflowContext {
   diffSummary?: string;
   /** Prior review feedback (fix milestones from earlier cycles) for reviewer context. */
   reviewHistory?: string;
-  /** Latest failed verify run for the current cycle — present when this is a verify retry. */
-  verifyFailure?: {
-    command: string;
-    exitCode: number;
-    stdout: string;
-    stderr: string;
-    attempt: number;
-    durationMs: number;
-  } | null;
+  /** Latest verify agent failure note for the current cycle — present when this is a verify retry. */
+  verifyFailure?: string | null;
 }
 
 // Back-compat for older tests/imports.
@@ -130,27 +123,10 @@ const VERIFY_OUTPUT_MAX_CHARS = 5_000;
 /** Render a "Verification Failed" block for inclusion in the implement prompt. */
 export function renderVerifyFailure(failure: InlineWorkflowContext['verifyFailure']): string {
   if (!failure) return '';
-  const parts: string[] = [
-    `## Verification Failed`,
-    ``,
-    `Your implementation was tested against real infrastructure and failed.`,
-    `The verify command (\`${failure.command}\`) exited with code **${failure.exitCode}** (attempt ${failure.attempt}, ${(failure.durationMs / 1000).toFixed(1)}s).`,
-    ``,
-    `Fix the issue described below and ensure the verification passes before completing this cycle.`,
-  ];
-  if (failure.stdout) {
-    const out = failure.stdout.length > VERIFY_OUTPUT_MAX_CHARS
-      ? failure.stdout.slice(0, VERIFY_OUTPUT_MAX_CHARS) + '\n... (truncated)'
-      : failure.stdout;
-    parts.push('', '### stdout', '```', out, '```');
-  }
-  if (failure.stderr) {
-    const err = failure.stderr.length > VERIFY_OUTPUT_MAX_CHARS
-      ? failure.stderr.slice(0, VERIFY_OUTPUT_MAX_CHARS) + '\n... (truncated)'
-      : failure.stderr;
-    parts.push('', '### stderr', '```', err, '```');
-  }
-  return '\n\n' + parts.join('\n');
+  const truncated = failure.length > VERIFY_OUTPUT_MAX_CHARS
+    ? failure.slice(0, VERIFY_OUTPUT_MAX_CHARS) + '\n... (truncated)'
+    : failure;
+  return `\n\n## Verification Failed\n\nA QA agent tested your implementation against the running application and found issues. Fix the problems described below.\n\n${truncated}`;
 }
 
 export function renderRecentChanges(diff: string | undefined): string {
@@ -531,4 +507,62 @@ ${worklogStep}. **Write a worklog entry** using \`write_note("${worklogKey}", <w
 - Call \`report_status\` regularly to update your progress.
 - Call \`search_kb\` at the start for relevant prior knowledge.
 - Call \`report_learnings\` near the end with anything useful you discovered.${renderInlineContext(inlineContext, planKey, contractKey, worklogPrefix)}`;
+}
+
+export function buildVerifyPrompt(workflow: Workflow, cycle: number, inlineContext?: InlineWorkflowContext): string {
+  const planKey = `workflow/${workflow.id}/plan`;
+  const contractKey = `workflow/${workflow.id}/contract`;
+  const worklogPrefix = `workflow/${workflow.id}/worklog/`;
+  const startCommand = workflow.start_command ?? 'npm run dev';
+
+  return `# Autonomous Agent Run: Verify Phase (Cycle ${cycle})
+
+You are the VERIFY agent — an independent QA engineer reviewing work done by other agents.
+Your job is to **start the application and run smoke tests** to verify the implementation works correctly.
+
+## Task That Was Implemented
+${workflow.task}
+
+## Start Command
+\`${startCommand}\`
+
+Use this command to start the application. Run it in the background, wait for it to be ready, then run your tests against it. Kill it when done.
+
+## Instructions
+
+1. **Read the git diff** — run \`git diff $(git merge-base HEAD main) HEAD\` to understand what changed.
+2. **Read the plan** — \`read_note("${planKey}")\` to understand what milestones were completed.
+3. **Start the application** — run \`${startCommand}\` in the background. Wait for it to be ready (check logs, health endpoints, or retry connections).
+4. **Write smoke tests** — create targeted tests that exercise the changed functionality against the running application. Test the happy path and key edge cases. Focus on behavior, not implementation details.
+5. **Run the tests** — execute them and capture results.
+6. **Stop the application** — kill the background process.
+7. **Write your result** — use \`write_note("workflow/${workflow.id}/verify-result/${cycle}", <result>)\` with this format:
+
+\`\`\`markdown
+## Verify Result: PASS | FAIL
+
+**Tests run:** <count>
+**Passed:** <count>
+**Failed:** <count>
+
+### Tests
+- [PASS] <test description>
+- [FAIL] <test description>
+  - Expected: <what should happen>
+  - Actual: <what happened>
+  - Suggested fix: <how to fix it>
+
+### Summary
+<1-2 sentence summary>
+\`\`\`
+
+## Rules
+- You are an INDEPENDENT verifier. Be skeptical. Test thoroughly.
+- Test against the RUNNING application, not just static code analysis.
+- If the application fails to start, that is a FAIL result — report it.
+- Do NOT modify any source code. You are read-only except for your test scripts.
+- Clean up any test files you create when done.
+- The first line of your result note MUST be \`## Verify Result: PASS\` or \`## Verify Result: FAIL\`.
+- Call \`report_status\` to update your progress.${workflow.worktree_branch ? `
+- You are on branch \`${workflow.worktree_branch}\`. Do NOT switch branches.` : ''}${renderInlineContext(inlineContext, planKey, contractKey, worklogPrefix)}`;
 }
