@@ -1,3 +1,4 @@
+// Workflow prompts - generates phase-specific prompts for autonomous agent runs
 import type { Workflow } from '../../shared/types.js';
 import { effectiveMaxTurns } from '../../shared/types.js';
 
