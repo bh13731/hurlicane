@@ -74,6 +74,9 @@ export function TaskForm({ onSubmit, onClose, availableJobs = [] }: TaskFormProp
   const [stopModeImplement, setStopModeImplement] = useState<StopMode>('turns');
   const [stopValueImplement, setStopValueImplement] = useState<number | null>(100);
 
+  // ── Workflow-only: verify command ─────────────────────────────────────────
+  const [verifyCommand, setVerifyCommand] = useState<string>('');
+
   // ── UI state ──────────────────────────────────────────────────────────────
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -189,6 +192,7 @@ export function TaskForm({ onSubmit, onClose, availableJobs = [] }: TaskFormProp
         req.stopValueReview = stopValueReview ?? undefined;
         req.stopModeImplement = stopModeImplement;
         req.stopValueImplement = stopValueImplement ?? undefined;
+        req.verifyCommand = verifyCommand.trim() || undefined;
       }
 
       await onSubmit(req);
@@ -639,6 +643,23 @@ export function TaskForm({ onSubmit, onClose, availableJobs = [] }: TaskFormProp
                     onModeChange={setStopModeImplement}
                     onValueChange={setStopValueImplement}
                   />
+                  <div className="form-group">
+                    <label htmlFor="task-verify-cmd" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      Verify command
+                      <span style={{ fontSize: 11, color: '#888' }}>(optional)</span>
+                    </label>
+                    <input
+                      id="task-verify-cmd"
+                      type="text"
+                      value={verifyCommand}
+                      onChange={e => setVerifyCommand(e.target.value)}
+                      placeholder="e.g. doppler run -- npx tsx scripts/smoke-test.ts"
+                      style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
+                    />
+                    <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                      Shell command to run after each implement cycle. Exit 0 = pass; non-zero = fail and retry.
+                    </div>
+                  </div>
                 </div>
               )}
             </>

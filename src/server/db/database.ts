@@ -485,6 +485,29 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!workflowCols.includes('completion_threshold')) {
     db.exec('ALTER TABLE workflows ADD COLUMN completion_threshold REAL NOT NULL DEFAULT 1.0');
   }
+  if (!workflowCols.includes('verify_command')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN verify_command TEXT');
+  }
+  if (!workflowCols.includes('max_verify_retries')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN max_verify_retries INTEGER NOT NULL DEFAULT 2');
+  }
+
+  // ── Verify runs (live verification phase results) ──────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS verify_runs (
+      id          TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL REFERENCES workflows(id),
+      cycle       INTEGER NOT NULL,
+      attempt     INTEGER NOT NULL,
+      command     TEXT NOT NULL,
+      exit_code   INTEGER,
+      stdout      TEXT,
+      stderr      TEXT,
+      duration_ms INTEGER,
+      created_at  INTEGER NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_verify_runs_workflow ON verify_runs(workflow_id, cycle)');
 
   // ── jobs.pr_url migration ──────────────────────────────────────────────────
   if (!jobCols.includes('pr_url')) {

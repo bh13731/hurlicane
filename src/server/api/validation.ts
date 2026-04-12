@@ -52,10 +52,12 @@ export const createWorkflowSchema = z.object({
   templateId: z.string().uuid().optional(),
   useWorktree: z.boolean().optional(),
   completionThreshold: z.number().min(0).max(1).optional(),
+  verifyCommand: z.string().max(10_000).optional(),
+  maxVerifyRetries: z.number().int().min(0).max(10).optional(),
 });
 
 export const resumeWorkflowSchema = z.object({
-  phase: z.enum(['assess', 'review', 'implement']).optional(),
+  phase: z.enum(['assess', 'review', 'implement', 'verify']).optional(),
   cycle: z.number().int().min(0).optional(),
   force: z.boolean().optional(),
 });

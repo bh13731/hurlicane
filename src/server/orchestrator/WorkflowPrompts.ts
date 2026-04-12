@@ -14,6 +14,15 @@ export interface InlineWorkflowContext {
   diffSummary?: string;
   /** Prior review feedback (fix milestones from earlier cycles) for reviewer context. */
   reviewHistory?: string;
+  /** Latest failed verify run for the current cycle — present when this is a verify retry. */
+  verifyFailure?: {
+    command: string;
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    attempt: number;
+    durationMs: number;
+  } | null;
 }
 
 // Back-compat for older tests/imports.
@@ -114,6 +123,34 @@ export function extractMilestoneChecklist(plan: string | null | undefined): stri
   items.push(`- Are there edge cases or error paths not handled?`);
 
   return `\n### Milestone Review Checklist\n\nThe implementer was working on: **${title}**\n\n${items.join('\n')}\n`;
+}
+
+const VERIFY_OUTPUT_MAX_CHARS = 5_000;
+
+/** Render a "Verification Failed" block for inclusion in the implement prompt. */
+export function renderVerifyFailure(failure: InlineWorkflowContext['verifyFailure']): string {
+  if (!failure) return '';
+  const parts: string[] = [
+    `## Verification Failed`,
+    ``,
+    `Your implementation was tested against real infrastructure and failed.`,
+    `The verify command (\`${failure.command}\`) exited with code **${failure.exitCode}** (attempt ${failure.attempt}, ${(failure.durationMs / 1000).toFixed(1)}s).`,
+    ``,
+    `Fix the issue described below and ensure the verification passes before completing this cycle.`,
+  ];
+  if (failure.stdout) {
+    const out = failure.stdout.length > VERIFY_OUTPUT_MAX_CHARS
+      ? failure.stdout.slice(0, VERIFY_OUTPUT_MAX_CHARS) + '\n... (truncated)'
+      : failure.stdout;
+    parts.push('', '### stdout', '```', out, '```');
+  }
+  if (failure.stderr) {
+    const err = failure.stderr.length > VERIFY_OUTPUT_MAX_CHARS
+      ? failure.stderr.slice(0, VERIFY_OUTPUT_MAX_CHARS) + '\n... (truncated)'
+      : failure.stderr;
+    parts.push('', '### stderr', '```', err, '```');
+  }
+  return '\n\n' + parts.join('\n');
 }
 
 export function renderRecentChanges(diff: string | undefined): string {
@@ -434,10 +471,12 @@ export function buildImplementPrompt(workflow: Workflow, cycle: number, inlineCo
   const checkOffStep = hasInline ? 4 : 6;
   const worklogStep = hasInline ? 5 : 7;
 
+  const verifySection = renderVerifyFailure(inlineContext?.verifyFailure);
+
   return `# Autonomous Agent Run: Implement Phase (Cycle ${cycle})
 
 You are the IMPLEMENTER agent in a structured autonomous agent run with assess/review/implement phases.
-Your task is to **implement the top unchecked milestone** from the plan.
+Your task is to **implement the top unchecked milestone** from the plan.${verifySection}
 
 ## Task
 ${workflow.task}

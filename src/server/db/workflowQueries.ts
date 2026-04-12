@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getDb } from './database.js';
-import type { Job, Review, TemplateModelStat, ReviewStatus, Workflow, WorkflowMetrics, WorkflowPhaseMetric } from '../../shared/types.js';
+import type { Job, Review, TemplateModelStat, ReviewStatus, VerifyRun, Workflow, WorkflowMetrics, WorkflowPhaseMetric } from '../../shared/types.js';
 
 // A raw database row before casting to a typed interface.
 
@@ -87,8 +87,8 @@ export function getTodaySpendUsd(): number {
 export function insertWorkflow(workflow: Workflow): Workflow {
   const db = getDb();
   db.prepare(`
-    INSERT INTO workflows (id, title, task, work_dir, implementer_model, reviewer_model, max_cycles, current_cycle, current_phase, status, milestones_total, milestones_done, project_id, max_turns_assess, max_turns_review, max_turns_implement, stop_mode_assess, stop_value_assess, stop_mode_review, stop_value_review, stop_mode_implement, stop_value_implement, template_id, use_worktree, worktree_path, worktree_branch, blocked_reason, pr_url, completion_threshold, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO workflows (id, title, task, work_dir, implementer_model, reviewer_model, max_cycles, current_cycle, current_phase, status, milestones_total, milestones_done, project_id, max_turns_assess, max_turns_review, max_turns_implement, stop_mode_assess, stop_value_assess, stop_mode_review, stop_value_review, stop_mode_implement, stop_value_implement, template_id, use_worktree, worktree_path, worktree_branch, blocked_reason, pr_url, completion_threshold, verify_command, max_verify_retries, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     workflow.id, workflow.title, workflow.task, workflow.work_dir,
     workflow.implementer_model, workflow.reviewer_model,
@@ -103,6 +103,7 @@ export function insertWorkflow(workflow: Workflow): Workflow {
     workflow.worktree_path ?? null, workflow.worktree_branch ?? null,
     workflow.blocked_reason ?? null, workflow.pr_url ?? null,
     workflow.completion_threshold ?? 1.0,
+    workflow.verify_command ?? null, workflow.max_verify_retries ?? 2,
     workflow.created_at, workflow.updated_at
   );
   return getWorkflowById(workflow.id)!;
@@ -153,6 +154,45 @@ export function getLastImplementDiff(workflowId: string): string | null {
     LIMIT 1
   `).get(workflowId) as { diff: string } | undefined;
   return row?.diff ?? null;
+}
+
+// ─── Verify Runs ─────────────────────────────────────────────────────────────
+
+export function insertVerifyRun(run: VerifyRun): VerifyRun {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO verify_runs (id, workflow_id, cycle, attempt, command, exit_code, stdout, stderr, duration_ms, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    run.id, run.workflow_id, run.cycle, run.attempt, run.command,
+    run.exit_code, run.stdout ?? null, run.stderr ?? null,
+    run.duration_ms ?? null, run.created_at,
+  );
+  return cast<VerifyRun>(db.prepare('SELECT * FROM verify_runs WHERE id = ?').get(run.id));
+}
+
+export function getVerifyRunsForWorkflow(workflowId: string): VerifyRun[] {
+  const db = getDb();
+  const rows = db.prepare(
+    'SELECT * FROM verify_runs WHERE workflow_id = ? ORDER BY cycle ASC, attempt ASC'
+  ).all(workflowId);
+  return rows.map((r: any) => cast<VerifyRun>(r));
+}
+
+export function getVerifyRunsForCycle(workflowId: string, cycle: number): VerifyRun[] {
+  const db = getDb();
+  const rows = db.prepare(
+    'SELECT * FROM verify_runs WHERE workflow_id = ? AND cycle = ? ORDER BY attempt ASC'
+  ).all(workflowId, cycle);
+  return rows.map((r: any) => cast<VerifyRun>(r));
+}
+
+export function getLatestVerifyRun(workflowId: string, cycle: number): VerifyRun | null {
+  const db = getDb();
+  const row = db.prepare(
+    'SELECT * FROM verify_runs WHERE workflow_id = ? AND cycle = ? ORDER BY attempt DESC LIMIT 1'
+  ).get(workflowId, cycle);
+  return row ? cast<VerifyRun>(row) : null;
 }
 
 /**

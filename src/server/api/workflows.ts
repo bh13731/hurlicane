@@ -7,7 +7,7 @@ import { cancelledAgents } from '../orchestrator/AgentRunner.js';
 import { getFileLockRegistry } from '../orchestrator/FileLockRegistry.js';
 import { disconnectAgent, isTmuxSessionAlive, saveSnapshot } from '../orchestrator/PtyManager.js';
 import { createAutonomousAgentRun } from '../orchestrator/AutonomousAgentRunManager.js';
-import type { CreateAutonomousAgentRunRequest, WorkflowPhase } from '../../shared/types.js';
+import type { CreateAutonomousAgentRunRequest, WorkflowPhase, VerifyRun } from '../../shared/types.js';
 import { createWorkflowSchema, resumeWorkflowSchema, validateBody } from './validation.js';
 
 const router = Router();
@@ -32,11 +32,14 @@ router.get('/:id', (req, res) => {
     if (full) worklogs.push({ key: n.key, value: full.value, updated_at: full.updated_at });
   }
 
+  const verifyRuns: VerifyRun[] = queries.getVerifyRunsForWorkflow(workflow.id);
+
   res.json({
     ...workflow,
     plan: planNote?.value ?? null,
     contract: contractNote?.value ?? null,
     worklogs,
+    verify_runs: verifyRuns,
   });
 });
 
@@ -277,8 +280,8 @@ router.post('/:id/resume', (req, res) => {
   const targetPhase = req.body?.phase as string | undefined;
   const targetCycle = req.body?.cycle as number | undefined;
 
-  if (targetPhase && !['assess', 'review', 'implement'].includes(targetPhase)) {
-    res.status(400).json({ error: `Invalid phase: ${targetPhase}. Must be assess, review, or implement.` });
+  if (targetPhase && !['assess', 'review', 'implement', 'verify'].includes(targetPhase)) {
+    res.status(400).json({ error: `Invalid phase: ${targetPhase}. Must be assess, review, implement, or verify.` });
     return;
   }
 
