@@ -22,7 +22,7 @@ export const createAutonomousAgentRunSchema = z.object({
   useWorktree: z.boolean().optional().describe('Whether to create a shared git worktree for the run'),
   completionThreshold: z.number().optional().describe('Fraction of milestones (0.1-1.0) required to consider the workflow complete. Default 1.0 (all milestones). When threshold < 1.0 and met, creates a full (non-draft) PR.'),
   startCommand: z.string().optional().describe('Command to start the app for smoke testing before PR creation. e.g. npm run dev, docker compose up. NULL = skip verify.'),
-  maxVerifyRetries: z.number().optional().describe('Max verify retries before blocking (default 2). Only used when verifyCommand is set.'),
+  maxVerifyRetries: z.number().optional().describe('Max verify retries before blocking (default 2). Only used when startCommand is set.'),
 });
 
 export async function createAutonomousAgentRunHandler(

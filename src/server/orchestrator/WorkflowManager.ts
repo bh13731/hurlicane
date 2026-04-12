@@ -5,7 +5,7 @@ import path from 'path';
 import { captureWithContext, Sentry } from '../instrument.js';
 import * as queries from '../db/queries.js';
 import * as socket from '../socket/SocketManager.js';
-import type { Job, Workflow, WorkflowPhase, StopMode, VerifyRun } from '../../shared/types.js';
+import type { Job, Workflow, WorkflowPhase, StopMode } from '../../shared/types.js';
 import { effectiveMaxTurns, isCodexModel } from '../../shared/types.js';
 import { buildAssessPrompt, buildReviewPrompt, buildImplementPrompt, buildVerifyPrompt, buildWorkflowRepairPrompt, buildSimplifiedAssessRepairPrompt, type InlineWorkflowContext } from './WorkflowPrompts.js';
 import { getAvailableModel, getFallbackModel, getAlternateProviderModel, getModelProvider, markModelRateLimited, markProviderRateLimited } from './ModelClassifier.js';
