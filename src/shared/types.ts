@@ -638,7 +638,7 @@ export interface CreateTaskRequest {
   completionThreshold?: number;
 
   // ── Verification (workflow-only) ─────────────────────────────────────────
-  verifyCommand?: string;               // shell command to run after each implement phase
+  verifyCommand?: string;               // shell command to run before PR creation (at completion threshold)
   maxVerifyRetries?: number;             // max retries on verify failure (default 2)
 
   // ── Advanced job options (quick / reviewed only) ──────────────────────────

@@ -45,7 +45,7 @@ export const createTaskSchema = z.object({
   completionThreshold: z.number().optional().describe('Milestone completion threshold 0.1-1.0 (workflow only)'),
 
   // ── Verification (workflow-only) ─────────────────────────────────────────
-  verifyCommand: z.string().optional().describe('Shell command to run after each implement phase for live verification (workflow only). Exit 0 = pass, non-zero = fail.'),
+  verifyCommand: z.string().optional().describe('Shell command to run before PR creation when milestones are complete (workflow only). Exit 0 = pass, non-zero = fix and retry.'),
   maxVerifyRetries: z.number().optional().describe('Max verify retries before blocking, default 2 (workflow only). Only used when verifyCommand is set.'),
 
   // ── Advanced job options ──────────────────────────────────────────────────
