@@ -161,9 +161,9 @@ function _onJobCompleted(job: Job): void {
                 });
               });
             } else {
-              console.log(`[workflow ${workflow.id}] milestones meet threshold after review but no implement job to verify — finalizing directly`);
-              updateAndEmit(workflow.id, { status: 'complete', current_phase: 'idle' as WorkflowPhase });
-              finalizeWorkflow(queries.getWorkflowById(workflow.id)!).catch(err => console.error(`[workflow ${workflow.id}] finalizeWorkflow error:`, err));
+              const reason = 'Verify command configured but no completed implement job found to verify against';
+              console.log(`[workflow ${workflow.id}] ${reason} — marking blocked`);
+              updateAndEmit(workflow.id, { status: 'blocked', current_phase: 'review' as WorkflowPhase, blocked_reason: reason });
             }
           } else {
             console.log(`[workflow ${workflow.id}] milestones meet completion threshold (${milestones.done}/${milestones.total}, threshold ${updated.completion_threshold}) after review — marking complete`);
@@ -447,6 +447,18 @@ async function scheduleVerifyPhase(
 
     if (attempt <= maxRetries) {
       // Retries remain — re-run implement for the same cycle with verify retry context
+      // Apply the same worktree safety checks that spawnPhaseJob uses
+      if (blockIfMissingRequiredWorktree(fresh, 'implement')) return;
+      if (fresh.worktree_path && fresh.worktree_branch) {
+        const branchCheck = ensureWorktreeBranch(fresh.worktree_path, fresh.worktree_branch);
+        if (!branchCheck.ok) {
+          const reason = `Worktree branch verification failed before verify retry: ${branchCheck.error}`;
+          console.log(`[workflow ${workflowId}] ${reason} — marking blocked`);
+          updateAndEmit(workflowId, { status: 'blocked', current_phase: 'implement' as WorkflowPhase, blocked_reason: reason });
+          return;
+        }
+      }
+
       console.log(`[workflow ${workflowId}] verify failure ${attempt}/${maxRetries} — re-spawning implement for cycle ${cycle} (verify retry)`);
       const inlineContext = preReadWorkflowContext(workflowId, { cycle });
       const prompt = buildImplementPrompt(fresh, cycle, inlineContext);

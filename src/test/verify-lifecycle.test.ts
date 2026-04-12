@@ -143,6 +143,9 @@ describe('WorkflowManager verify phase lifecycle', () => {
     vi.clearAllMocks();
     // Reset to a passing verify result
     mockVerifyResult = { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 100 };
+    // Ensure meetsCompletionThreshold returns false by default (tests that need true override it)
+    const { meetsCompletionThreshold } = await import('../server/orchestrator/WorkflowMilestoneParser.js');
+    vi.mocked(meetsCompletionThreshold).mockReturnValue(false);
   });
 
   afterEach(async () => {
@@ -248,8 +251,6 @@ describe('WorkflowManager verify phase lifecycle', () => {
     const wl = getNote(`workflow/${workflow.id}/worklog/cycle-2-verify`);
     expect(wl?.value).toContain('PASSED');
 
-    // Reset mock
-    vi.mocked(meetsCompletionThreshold).mockReturnValue(false);
   });
 
   // ── Verify fail + retry ───────────────────────────────────────────────────
@@ -300,8 +301,6 @@ describe('WorkflowManager verify phase lifecycle', () => {
     const wl = getNote(`workflow/${workflow.id}/worklog/cycle-1-verify`);
     expect(wl?.value).toContain('FAILED');
 
-    // Reset mock
-    vi.mocked(meetsCompletionThreshold).mockReturnValue(false);
   });
 
   // ── Verify fail exhausted ─────────────────────────────────────────────────
@@ -347,7 +346,42 @@ describe('WorkflowManager verify phase lifecycle', () => {
     expect(freshWf.blocked_reason).toContain('verify_failed');
     expect(freshWf.current_phase).toBe('verify');
 
-    // Reset mock
-    vi.mocked(meetsCompletionThreshold).mockReturnValue(false);
+  });
+
+  // ── Verify-retry implement bypasses zero-progress detection ───────────────
+
+  it('verify-retry implement jobs bypass zero-progress detection and advance normally', async () => {
+    const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
+    const { getWorkflowById, upsertNote } = await import('../server/db/queries.js');
+    const { runVerification } = await import('../server/orchestrator/VerifyRunner.js');
+
+    // meetsCompletionThreshold returns false — threshold not met after retry implement
+    const { workflow } = await makeVerifyWorkflow({ current_cycle: 2 });
+    upsertNote(`workflow/${workflow.id}/plan`, '- [x] M1\n- [ ] M2\n- [ ] M3', null);
+    // Set up zero-progress state that would normally block
+    upsertNote(`workflow/${workflow.id}/pre-implement-milestones/2`, '1', null);
+    upsertNote(`workflow/${workflow.id}/zero-progress-count`, '1', null);
+    upsertNote(`workflow/${workflow.id}/replan-attempted/2`, '1', null);
+
+    // Simulate a verify-retry implement job completing (below threshold)
+    const job = await insertTestJob({
+      workflow_id: workflow.id,
+      workflow_cycle: 2,
+      workflow_phase: 'implement',
+      status: 'done',
+      context: JSON.stringify({ is_verify_retry: true }),
+    });
+
+    onJobCompleted(job);
+
+    // Should NOT be blocked by zero-progress — verify-retry bypasses it
+    const freshWf = getWorkflowById(workflow.id)!;
+    expect(freshWf.status).toBe('running');
+    // Should have advanced to next cycle
+    expect(freshWf.current_cycle).toBe(3);
+    expect(freshWf.current_phase).toBe('review');
+
+    // Verify should NOT have been called (threshold not met)
+    expect(runVerification).not.toHaveBeenCalled();
   });
 });
