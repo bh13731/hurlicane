@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   setupTestDb,
   cleanupTestDb,
@@ -277,5 +279,54 @@ describe('StuckJobWatchdog terminal guards', () => {
         status: 'failed',
       }),
     );
+  });
+
+  it('extracts num_turns for incomplete standalone terminal failures', async () => {
+    const queries = await import('../server/db/queries.js');
+    const { _invokeWatchdogCheckForTest } = await import('../server/orchestrator/StuckJobWatchdog.js');
+    const { resolveStandalonePrintJobOutcome } = await import('../server/orchestrator/PtyManager.js') as any;
+    const { getLogPath } = await import('../server/orchestrator/AgentRunner.js') as any;
+
+    const job = queries.insertJob({
+      id: 'watchdog-turns-job',
+      title: 'Standalone batch job',
+      description: 'test',
+      context: null,
+      priority: 0,
+      status: 'running',
+      work_dir: process.cwd(),
+      model: 'claude-sonnet-4-6',
+      is_interactive: 0,
+    });
+    const agent = queries.insertAgent({
+      id: 'watchdog-turns-agent',
+      job_id: job.id,
+      status: 'running',
+    });
+
+    const logDir = path.join(process.cwd(), 'data', 'agent-logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(logDir, `${agent.id}.ndjson`),
+      [
+        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'one' }] } }),
+        JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'x' }] } }),
+        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'Edit' }] } }),
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    (getLogPath as any).mockReturnValue(path.join(logDir, `${agent.id}.ndjson`));
+
+    (resolveStandalonePrintJobOutcome as any).mockReturnValue({
+      status: 'failed',
+      source: 'incomplete_run',
+      errorMessage: 'Agent session ended before emitting a final result event.',
+      detail: 'terminal evidence collected without final result (3 ndjson events)',
+    });
+
+    _invokeWatchdogCheckForTest();
+
+    expect(queries.getAgentById(agent.id)?.num_turns).toBe(2);
   });
 });

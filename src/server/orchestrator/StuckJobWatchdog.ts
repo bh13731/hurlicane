@@ -276,7 +276,10 @@ function check(): void {
       // Extract cost/turns from ndjson log if the agent ran but died without a result event
       let extractedCost: number | null = null;
       let extractedTurns: number | null = null;
-      if (standaloneResolution?.source === 'no_terminal_evidence') {
+      if (
+        standaloneResolution?.source === 'no_terminal_evidence'
+        || standaloneResolution?.source === 'incomplete_run'
+      ) {
         try {
           const logPath = getLogPath(agent.id);
           if (fs.existsSync(logPath)) {
