@@ -617,7 +617,7 @@ function spawnRepairJob(workflow: Workflow, phase: 'assess' | 'review', cycle: n
   return true;
 }
 
-export function preReadWorkflowContext(workflowId: string): InlineWorkflowContext {
+export function preReadWorkflowContext(workflowId: string, opts: { cycle?: number } = {}): InlineWorkflowContext {
   const plan = queries.getNote(`workflow/${workflowId}/plan`);
   const contract = queries.getNote(`workflow/${workflowId}/contract`);
   const worklogNotes = queries.listNotes(`workflow/${workflowId}/worklog/`);
@@ -639,6 +639,18 @@ export function preReadWorkflowContext(workflowId: string): InlineWorkflowContex
     ? reviewFeedbackNotes.map(n => `**${n.key.split('/').pop()}:**\n${n.value}`).join('\n\n')
     : undefined;
 
+  // Load the latest failed verify run for this cycle (if we know the cycle)
+  let verifyFailure: InlineWorkflowContext['verifyFailure'] = null;
+  const cycle = opts.cycle ?? workflow?.current_cycle;
+  if (cycle !== undefined && cycle > 0) {
+    const failureNote = queries.getNote(`workflow/${workflowId}/verify-failure/${cycle}`);
+    if (failureNote?.value) {
+      try {
+        verifyFailure = JSON.parse(failureNote.value) as InlineWorkflowContext['verifyFailure'];
+      } catch { /* ignore malformed note */ }
+    }
+  }
+
   return {
     plan: plan?.value ?? undefined,
     contract: contract?.value ?? undefined,
@@ -646,6 +658,7 @@ export function preReadWorkflowContext(workflowId: string): InlineWorkflowContex
     recentDiff: recentDiff ?? undefined,
     diffSummary,
     reviewHistory,
+    verifyFailure,
   };
 }
 
@@ -670,7 +683,7 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
   let prompt: string;
 
   const inlineContext = (phase === 'review' || phase === 'implement')
-    ? preReadWorkflowContext(workflow.id) : undefined;
+    ? preReadWorkflowContext(workflow.id, { cycle }) : undefined;
 
   switch (phase) {
     case 'assess':
@@ -943,7 +956,7 @@ export function resumeWorkflow(workflow: Workflow, options: { phase?: WorkflowPh
   let prompt: string;
 
   const inlineContext = (phase === 'review' || phase === 'implement')
-    ? preReadWorkflowContext(updated.id) : undefined;
+    ? preReadWorkflowContext(updated.id, { cycle }) : undefined;
 
   // Verify is not a job-based phase — re-trigger the verification command
   if (phase === 'verify') {
