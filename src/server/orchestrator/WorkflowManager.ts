@@ -594,8 +594,11 @@ export function preReadWorkflowContext(workflowId: string, opts: { cycle?: numbe
 }
 
 function blockIfMissingRequiredWorktree(workflow: Workflow, phase: WorkflowPhase, opts: { throwOnBlock?: boolean } = {}): boolean {
-  if (workflow.use_worktree && !workflow.worktree_path) {
-    const reason = `Worktree required (use_worktree=1) but worktree_path is null — cannot spawn ${phase} job`;
+  const missing = getMissingRequiredWorktreeFields(workflow);
+  if (workflow.use_worktree && missing.length > 0) {
+    const subject = missing.join(' and ');
+    const verb = missing.length === 1 ? 'is' : 'are';
+    const reason = `Worktree required (use_worktree=1) but ${subject} ${verb} null — cannot spawn ${phase} job`;
     console.log(`[workflow ${workflow.id}] ${reason} — marking blocked`);
     updateAndEmit(workflow.id, { status: 'blocked', current_phase: phase, blocked_reason: reason });
     if (opts.throwOnBlock) throw new Error(reason);
@@ -604,7 +607,124 @@ function blockIfMissingRequiredWorktree(workflow: Workflow, phase: WorkflowPhase
   return false;
 }
 
+function getMissingRequiredWorktreeFields(workflow: Workflow): string[] {
+  const missing: string[] = [];
+  if (!workflow.worktree_path) missing.push('worktree_path');
+  if (!workflow.worktree_branch) missing.push('worktree_branch');
+  return missing;
+}
+
+function getExpectedWorkflowWorktree(workflow: Workflow): { worktree_path: string; worktree_branch: string } | null {
+  if (!workflow.work_dir) return null;
+  const shortId = workflow.id.slice(0, 8);
+  const slug = workflow.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40);
+  const worktree_branch = `workflow/${slug}-${shortId}`;
+  const repoName = path.basename(workflow.work_dir);
+  const worktree_path = path.resolve(workflow.work_dir, '..', '.orchestrator-worktrees', repoName, `wf-${shortId}`);
+  return { worktree_path, worktree_branch };
+}
+
+function blockForWorktreeRepairFailure(
+  workflow: Workflow,
+  phase: WorkflowPhase,
+  reason: string,
+  opts: { throwOnBlock?: boolean } = {},
+): null {
+  console.log(`[workflow ${workflow.id}] ${reason} — marking blocked`);
+  updateAndEmit(workflow.id, { status: 'blocked', current_phase: phase, blocked_reason: reason });
+  if (opts.throwOnBlock) throw new Error(reason);
+  return null;
+}
+
+function ensureWorkflowWorktreeReadyForPhase(
+  workflow: Workflow,
+  phase: WorkflowPhase,
+  opts: { throwOnBlock?: boolean } = {},
+): Workflow | null {
+  if (!workflow.use_worktree) return workflow;
+
+  let activeWorkflow = workflow;
+  const missingBefore = getMissingRequiredWorktreeFields(activeWorkflow);
+  if (missingBefore.length === 0) return activeWorkflow;
+
+  const expected = getExpectedWorkflowWorktree(activeWorkflow);
+  if (!expected || !activeWorkflow.work_dir) {
+    return blockForWorktreeRepairFailure(
+      activeWorkflow,
+      phase,
+      `Worktree metadata repair failed before ${phase}: missing ${missingBefore.join(' and ')} and work_dir is unavailable`,
+      opts,
+    );
+  }
+
+  console.warn(
+    `[workflow ${workflow.id}] missing ${missingBefore.join(' and ')} before ${phase} — rehydrating worktree metadata`,
+  );
+  activeWorkflow = queries.updateWorkflow(activeWorkflow.id, {
+    worktree_path: activeWorkflow.worktree_path ?? expected.worktree_path,
+    worktree_branch: activeWorkflow.worktree_branch ?? expected.worktree_branch,
+  }) ?? activeWorkflow;
+  activeWorkflow = queries.getWorkflowById(activeWorkflow.id) ?? activeWorkflow;
+
+  const hydratedMissing = getMissingRequiredWorktreeFields(activeWorkflow);
+  if (hydratedMissing.length > 0) {
+    return blockForWorktreeRepairFailure(
+      activeWorkflow,
+      phase,
+      `Worktree metadata repair failed before ${phase}: missing ${hydratedMissing.join(' and ')} after rehydration`,
+      opts,
+    );
+  }
+
+  let healthCheck = verifyWorktreeHealth(activeWorkflow.worktree_path!, activeWorkflow.worktree_branch!, activeWorkflow.work_dir);
+  if (!healthCheck.ok) {
+    console.warn(
+      `[workflow ${workflow.id}] worktree health check failed after metadata rehydration — attempting restore: ${healthCheck.error}`,
+    );
+    try {
+      restoreWorkflowWorktree(activeWorkflow);
+    } catch (err) {
+      return blockForWorktreeRepairFailure(
+        activeWorkflow,
+        phase,
+        `Worktree metadata repair failed before ${phase}: ${errMsg(err)}`,
+        opts,
+      );
+    }
+
+    activeWorkflow = queries.getWorkflowById(activeWorkflow.id) ?? activeWorkflow;
+    const missingAfterRestore = getMissingRequiredWorktreeFields(activeWorkflow);
+    if (missingAfterRestore.length > 0) {
+      return blockForWorktreeRepairFailure(
+        activeWorkflow,
+        phase,
+        `Worktree metadata repair failed before ${phase}: missing ${missingAfterRestore.join(' and ')} after restore`,
+        opts,
+      );
+    }
+
+    healthCheck = verifyWorktreeHealth(activeWorkflow.worktree_path!, activeWorkflow.worktree_branch!, activeWorkflow.work_dir);
+    if (!healthCheck.ok) {
+      return blockForWorktreeRepairFailure(
+        activeWorkflow,
+        phase,
+        `Worktree metadata repair failed before ${phase}: ${healthCheck.error}`,
+        opts,
+      );
+    }
+  }
+
+  return activeWorkflow;
+}
+
 function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, modelOverride?: string): void {
+  const activeWorkflow = ensureWorkflowWorktreeReadyForPhase(workflow, phase);
+  if (!activeWorkflow) return;
+
   const phaseLabels: Record<string, string> = { assess: 'Assess', review: 'Review', implement: 'Implement', verify: 'Verify' };
   const label = phaseLabels[phase] ?? phase;
 
@@ -614,63 +734,61 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
   let prompt: string;
 
   const inlineContext = (phase === 'review' || phase === 'implement' || phase === 'verify')
-    ? preReadWorkflowContext(workflow.id, { cycle }) : undefined;
+    ? preReadWorkflowContext(activeWorkflow.id, { cycle }) : undefined;
 
   switch (phase) {
     case 'assess':
-      model = workflow.implementer_model;
-      if (isCodexModel(model)) { console.log(`[workflow ${workflow.id}] assess phase requires reliable MCP — falling back from Codex to Claude`); model = 'claude-sonnet-4-6'; }
-      stopMode = workflow.stop_mode_assess; stopValue = workflow.stop_value_assess;
-      prompt = buildAssessPrompt(workflow);
+      model = activeWorkflow.implementer_model;
+      if (isCodexModel(model)) { console.log(`[workflow ${activeWorkflow.id}] assess phase requires reliable MCP — falling back from Codex to Claude`); model = 'claude-sonnet-4-6'; }
+      stopMode = activeWorkflow.stop_mode_assess; stopValue = activeWorkflow.stop_value_assess;
+      prompt = buildAssessPrompt(activeWorkflow);
       break;
     case 'review':
-      model = workflow.reviewer_model;
-      stopMode = workflow.stop_mode_review; stopValue = workflow.stop_value_review;
-      prompt = buildReviewPrompt(workflow, cycle, inlineContext);
+      model = activeWorkflow.reviewer_model;
+      stopMode = activeWorkflow.stop_mode_review; stopValue = activeWorkflow.stop_value_review;
+      prompt = buildReviewPrompt(activeWorkflow, cycle, inlineContext);
       break;
     case 'implement':
-      model = workflow.implementer_model;
-      stopMode = workflow.stop_mode_implement; stopValue = workflow.stop_value_implement;
-      prompt = buildImplementPrompt(workflow, cycle, inlineContext);
+      model = activeWorkflow.implementer_model;
+      stopMode = activeWorkflow.stop_mode_implement; stopValue = activeWorkflow.stop_value_implement;
+      prompt = buildImplementPrompt(activeWorkflow, cycle, inlineContext);
       break;
     case 'verify':
       model = 'claude-opus-4-6';
       stopMode = 'turns';
       stopValue = 40;
-      prompt = buildVerifyPrompt(workflow, cycle, inlineContext);
+      prompt = buildVerifyPrompt(activeWorkflow, cycle, inlineContext);
       break;
     default:
       throw new Error(`Invalid phase: ${phase}`);
   }
 
   if (modelOverride) model = modelOverride;
-  model = getWorkflowFallbackModel(workflow, phase, model) ?? model;
+  model = getWorkflowFallbackModel(activeWorkflow, phase, model) ?? model;
 
-  if (blockIfMissingRequiredWorktree(workflow, phase)) return;
-
-  if (workflow.worktree_path && workflow.worktree_branch) {
-    const branchCheck = ensureWorktreeBranch(workflow.worktree_path, workflow.worktree_branch);
+  if (activeWorkflow.worktree_path && activeWorkflow.worktree_branch) {
+    const branchCheck = ensureWorktreeBranch(activeWorkflow.worktree_path, activeWorkflow.worktree_branch);
     if (!branchCheck.ok) {
       const reason = `Worktree branch verification failed before ${phase}: ${branchCheck.error}`;
-      console.log(`[workflow ${workflow.id}] ${reason} — marking blocked`);
-      updateAndEmit(workflow.id, { status: 'blocked', current_phase: phase, blocked_reason: reason });
+      console.log(`[workflow ${activeWorkflow.id}] ${reason} — marking blocked`);
+      updateAndEmit(activeWorkflow.id, { status: 'blocked', current_phase: phase, blocked_reason: reason });
       return;
     }
   }
 
   if (phase === 'implement') {
-    const planNote = queries.getNote(`workflow/${workflow.id}/plan`);
+    const planNote = queries.getNote(`workflow/${activeWorkflow.id}/plan`);
     const milestones = parseMilestones(planNote?.value ?? '');
-    queries.upsertNote(`workflow/${workflow.id}/pre-implement-milestones/${cycle}`, String(milestones.done), null);
+    queries.upsertNote(`workflow/${activeWorkflow.id}/pre-implement-milestones/${cycle}`, String(milestones.done), null);
     if (planNote?.value) {
       const firstUnchecked = planNote.value.split('\n').find(l => /^- \[ \]/.test(l));
       if (firstUnchecked) {
         const pathMatches = firstUnchecked.match(/(?:^|[\s`"'(])([a-zA-Z0-9_./-]+\.\w{1,5})(?=[\s`"'),]|$)/g);
         if (pathMatches) {
           const filePaths = pathMatches.map(m => m.trim().replace(/^[`"'(]/, ''));
-          const conflicts = queries.claimFiles(workflow.id, filePaths);
+          const conflicts = queries.claimFiles(activeWorkflow.id, filePaths);
           if (conflicts.length > 0) {
-            console.warn(`[workflow ${workflow.id}] file claim conflicts: ${conflicts.map(c => `${c.file_path} (held by ${c.workflow_id})`).join(', ')}`);
+            console.warn(`[workflow ${activeWorkflow.id}] file claim conflicts: ${conflicts.map(c => `${c.file_path} (held by ${c.workflow_id})`).join(', ')}`);
           }
         }
       }
@@ -681,18 +799,18 @@ function spawnPhaseJob(workflow: Workflow, phase: WorkflowPhase, cycle: number, 
     id: randomUUID(),
     title: `[Workflow C${cycle}] ${label}${modelOverride ? ' (fallback)' : ''}`,
     description: prompt, context: null, priority: 0, model,
-    template_id: workflow.template_id,
-    work_dir: workflow.worktree_path ?? workflow.work_dir,
+    template_id: activeWorkflow.template_id,
+    work_dir: activeWorkflow.worktree_path ?? activeWorkflow.work_dir,
     max_turns: effectiveMaxTurns(stopMode, stopValue),
     stop_mode: stopMode, stop_value: stopValue,
-    project_id: workflow.project_id, use_worktree: 0,
-    workflow_id: workflow.id, workflow_cycle: cycle, workflow_phase: phase,
+    project_id: activeWorkflow.project_id, use_worktree: 0,
+    workflow_id: activeWorkflow.id, workflow_cycle: cycle, workflow_phase: phase,
   });
 
-  try { socket.emitJobNew(job); } catch (emitErr) { console.warn(`[workflow ${workflow.id}] socket.emitJobNew failed for job ${job.id.slice(0, 8)}:`, emitErr); }
+  try { socket.emitJobNew(job); } catch (emitErr) { console.warn(`[workflow ${activeWorkflow.id}] socket.emitJobNew failed for job ${job.id.slice(0, 8)}:`, emitErr); }
   nudgeQueue();
-  updateAndEmit(workflow.id, { current_phase: phase, current_cycle: cycle });
-  console.log(`[workflow ${workflow.id}] spawned ${phase} job ${job.id.slice(0, 8)} (cycle ${cycle}, model: ${model})`);
+  updateAndEmit(activeWorkflow.id, { current_phase: phase, current_cycle: cycle });
+  console.log(`[workflow ${activeWorkflow.id}] spawned ${phase} job ${job.id.slice(0, 8)} (cycle ${cycle}, model: ${model})`);
 }
 
 function getWorkflowFallbackModel(workflow: Workflow, phase: WorkflowPhase, currentModel: string): string | null {
