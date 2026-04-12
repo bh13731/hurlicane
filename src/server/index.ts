@@ -1,5 +1,5 @@
-// Sentry must be imported first to instrument all subsequent modules
-import { Sentry } from './instrument.js';
+// Sentry init is preloaded via `node --import ./dist/server/instrument.js`.
+import * as Sentry from '@sentry/node';
 import { serverLogger, socketLogger } from './lib/logger.js';
 import { createServer } from 'http';
 import express from 'express';

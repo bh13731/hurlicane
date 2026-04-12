@@ -9,7 +9,7 @@
     "server:dev": "NODE_OPTIONS='--experimental-sqlite' tsx watch --env-file=.env --ignore './data/**' src/server/index.ts",
     "client:dev": "vite",
     "build": "tsc -p tsconfig.server.json && vite build",
-    "server:start": "node dist/server/index.js",
+    "server:start": "node --import ./dist/server/instrument.js dist/server/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
