@@ -44,6 +44,10 @@ export const createTaskSchema = z.object({
   stopValueImplement: z.number().optional().describe('Implement phase stop value (workflow only)'),
   completionThreshold: z.number().optional().describe('Milestone completion threshold 0.1-1.0 (workflow only)'),
 
+  // ── Verification (workflow-only) ─────────────────────────────────────────
+  verifyCommand: z.string().optional().describe('Shell command to run after each implement phase for live verification (workflow only). Exit 0 = pass, non-zero = fail.'),
+  maxVerifyRetries: z.number().optional().describe('Max verify retries before blocking, default 2 (workflow only). Only used when verifyCommand is set.'),
+
   // ── Advanced job options ──────────────────────────────────────────────────
   context: z.record(z.string()).optional().describe('Extra key/value context passed to the job (job only)'),
   priority: z.number().optional().describe('Priority 0-10 (job only)'),
@@ -96,6 +100,8 @@ export async function createTaskHandler(
     stopModeImplement: input.stopModeImplement,
     stopValueImplement: input.stopValueImplement,
     completionThreshold: input.completionThreshold,
+    verifyCommand: input.verifyCommand,
+    maxVerifyRetries: input.maxVerifyRetries,
     context: input.context,
     priority: input.priority,
     dependsOn: input.dependsOn,

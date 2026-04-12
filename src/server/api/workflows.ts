@@ -277,8 +277,8 @@ router.post('/:id/resume', (req, res) => {
   const targetPhase = req.body?.phase as string | undefined;
   const targetCycle = req.body?.cycle as number | undefined;
 
-  if (targetPhase && !['assess', 'review', 'implement'].includes(targetPhase)) {
-    res.status(400).json({ error: `Invalid phase: ${targetPhase}. Must be assess, review, or implement.` });
+  if (targetPhase && !['assess', 'review', 'implement', 'verify'].includes(targetPhase)) {
+    res.status(400).json({ error: `Invalid phase: ${targetPhase}. Must be assess, review, implement, or verify.` });
     return;
   }
 

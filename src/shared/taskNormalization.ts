@@ -115,7 +115,7 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
     if (req.reviewConfig !== undefined) return 'reviewConfig is not supported for autonomous tasks (iterations > 1); reviewer model is set via reviewerModel';
     if (req.projectId !== undefined)   return 'projectId is not supported for autonomous tasks (iterations > 1) — workflows always create their own project';
   }
-  // Per-phase stop fields are workflow-only — reject on job-routed tasks
+  // Per-phase stop fields and verify fields are workflow-only — reject on job-routed tasks
   if (config.routesTo === 'job') {
     const perPhaseFields = [
       'maxTurnsAssess', 'maxTurnsReview', 'maxTurnsImplement',
@@ -126,6 +126,12 @@ export function validateTaskRequest(req: CreateTaskRequest): string | null {
       if (req[field] !== undefined) {
         return `${field} is a workflow-only field and cannot be used on job-routed tasks (iterations = 1)`;
       }
+    }
+    if (req.verifyCommand !== undefined) {
+      return 'verifyCommand is a workflow-only field and cannot be used on job-routed tasks (iterations = 1)';
+    }
+    if (req.maxVerifyRetries !== undefined) {
+      return 'maxVerifyRetries is a workflow-only field and cannot be used on job-routed tasks (iterations = 1)';
     }
   }
   return null;
@@ -293,6 +299,8 @@ export function taskToWorkflowRequest(req: CreateTaskRequest, config?: ResolvedT
     useWorktree: canonical.useWorktree,
     templateId: req.templateId,
     completionThreshold: req.completionThreshold,
+    verifyCommand: req.verifyCommand,
+    maxVerifyRetries: req.maxVerifyRetries,
     // Per-phase stopping conditions
     maxTurnsAssess: req.maxTurnsAssess,
     maxTurnsReview: req.maxTurnsReview,

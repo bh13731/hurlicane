@@ -28,7 +28,7 @@ export type WarningType = 'stalled' | 'high_turns' | 'long_running' | 'budget_wa
 export type StopMode = 'turns' | 'budget' | 'time' | 'completion';
 export type ReviewStatus = 'pending_review' | 'approved' | 'needs_revision';
 export type WorkflowStatus = 'running' | 'complete' | 'blocked' | 'failed' | 'cancelled';
-export type WorkflowPhase = 'idle' | 'assess' | 'review' | 'implement';
+export type WorkflowPhase = 'idle' | 'assess' | 'review' | 'implement' | 'verify';
 
 export interface Job {
   id: string;
@@ -131,8 +131,23 @@ export interface Workflow {
   blocked_reason: string | null;
   pr_url: string | null;
   completion_threshold: number;
+  verify_command: string | null;
+  max_verify_retries: number;
   created_at: number;
   updated_at: number;
+}
+
+export interface VerifyRun {
+  id: string;
+  workflow_id: string;
+  cycle: number;
+  attempt: number;
+  command: string;
+  exit_code: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  duration_ms: number | null;
+  created_at: number;
 }
 
 export interface Agent {
@@ -560,6 +575,8 @@ export interface CreateWorkflowRequest {
   // creates a new project.  The unified CreateTaskRequest supports projectId
   // for job-routed tasks only; workflow-routed tasks reject it at validation.
   completionThreshold?: number;
+  verifyCommand?: string;
+  maxVerifyRetries?: number;
 }
 
 export interface CreateWorkflowResponse {
@@ -619,6 +636,10 @@ export interface CreateTaskRequest {
   stopModeImplement?: StopMode;
   stopValueImplement?: number;
   completionThreshold?: number;
+
+  // ── Verification (workflow-only) ─────────────────────────────────────────
+  verifyCommand?: string;               // shell command to run after each implement phase
+  maxVerifyRetries?: number;             // max retries on verify failure (default 2)
 
   // ── Advanced job options (quick / reviewed only) ──────────────────────────
   context?: Record<string, string>;
