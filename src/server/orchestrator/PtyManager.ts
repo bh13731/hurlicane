@@ -267,6 +267,17 @@ function statusFromNdjson(agentId: string): { status: 'done' | 'failed'; errorMe
             source: 'rate_limit',
           };
         }
+        if (
+          ev.type === 'system'
+          && ev.subtype === 'api_retry'
+          && (ev.error_status === 429 || ev.error === 'rate_limit')
+        ) {
+          return {
+            status: 'failed',
+            errorMessage: null,
+            source: 'rate_limit',
+          };
+        }
       } catch { /* skip malformed lines */ }
     }
   } catch { /* file may not exist yet */ }
