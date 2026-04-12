@@ -485,8 +485,13 @@ export function initDb(dbPath: string): DatabaseSync {
   if (!workflowCols.includes('completion_threshold')) {
     db.exec('ALTER TABLE workflows ADD COLUMN completion_threshold REAL NOT NULL DEFAULT 1.0');
   }
-  if (!workflowCols.includes('verify_command')) {
-    db.exec('ALTER TABLE workflows ADD COLUMN verify_command TEXT');
+  if (!workflowCols.includes('verify_command') && !workflowCols.includes('start_command')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN start_command TEXT');
+  }
+  // Rename verify_command -> start_command (verify is now agent-driven, this field
+  // tells the verify agent how to start the app for smoke testing)
+  if (workflowCols.includes('verify_command') && !workflowCols.includes('start_command')) {
+    db.exec('ALTER TABLE workflows RENAME COLUMN verify_command TO start_command');
   }
   if (!workflowCols.includes('max_verify_retries')) {
     db.exec('ALTER TABLE workflows ADD COLUMN max_verify_retries INTEGER NOT NULL DEFAULT 2');

@@ -87,7 +87,7 @@ export function getTodaySpendUsd(): number {
 export function insertWorkflow(workflow: Workflow): Workflow {
   const db = getDb();
   db.prepare(`
-    INSERT INTO workflows (id, title, task, work_dir, implementer_model, reviewer_model, max_cycles, current_cycle, current_phase, status, milestones_total, milestones_done, project_id, max_turns_assess, max_turns_review, max_turns_implement, stop_mode_assess, stop_value_assess, stop_mode_review, stop_value_review, stop_mode_implement, stop_value_implement, template_id, use_worktree, worktree_path, worktree_branch, blocked_reason, pr_url, completion_threshold, verify_command, max_verify_retries, created_at, updated_at)
+    INSERT INTO workflows (id, title, task, work_dir, implementer_model, reviewer_model, max_cycles, current_cycle, current_phase, status, milestones_total, milestones_done, project_id, max_turns_assess, max_turns_review, max_turns_implement, stop_mode_assess, stop_value_assess, stop_mode_review, stop_value_review, stop_mode_implement, stop_value_implement, template_id, use_worktree, worktree_path, worktree_branch, blocked_reason, pr_url, completion_threshold, start_command, max_verify_retries, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     workflow.id, workflow.title, workflow.task, workflow.work_dir,
@@ -103,7 +103,7 @@ export function insertWorkflow(workflow: Workflow): Workflow {
     workflow.worktree_path ?? null, workflow.worktree_branch ?? null,
     workflow.blocked_reason ?? null, workflow.pr_url ?? null,
     workflow.completion_threshold ?? 1.0,
-    workflow.verify_command ?? null, workflow.max_verify_retries ?? 2,
+    workflow.start_command ?? null, workflow.max_verify_retries ?? 2,
     workflow.created_at, workflow.updated_at
   );
   return getWorkflowById(workflow.id)!;

@@ -52,7 +52,7 @@ export const createWorkflowSchema = z.object({
   templateId: z.string().uuid().optional(),
   useWorktree: z.boolean().optional(),
   completionThreshold: z.number().min(0).max(1).optional(),
-  verifyCommand: z.string().max(10_000).optional(),
+  startCommand: z.string().max(10_000).optional(),
   maxVerifyRetries: z.number().int().min(0).max(10).optional(),
 });
 
