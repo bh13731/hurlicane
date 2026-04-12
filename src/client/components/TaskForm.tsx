@@ -74,9 +74,9 @@ export function TaskForm({ onSubmit, onClose, availableJobs = [] }: TaskFormProp
   const [stopModeImplement, setStopModeImplement] = useState<StopMode>('turns');
   const [stopValueImplement, setStopValueImplement] = useState<number | null>(100);
 
-  // ── Workflow-only: verify command ─────────────────────────────────────────
+  // ── Workflow-only: start command (for verify agent) ──────────────────────
   const [verifyEnabled, setVerifyEnabled] = useState(true);
-  const [verifyCommand, setVerifyCommand] = useState<string>('npm test');
+  const [startCommand, setStartCommand] = useState<string>('npm run dev');
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -193,7 +193,7 @@ export function TaskForm({ onSubmit, onClose, availableJobs = [] }: TaskFormProp
         req.stopValueReview = stopValueReview ?? undefined;
         req.stopModeImplement = stopModeImplement;
         req.stopValueImplement = stopValueImplement ?? undefined;
-        req.verifyCommand = verifyEnabled && verifyCommand.trim() ? verifyCommand.trim() : undefined;
+        req.startCommand = verifyEnabled && startCommand.trim() ? startCommand.trim() : undefined;
       }
 
       await onSubmit(req);
@@ -656,15 +656,15 @@ export function TaskForm({ onSubmit, onClose, availableJobs = [] }: TaskFormProp
                     {verifyEnabled && (
                       <>
                         <input
-                          id="task-verify-cmd"
+                          id="task-start-cmd"
                           type="text"
-                          value={verifyCommand}
-                          onChange={e => setVerifyCommand(e.target.value)}
-                          placeholder="e.g. npm test"
+                          value={startCommand}
+                          onChange={e => setStartCommand(e.target.value)}
+                          placeholder="e.g. npm run dev, docker compose up"
                           style={{ fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 4 }}
                         />
                         <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-                          Runs before creating the PR. Exit 0 = pass; non-zero = fix and retry.
+                          Command to start the app. A QA agent will write and run smoke tests against it.
                         </div>
                       </>
                     )}
