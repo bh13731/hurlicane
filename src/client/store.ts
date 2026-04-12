@@ -334,8 +334,8 @@ export const useAppStore = create<AppStore>()((set) => ({
 
   setArchivedJobs: (jobs) => set({ archivedJobs: jobs }),
   appendArchivedJobs: (jobs) => set(state => ({ archivedJobs: [...state.archivedJobs, ...jobs] })),
-  setArchivedAgents: (agents) => set({ archivedAgents: agents }),
-  appendArchivedAgents: (agents) => set(state => ({ archivedAgents: [...state.archivedAgents, ...agents] })),
-  setArchivedTotal: (total) => set({ archivedTotal: total }),
-  setArchivedLoading: (loading) => set({ archivedLoading: loading }),
+  setArchivedAgents: (agents: AgentWithJob[]) => set({ archivedAgents: agents }),
+  appendArchivedAgents: (agents: AgentWithJob[]) => set(state => ({ archivedAgents: [...state.archivedAgents, ...agents] })),
+  setArchivedTotal: (total: number) => set({ archivedTotal: total }),
+  setArchivedLoading: (loading: boolean) => set({ archivedLoading: loading }),
 }));
