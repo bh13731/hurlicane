@@ -301,7 +301,7 @@ describe('WorkflowManager: spawnPhaseJob worktree safety guard', () => {
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
-  it('does NOT call Sentry for "duplicate completion skipped" blocks', async () => {
+  it('does NOT call Sentry for model-fallback recovery exhausted blocks (operational)', async () => {
     const { onJobCompleted } = await import('../server/orchestrator/WorkflowManager.js');
     const queries = await import('../server/db/queries.js');
     const { Sentry } = await import('../server/instrument.js');
@@ -321,7 +321,7 @@ describe('WorkflowManager: spawnPhaseJob worktree safety guard', () => {
     queries.upsertNote(`workflow/${workflow.id}/plan`, '- [ ] M1', null);
     queries.upsertNote(`workflow/${workflow.id}/contract`, '# contract', null);
 
-    // Pre-insert the model-fallback recovery note so the code hits the "duplicate completion" path
+    // Pre-insert the model-fallback recovery note so the code hits the exhausted-recovery path
     queries.upsertNote(
       `workflow/${workflow.id}/recovery/review/cycle-1/model-fallback`,
       'fallback=codex,from=claude-sonnet-4-6,failure=rate_limit',
@@ -344,7 +344,9 @@ describe('WorkflowManager: spawnPhaseJob worktree safety guard', () => {
 
     const updated = queries.getWorkflowById(workflow.id);
     expect(updated!.status).toBe('blocked');
-    expect(updated!.blocked_reason).toContain('duplicate completion skipped');
+    // Blocked reason now includes failure kind in phase-failure format for operational classification
+    expect(updated!.blocked_reason).toContain('model-fallback recovery exhausted');
+    expect(updated!.blocked_reason).toContain('rate_limit');
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 

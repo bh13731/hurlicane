@@ -24,7 +24,7 @@ describe('isOperationalBlockedReason', () => {
       'Draft PR creation failed — worktree preserved',
       'was cancelled by user',
       'no fallback model available',
-      'duplicate completion skipped',
+      'model-fallback recovery exhausted',
     ];
     for (const reason of cases) {
       it(`classifies "${reason}" as operational`, () => {

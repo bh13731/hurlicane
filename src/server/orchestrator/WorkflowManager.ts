@@ -274,6 +274,13 @@ function handleFailedJob(job: Job, workflow: Workflow): void {
 
   const currentModel = job.model ?? workflow.implementer_model;
   const failureKind = classifyJobFailure(job.id);
+
+  // Helper: true when another job for this workflow is still queued/assigned/running.
+  // Used to distinguish true duplicate-completion events (active recovery job exists)
+  // from stale idempotency notes (recovery job already failed, no active job left).
+  const hasActiveJob = () => queries.getJobsForWorkflow(workflow.id).some(j =>
+    j.status === 'queued' || j.status === 'assigned' || j.status === 'running');
+
   if (isFallbackEligibleFailure(failureKind)) {
     markModelRateLimited(currentModel, 5 * 60 * 1000);
     if (shouldMarkProviderUnavailable(failureKind)) {
@@ -283,15 +290,20 @@ function handleFailedJob(job: Job, workflow: Workflow): void {
     if (fallbackModel && fallbackModel !== currentModel) {
       const recoveryKey = `workflow/${workflow.id}/recovery/${phase}/cycle-${cycle}/model-fallback`;
       if (!queries.insertNoteIfNotExists(recoveryKey, `fallback=${fallbackModel},from=${currentModel},failure=${failureKind}`, null)) {
-        console.log(`[workflow ${workflow.id}] phase '${phase}' model-fallback already spawned (idempotency key exists) — skipping duplicate`);
+        if (hasActiveJob()) {
+          console.log(`[workflow ${workflow.id}] phase '${phase}' model-fallback already spawned (idempotency key exists) — skipping duplicate`);
+          return;
+        }
+        console.log(`[workflow ${workflow.id}] phase '${phase}' model-fallback recovery already failed (stale note, no active job) — blocking`);
+        // Fall through to noFallbackReason below
+      } else {
+        console.log(`[workflow ${workflow.id}] phase '${job.workflow_phase}' failed on ${currentModel} (${failureKind}) → retrying with ${fallbackModel}`);
+        spawnPhaseJob(workflow, phase, cycle, fallbackModel);
         return;
       }
-      console.log(`[workflow ${workflow.id}] phase '${job.workflow_phase}' failed on ${currentModel} (${failureKind}) → retrying with ${fallbackModel}`);
-      spawnPhaseJob(workflow, phase, cycle, fallbackModel);
-      return;
     }
     const noFallbackReason = queries.getNote(`workflow/${workflow.id}/recovery/${phase as string}/cycle-${cycle}/model-fallback`)
-      ? `Phase '${job.workflow_phase}' model-fallback recovery already spawned — duplicate completion skipped`
+      ? `Phase '${job.workflow_phase}' job ${job.id.slice(0, 8)} failed (${failureKind}) — model-fallback recovery exhausted`
       : `Phase '${job.workflow_phase}' failed on ${currentModel} (${failureKind}) — no fallback model available`;
     console.log(`[workflow ${workflow.id}] ${noFallbackReason}`);
     updateAndEmit(workflow.id, { status: 'blocked', current_phase: job.workflow_phase ?? 'idle', blocked_reason: noFallbackReason });
@@ -304,24 +316,34 @@ function handleFailedJob(job: Job, workflow: Workflow): void {
     if (attempts < MAX_CLI_RETRIES) {
       const cliRetryKey = `workflow/${workflow.id}/recovery/${phase}/cycle-${cycle}/cli-retry-${attempts + 1}`;
       if (!queries.insertNoteIfNotExists(cliRetryKey, `model=${currentModel},failure=${failureKind},attempt=${attempts + 1}`, null)) {
-        console.log(`[workflow ${workflow.id}] phase '${phase}' cli-retry-${attempts + 1} already spawned (idempotency key exists) — skipping`);
+        if (hasActiveJob()) {
+          console.log(`[workflow ${workflow.id}] phase '${phase}' cli-retry-${attempts + 1} already spawned (idempotency key exists) — skipping`);
+          return;
+        }
+        console.log(`[workflow ${workflow.id}] phase '${phase}' cli-retry-${attempts + 1} recovery already failed (stale note, no active job) — trying next option`);
+        // Fall through to alt-provider below
+      } else {
+        queries.upsertNote(attemptsKey, String(attempts + 1), null);
+        console.log(`[workflow ${workflow.id}] phase '${phase}' hit ${failureKind} on ${currentModel} — same-model retry ${attempts + 1}/${MAX_CLI_RETRIES}`);
+        spawnPhaseJob(workflow, phase, cycle);
         return;
       }
-      queries.upsertNote(attemptsKey, String(attempts + 1), null);
-      console.log(`[workflow ${workflow.id}] phase '${phase}' hit ${failureKind} on ${currentModel} — same-model retry ${attempts + 1}/${MAX_CLI_RETRIES}`);
-      spawnPhaseJob(workflow, phase, cycle);
-      return;
     }
     const altModel = getAlternateProviderModel(currentModel);
     if (altModel) {
       const altProviderKey = `workflow/${workflow.id}/recovery/${phase}/cycle-${cycle}/alt-provider`;
       if (!queries.insertNoteIfNotExists(altProviderKey, `alt=${altModel},from=${currentModel},failure=${failureKind}`, null)) {
-        console.log(`[workflow ${workflow.id}] phase '${phase}' alt-provider already spawned (idempotency key exists) — skipping`);
+        if (hasActiveJob()) {
+          console.log(`[workflow ${workflow.id}] phase '${phase}' alt-provider already spawned (idempotency key exists) — skipping`);
+          return;
+        }
+        console.log(`[workflow ${workflow.id}] phase '${phase}' alt-provider recovery already failed (stale note, no active job) — will block`);
+        // Fall through to final block below
+      } else {
+        console.log(`[workflow ${workflow.id}] phase '${phase}' exhausted ${MAX_CLI_RETRIES} retries on ${currentModel} (${failureKind}) → switching provider to ${altModel}`);
+        spawnPhaseJob(workflow, phase, cycle, altModel);
         return;
       }
-      console.log(`[workflow ${workflow.id}] phase '${phase}' exhausted ${MAX_CLI_RETRIES} retries on ${currentModel} (${failureKind}) → switching provider to ${altModel}`);
-      spawnPhaseJob(workflow, phase, cycle, altModel);
-      return;
     }
     console.log(`[workflow ${workflow.id}] phase '${phase}' hit ${failureKind} on ${currentModel} — exhausted ${MAX_CLI_RETRIES} retries, no alternate provider available`);
   }
@@ -1063,13 +1085,13 @@ export const _isOperationalBlockedReasonForTest = isOperationalBlockedReason;
 const OPERATIONAL_BLOCK_SUBSTRINGS = [
   'Reached max cycles', 'no milestone progress', 'Diminishing returns',
   'PR creation failed', 'Draft PR creation failed', 'was cancelled',
-  'no fallback model available', 'duplicate completion skipped',
+  'no fallback model available', 'model-fallback recovery exhausted',
   'verify_failed',
 ] as const;
 
 const OPERATIONAL_FAILED_KINDS = new Set([
   'timeout', 'mcp_disconnect', 'out_of_memory', 'disk_full', 'context_overflow', 'codex_cli_crash',
-  'launch_environment',
+  'launch_environment', 'rate_limit', 'provider_overload',
 ]);
 
 function isOperationalBlockedReason(reason: string): boolean {
