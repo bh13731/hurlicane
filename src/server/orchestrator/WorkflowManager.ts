@@ -888,7 +888,14 @@ export function reconcileRunningWorkflows(): void {
           to_status: after!.status, trigger_job_id: latestPhaseJob.id, trigger_job_status: latestPhaseJob.status,
         });
       } else {
-        updateAndEmit(workflow.id, { status: 'blocked', blocked_reason: `Workflow stuck after ${latestPhaseJob.status} ${workflow.current_phase} job ${latestPhaseJob.id.slice(0, 8)}` });
+        let blockedReason: string;
+        if (latestPhaseJob.status === 'failed') {
+          const kind = classifyJobFailure(latestPhaseJob.id);
+          blockedReason = `Workflow stuck: Phase '${workflow.current_phase}' job ${latestPhaseJob.id.slice(0, 8)} failed (${kind})`;
+        } else {
+          blockedReason = `Workflow stuck after ${latestPhaseJob.status} ${workflow.current_phase} job ${latestPhaseJob.id.slice(0, 8)}`;
+        }
+        updateAndEmit(workflow.id, { status: 'blocked', blocked_reason: blockedReason });
       }
     }
   }
