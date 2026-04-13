@@ -1062,6 +1062,7 @@ const OPERATIONAL_BLOCK_SUBSTRINGS = [
 
 const OPERATIONAL_FAILED_KINDS = new Set([
   'timeout', 'mcp_disconnect', 'out_of_memory', 'disk_full', 'context_overflow', 'codex_cli_crash',
+  'launch_environment',
 ]);
 
 function isOperationalBlockedReason(reason: string): boolean {

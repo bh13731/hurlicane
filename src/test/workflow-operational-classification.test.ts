@@ -46,6 +46,10 @@ describe('isOperationalBlockedReason', () => {
       expect(isOperationalBlockedReason("Phase 'assess' job deadbeef failed (mcp_disconnect)")).toBe(true);
     });
 
+    it("classifies `Phase 'implement' job abcdef12 failed (launch_environment)` as operational", () => {
+      expect(isOperationalBlockedReason("Phase 'implement' job abcdef12 failed (launch_environment)")).toBe(true);
+    });
+
     it("does NOT classify `Phase 'implement' job abcdef12 failed (task_failure)` as operational", () => {
       expect(isOperationalBlockedReason("Phase 'implement' job abcdef12 failed (task_failure)")).toBe(false);
     });
@@ -68,6 +72,12 @@ describe('isOperationalBlockedReason', () => {
       // From HURLICANE-5J in the wild.
       const reason =
         "Sentry fix [hurlicane]: WorkflowBlocked: Workflow blocked: Sentry fix [investor-pipeline]: BrokenPipeErr — Phase 'implement' job 54947c3f failed (timeout)";
+      expect(isOperationalBlockedReason(reason)).toBe(true);
+    });
+
+    it('classifies a nested launch_environment (PTY exhaustion) as operational', () => {
+      const reason =
+        "WorkflowBlocked: Workflow blocked: Sentry fix [hurlicane]: Error: Standalone print job failed via no_terminal_evidence — Phase 'implement' job 0a23e7d5 failed (launch_environment)";
       expect(isOperationalBlockedReason(reason)).toBe(true);
     });
 
